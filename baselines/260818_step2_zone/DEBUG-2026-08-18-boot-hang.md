@@ -105,6 +105,52 @@ Branch `step2-debug`, off tag `260818_step2_zone`:
 | `6f39baa34` | build-identity cherry-picked from `4c3022102` (scripts only) |
 | `46f939ab1` | the memblock fix, plus `ltram-dbg:` prints across `bootmem_init()` |
 
+## Round two: it got past setup_arch and died in sparse_init()
+
+With the memblock fix the boot reached `bootmem_init()` and printed the declaration,
+then panicked:
+
+```
+ltram-dbg: -> arch_numa_init
+NUMA: NODE_DATA [mem 0x1fefeb4b00-0x1fefebafff]     <- node 1's pgdat, correctly in DRAM
+ltram-dbg: arch_numa_init done
+ltram-dbg: -> sparse_init
+Unable to handle kernel paging request at virtual address ffff01400ffff000
+  FSC = 0x04: level 0 translation fault      WnR = 1 (write)
+pc : __memset      lr : memblock_alloc_try_nid
+  sparse_index_alloc -> sparse_init -> bootmem_init -> setup_arch
+```
+
+**Decode the address before anything else.** `0xffff01400ffff000` minus `PAGE_OFFSET`
+(`0xffff000000000000`) is `0x1400ffff000` — which is `LTRAM_PHYS_BASE + 256 MiB - 4 KiB`,
+**the last page of the flash window**. Top-down search, so the highest address available.
+memblock had handed out flash memory and `memset` faulted on it.
+
+Cause: `sparse_index_alloc()` allocates a node's `mem_section` root array *on that node*,
+so node 1's section index was requested from node 1. Step 2's existing `sparse.c` fix
+redirects `sparse_init_nid()`'s usemap and memmap to node 0, but `sparse_index_alloc()`
+is a separate site it does not cover — and the first cut of the memblock fix had an
+exemption letting an explicit `LTRAM_NUMA_NODE` request through.
+
+That exemption was wrong. **Nothing may ever memblock-allocate from this window**: its
+pages belong to the bitmap allocator in `mm/ltram_policy.c` and are never released to
+buddy. Chasing individual call sites is whack-a-mole; enforcing it in the iterator is the
+same "residency by construction" argument that keeps `ZONE_LTRAM` out of every zonelist.
+`memblock_alloc_range_nid()` retries with `NUMA_NO_NODE` when an exact-node search fails,
+so a node-1 request degrades to DRAM rather than failing. Commit `94e8176bc`.
+
+### The part worth remembering
+
+**This failed loudly only by luck.** The linear map happens not to cover the flash window,
+so the store took a translation fault. Had the window been mapped, the `memset` would have
+been silently discarded and the kernel would have gone on to trust a section index full of
+stale flash contents. That is the project's defining hazard, and here the hardware
+volunteered the signal instead of the design manufacturing it.
+
+Also note what the trace confirms in passing: `NUMA: NODE_DATA [mem 0x1fefeb4b00-...]` is
+at ~128 GiB, i.e. node 1's `pg_data_t` really did land in DRAM. The `arch_numa.c` fix
+works.
+
 ## Platform facts worth not re-deriving
 
 | fact | value | where from |
