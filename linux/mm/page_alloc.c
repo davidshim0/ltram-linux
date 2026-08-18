@@ -45,6 +45,7 @@
 #include <linux/migrate.h>
 #include <linux/sched/mm.h>
 #include <linux/page_owner.h>
+#include <linux/ltram.h>
 #include <linux/page_table_check.h>
 #include <linux/memcontrol.h>
 #include <linux/ftrace.h>
@@ -253,6 +254,9 @@ static int sysctl_lowmem_reserve_ratio[MAX_NR_ZONES] = {
 	[ZONE_HIGHMEM] = 0,
 #endif
 	[ZONE_MOVABLE] = 0,
+#ifdef CONFIG_LTRAM
+	[ZONE_LTRAM] = 0,
+#endif
 };
 
 char * const zone_names[MAX_NR_ZONES] = {
@@ -269,6 +273,9 @@ char * const zone_names[MAX_NR_ZONES] = {
 	 "Movable",
 #ifdef CONFIG_ZONE_DEVICE
 	 "Device",
+#endif
+#ifdef CONFIG_LTRAM
+	 "LtRAM",
 #endif
 };
 
@@ -3257,6 +3264,20 @@ retry:
 
 check_alloc_wmark:
 		mark = wmark_pages(zone, alloc_flags & ALLOC_WMARK_MASK);
+#ifdef CONFIG_LTRAM
+		/*
+		 * Belt and braces. The zonelist exclusion above should make this
+		 * unreachable, so arriving here means a path we did not anticipate
+		 * found the zone anyway -- exactly the class of bug that is
+		 * otherwise silent, because the allocation would succeed and the
+		 * caller would then store to flash and lose the data.
+		 */
+		if (WARN_ONCE(zone_idx(zone) == ZONE_LTRAM,
+			      "allocation reached ZONE_LTRAM (gfp=%pGg) -- residency invariant broken\n",
+			      &gfp_mask))
+			continue;
+#endif
+
 		if (!zone_watermark_fast(zone, order, mark,
 				       ac->highest_zoneidx, alloc_flags,
 				       gfp_mask)) {
@@ -4955,6 +4976,20 @@ static int build_zonerefs_node(pg_data_t *pgdat, struct zoneref *zonerefs)
 	do {
 		zone_type--;
 		zone = pgdat->node_zones + zone_type;
+#ifdef CONFIG_LTRAM
+		/*
+		 * Never place ZONE_LTRAM in any zonelist. This is the residency
+		 * invariant, enforced by construction rather than by a check:
+		 * the page allocator reaches a zone only through a zonelist, so
+		 * a zone that appears in none is unreachable -- including from
+		 * code written after this, which a gfp-mask test would not cover.
+		 *
+		 * Pages arrive in LtRAM by migration only. The mover has its own
+		 * allocator and does not come through here.
+		 */
+		if (zone_type == ZONE_LTRAM)
+			continue;
+#endif
 		if (populated_zone(zone)) {
 			zoneref_set_zone(zone, &zonerefs[nr_zones++]);
 			check_highest_zone(zone_type);

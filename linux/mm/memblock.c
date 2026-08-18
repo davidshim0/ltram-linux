@@ -16,6 +16,7 @@
 #include <linux/kmemleak.h>
 #include <linux/seq_file.h>
 #include <linux/memblock.h>
+#include <linux/ltram.h>
 
 #include <asm/sections.h>
 #include <linux/io.h>
@@ -1217,6 +1218,24 @@ void __init_memblock __next_mem_range_rev(u64 *idx, int nid,
 
 	if (WARN_ONCE(nid == MAX_NUMNODES, "Usage of MAX_NUMNODES is deprecated. Use NUMA_NO_NODE instead\n"))
 		nid = NUMA_NO_NODE;
+
+#ifdef CONFIG_LTRAM
+	/*
+	 * Boot-time allocators -- per-CPU areas, swiotlb, the qspinlock hash,
+	 * CPU-entry page tables -- ask for NUMA_NO_NODE. memblock then searches
+	 * TOP-DOWN, and the flash window is the HIGHEST-PFN range on this
+	 * layout, so the default answer is LtRAM. Every store to that memory is
+	 * silently discarded and the kernel believes it is valid.
+	 *
+	 * Pin those to node 0. For the common case this is identical to a kernel
+	 * with no LtRAM at all: same top-down search, starting from the top of
+	 * node 0 instead. The retry path below can still fall back to any node
+	 * if node 0 is exhausted, which is what the stray-allocation warning
+	 * exists to catch.
+	 */
+	if (nid == NUMA_NO_NODE)
+		nid = 0;
+#endif
 
 	if (*idx == (u64)ULLONG_MAX) {
 		idx_a = type_a->cnt - 1;

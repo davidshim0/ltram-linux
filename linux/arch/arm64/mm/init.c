@@ -27,6 +27,7 @@
 #include <linux/swiotlb.h>
 #include <linux/vmalloc.h>
 #include <linux/mm.h>
+#include <linux/ltram.h>
 #include <linux/kexec.h>
 #include <linux/crash_dump.h>
 #include <linux/hugetlb.h>
@@ -153,6 +154,15 @@ static void __init zone_sizes_init(void)
 	if (!arm64_dma_phys_limit)
 		arm64_dma_phys_limit = PHYS_MASK + 1;
 	max_zone_pfns[ZONE_NORMAL] = max_pfn;
+#ifdef CONFIG_LTRAM
+	/*
+	 * ZONE_LTRAM is the highest zone and covers the top of the address
+	 * space, so it ends where memory ends. free_area_init() derives each
+	 * zone from the previous boundary, so ZONE_NORMAL keeps everything
+	 * below the flash window and ZONE_LTRAM takes the window itself.
+	 */
+	max_zone_pfns[ZONE_LTRAM] = max_pfn;
+#endif
 
 	free_area_init(max_zone_pfns);
 }
@@ -318,6 +328,14 @@ void __init arm64_memblock_init(void)
 void __init bootmem_init(void)
 {
 	unsigned long min, max;
+
+	/*
+	 * Declare the flash window BEFORE min/max are taken from memblock, so
+	 * max_pfn covers it, and before arch_numa_init() so the node exists when
+	 * NUMA is initialised. The window is not in any firmware table on this
+	 * platform, so if it is not injected here it does not exist at all.
+	 */
+	ltram_declare_node();
 
 	min = PFN_UP(memblock_start_of_DRAM());
 	max = PFN_DOWN(memblock_end_of_DRAM());

@@ -745,6 +745,24 @@ config DEFAULT_MMAP_MIN_ADDR
 config ARCH_SUPPORTS_MEMORY_FAILURE
 	bool
 
+config LTRAM
+	bool "LtRAM: NOR flash as a coherent read-only memory zone"
+	depends on NUMA && SPARSEMEM && ARM64
+	default n
+	help
+	  Present the Enzian FPGA's coherent NOR window as a separate NUMA node
+	  and memory zone (ZONE_LTRAM), so read-mostly pages can be migrated onto
+	  flash and freed from DRAM.
+
+	  The CPU cannot store to this memory -- writes are silently discarded by
+	  the controller -- so the zone is kept out of every zonelist and pages
+	  arrive only by migration through the NOR driver's DMA path.
+
+	  Saying N here produces a kernel byte-comparable to one without LtRAM
+	  support, which is what makes an A/B measurement meaningful.
+
+	  If unsure, say N.
+
 config MEMORY_FAILURE
 	depends on MMU
 	depends on ARCH_SUPPORTS_MEMORY_FAILURE

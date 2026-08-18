@@ -808,6 +808,16 @@ enum zone_type {
 #ifdef CONFIG_ZONE_DEVICE
 	ZONE_DEVICE,
 #endif
+#ifdef CONFIG_LTRAM
+	/*
+	 * NOR flash behind the ECI window. Deliberately the HIGHEST zone: the
+	 * page allocator searches from the top down, so being last means a
+	 * fallback that escapes the zonelist exclusion lands here only after
+	 * every real zone is exhausted -- and the WARN in get_page_from_freelist
+	 * then reports it instead of it passing silently.
+	 */
+	ZONE_LTRAM,
+#endif
 	__MAX_NR_ZONES
 
 };

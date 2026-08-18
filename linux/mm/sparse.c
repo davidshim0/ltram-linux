@@ -12,6 +12,7 @@
 #include <linux/spinlock.h>
 #include <linux/vmalloc.h>
 #include <linux/swap.h>
+#include <linux/ltram.h>
 #include <linux/swapops.h>
 #include <linux/bootmem_info.h>
 
@@ -510,13 +511,22 @@ static void __init sparse_init_nid(int nid, unsigned long pnum_begin,
 	unsigned long pnum;
 	struct page *map;
 
-	usage = sparse_early_usemaps_alloc_pgdat_section(NODE_DATA(nid),
+	/*
+	 * Section metadata -- usemap and the struct page memmap -- is written
+	 * constantly by the kernel, so it must never land on flash. 256 MiB at
+	 * 4 KiB is 65,536 struct pages, roughly 4 MiB of memmap; placed in LtRAM
+	 * every store to it would be silently dropped and the kernel would then
+	 * trust a memmap full of stale flash contents.
+	 */
+	int alloc_nid = IS_ENABLED(CONFIG_LTRAM) && nid == LTRAM_NUMA_NODE ? 0 : nid;
+
+	usage = sparse_early_usemaps_alloc_pgdat_section(NODE_DATA(alloc_nid),
 			mem_section_usage_size() * map_count);
 	if (!usage) {
 		pr_err("%s: node[%d] usemap allocation failed", __func__, nid);
 		goto failed;
 	}
-	sparse_buffer_init(map_count * section_map_size(), nid);
+	sparse_buffer_init(map_count * section_map_size(), alloc_nid);
 	for_each_present_section_nr(pnum_begin, pnum) {
 		unsigned long pfn = section_nr_to_pfn(pnum);
 
@@ -524,7 +534,7 @@ static void __init sparse_init_nid(int nid, unsigned long pnum_begin,
 			break;
 
 		map = __populate_section_memmap(pfn, PAGES_PER_SECTION,
-				nid, NULL, NULL);
+				alloc_nid, NULL, NULL);
 		if (!map) {
 			pr_err("%s: node[%d] memory map backing failed. Some memory will not be available.",
 			       __func__, nid);

@@ -10,6 +10,7 @@
 
 #include <linux/acpi.h>
 #include <linux/memblock.h>
+#include <linux/ltram.h>
 #include <linux/module.h>
 #include <linux/of.h>
 
@@ -226,7 +227,16 @@ static void __init setup_node_data(int nid, u64 start_pfn, u64 end_pfn)
 	if (start_pfn >= end_pfn)
 		pr_info("Initmem setup node %d [<memory-less node>]\n", nid);
 
-	nd_pa = memblock_phys_alloc_try_nid(nd_size, SMP_CACHE_BYTES, nid);
+	/*
+	 * The node's own pg_data_t is kernel state written throughout the
+	 * kernel's life, so it must not live on the node it describes when that
+	 * node is flash. Odd-looking but necessary: node 1's metadata lives on
+	 * node 0. memset() below would otherwise be silently discarded and every
+	 * field read back as stale flash.
+	 */
+	nd_pa = memblock_phys_alloc_try_nid(nd_size, SMP_CACHE_BYTES,
+					    IS_ENABLED(CONFIG_LTRAM) &&
+					    nid == LTRAM_NUMA_NODE ? 0 : nid);
 	if (!nd_pa)
 		panic("Cannot allocate %zu bytes for node %d data\n",
 		      nd_size, nid);

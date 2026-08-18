@@ -25,6 +25,7 @@
 #include <linux/pti.h>
 #include <linux/pgtable.h>
 #include <linux/swap.h>
+#include <linux/ltram.h>
 #include <linux/cma.h>
 #include <linux/crash_dump.h>
 #include "internal.h"
@@ -1278,6 +1279,26 @@ static void __init calculate_node_totalpages(struct pglist_data *pgdat,
 		unsigned long spanned, absent;
 		unsigned long real_size;
 
+#ifdef CONFIG_LTRAM
+		if (pgdat->node_id == LTRAM_NUMA_NODE) {
+			/*
+			 * The LtRAM node is dedicated: one contiguous flash range,
+			 * entirely ZONE_LTRAM, every other zone empty. NOR is
+			 * physically contiguous so there are no absent pages.
+			 */
+			if (i == ZONE_LTRAM) {
+				zone_start_pfn = node_start_pfn;
+				zone_end_pfn   = node_end_pfn;
+				spanned        = node_end_pfn - node_start_pfn;
+			} else {
+				zone_start_pfn = zone_end_pfn = 0;
+				spanned        = 0;
+			}
+			absent    = 0;
+			real_size = spanned;
+		} else
+#endif
+		{
 		spanned = zone_spanned_pages_in_node(pgdat->node_id, i,
 						     node_start_pfn,
 						     node_end_pfn,
@@ -1288,6 +1309,7 @@ static void __init calculate_node_totalpages(struct pglist_data *pgdat,
 						   zone_end_pfn);
 
 		real_size = spanned - absent;
+		}
 
 		if (spanned)
 			zone->zone_start_pfn = zone_start_pfn;

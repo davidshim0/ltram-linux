@@ -88,8 +88,26 @@ static inline bool gfpflags_allow_blocking(const gfp_t gfp_flags)
  * GFP_ZONES_SHIFT must be <= 2 on 32 bit platforms.
  */
 
-#if defined(CONFIG_ZONE_DEVICE) && (MAX_NR_ZONES-1) <= 4
+/*
+ * ZONE_LTRAM, like ZONE_DEVICE, is deliberately NOT a GFP-selectable zone, so
+ * it must not widen GFP_ZONES_SHIFT.
+ *
+ * GFP_ZONE_TABLE packs 2^(gfp zone bits) rows of GFP_ZONES_SHIFT bits into one
+ * unsigned long: 2^4 * 3 = 48 fits in 64, but 2^5 * 3 = 96 does not. Counting
+ * either zone here overflows the table, and the compiler reports it only as a
+ * shift-count warning inside a macro -- easy to miss, and wrong at runtime.
+ *
+ * Nothing can allocate from ZONE_LTRAM in any case: it is absent from every
+ * zonelist (see build_zonerefs_node), so pages arrive there only by migration.
+ */
+#if defined(CONFIG_ZONE_DEVICE) && defined(CONFIG_LTRAM) && (MAX_NR_ZONES-2) <= 4
+/* neither ZONE_DEVICE nor ZONE_LTRAM is a valid GFP zone specifier */
+#define GFP_ZONES_SHIFT 2
+#elif defined(CONFIG_ZONE_DEVICE) && (MAX_NR_ZONES-1) <= 4
 /* ZONE_DEVICE is not a valid GFP zone specifier */
+#define GFP_ZONES_SHIFT 2
+#elif defined(CONFIG_LTRAM) && (MAX_NR_ZONES-1) <= 4
+/* ZONE_LTRAM is not a valid GFP zone specifier */
 #define GFP_ZONES_SHIFT 2
 #else
 #define GFP_ZONES_SHIFT ZONES_SHIFT
