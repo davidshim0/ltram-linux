@@ -1,0 +1,12 @@
+# Workload definition: pagerank (GAP Benchmark Suite PageRank)
+#
+# Build phase generates + builds the graph (mostly writes); the PR trials
+# that follow are mostly reads over the CSR graph -> a good read-heavy case
+# for the LtRAM read-only hypothesis.
+#
+# -g 20 = 2^20 vertices. Bump -g for a bigger working set; add -n <trials>
+# and -i <iters> if you want to lengthen the run.
+
+LABEL=pagerank
+PREP=
+RUN='numactl --cpunodebind=0 --membind=0 /mnt/workloads/pr -g 20'

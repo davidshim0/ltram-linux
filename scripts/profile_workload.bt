@@ -1,0 +1,59 @@
+#!/usr/bin/env bpftrace
+/*
+ * Per-event file-page activity tracer.
+ *
+ * Counts file pages added to the page cache and file pages marked dirty,
+ * with per-inode breakdowns. Run alongside a workload:
+ *
+ *   bpftrace profile_workload.bt &
+ *   PID=$!
+ *   /workloads/...
+ *   kill -INT $PID
+ *
+ * Requires CONFIG_BPF=y, CONFIG_BPF_SYSCALL=y, CONFIG_TRACEPOINTS=y in
+ * the kernel and the bpftrace userspace binary in the rootfs.
+ */
+
+BEGIN {
+    printf("Tracing page cache activity. Press Ctrl-C to dump summary.\n");
+    @start_ns = nsecs;
+}
+
+tracepoint:filemap:mm_filemap_add_to_page_cache {
+    @file_alloc_total++;
+    @file_alloc_per_inode[args->i_ino]++;
+}
+
+tracepoint:filemap:mm_filemap_delete_from_page_cache {
+    @file_evict_total++;
+}
+
+tracepoint:writeback:writeback_dirty_folio {
+    @dirty_total++;
+}
+
+tracepoint:writeback:writeback_dirty_inode {
+    @dirty_inode_total++;
+}
+
+interval:s:5 {
+    $sec = (nsecs - @start_ns) / 1000000000;
+    printf("[t=%llds] file_allocs=%lld evicts=%lld dirties=%lld\n",
+           $sec, @file_alloc_total, @file_evict_total, @dirty_total);
+}
+
+END {
+    printf("\n=================================\n");
+    printf("Page cache profile summary\n");
+    printf("=================================\n");
+    printf("File pages added to cache : %lld\n", @file_alloc_total);
+    printf("File pages evicted        : %lld\n", @file_evict_total);
+    printf("Pages marked dirty        : %lld\n", @dirty_total);
+    printf("Inodes marked dirty       : %lld\n", @dirty_inode_total);
+    if (@file_alloc_total > 0) {
+        printf("Dirty-to-alloc ratio      : %lld%% (lower is better for LtRAM)\n",
+               (@dirty_total * 100) / @file_alloc_total);
+    }
+    printf("\n=== Top 10 inodes by allocation count ===\n");
+    print(@file_alloc_per_inode, 10);
+}

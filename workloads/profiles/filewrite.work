@@ -1,0 +1,17 @@
+# Workload definition: filewrite (file-backed page-cache dirtying)
+#
+# Writes a file to the (block-backed) rootfs, then syncs. This dirties
+# file-backed page-cache pages (nr_dirtied climbs) and flushes them to the
+# virtio disk (pgpgout climbs) -- unlike redis/pagerank, whose writes are all
+# anonymous. Use it to (a) confirm the dirty/writeback counters actually move
+# and (b) contrast a write-to-file workload against the read-only ones.
+#
+# NOTE: this file is WRITABLE, so it does NOT route to LtRAM (the policy only
+# sends read-only VMAs there). It is a counter sanity check, not an LtRAM test.
+#
+# The rootfs image is small (~60 MB), so FW_MB defaults low. Point FW_PATH at a
+# larger writable filesystem and raise FW_MB if you have one.
+
+LABEL=filewrite
+PREP=
+RUN='F=${FW_PATH:-/root/.ltram_fw.dat}; dd if=/dev/zero of="$F" bs=1M count=${FW_MB:-8} 2>&1; sync; rm -f "$F"'

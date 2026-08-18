@@ -1,0 +1,13 @@
+#!/bin/sh
+
+case "$1" in
+  start)
+    echo "Starting loopback..."
+    ip link set lo up
+    ;;
+  stop)
+    ;;
+  *)
+    echo "Usage: $0 {start|stop}"
+    exit 1
+esac
