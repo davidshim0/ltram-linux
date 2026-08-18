@@ -51,6 +51,8 @@ static inline bool pfn_is_ltram(unsigned long pfn)
  * NOR driver fills this in and registers it, so the only coupling is one
  * function pointer.
  */
+struct folio;
+
 struct ltram_flash_ops {
 	struct module *owner;
 	/*
@@ -79,6 +81,9 @@ void ltram_unregister_flash_ops(const struct ltram_flash_ops *ops);
 bool ltram_have_flash_ops(void);
 int  ltram_write_page(unsigned long dst_pfn, const void *src);
 
+bool folio_is_ltram(const struct folio *folio);
+int  ltram_copy_to_flash(struct folio *dst, struct folio *src);
+
 void __init ltram_declare_node(void);
 void ltram_note_stray_alloc(unsigned long pfn, const char *where);
 
@@ -89,6 +94,8 @@ static inline void ltram_declare_node(void) { }
 static inline void ltram_note_stray_alloc(unsigned long pfn, const char *w) { }
 static inline bool ltram_have_flash_ops(void) { return false; }
 static inline int ltram_write_page(unsigned long p, const void *s) { return -ENODEV; }
+static inline bool folio_is_ltram(const struct folio *f) { return false; }
+static inline int ltram_copy_to_flash(struct folio *d, struct folio *s) { return -ENODEV; }
 
 #endif /* CONFIG_LTRAM */
 #endif /* _LINUX_LTRAM_H */

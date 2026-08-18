@@ -14,6 +14,7 @@
  */
 
 #include <linux/migrate.h>
+#include <linux/ltram.h>
 #include <linux/export.h>
 #include <linux/swap.h>
 #include <linux/swapops.h>
@@ -662,15 +663,32 @@ int migrate_folio_extra(struct address_space *mapping, struct folio *dst,
 
 	BUG_ON(folio_test_writeback(src));	/* Writeback must be complete */
 
+	/*
+	 * A ZONE_LTRAM destination is NOR behind the ECI window: the CPU cannot
+	 * store to it, so folio_migrate_copy()'s memcpy below would be silently
+	 * discarded -- the mapping would move and the data would not, with
+	 * nothing reporting it. Program it through the driver instead.
+	 *
+	 * Deliberately BEFORE folio_migrate_mapping(): @src is already unmapped
+	 * by try_to_migrate() so its contents are stable, and a flash error
+	 * returns here with nothing published. After the mapping move there is
+	 * no way to fail safely.
+	 */
+	if (folio_is_ltram(dst) && mode != MIGRATE_SYNC_NO_COPY) {
+		rc = ltram_copy_to_flash(dst, src);
+		if (rc)
+			return rc;
+	}
+
 	rc = folio_migrate_mapping(mapping, dst, src, extra_count);
 
 	if (rc != MIGRATEPAGE_SUCCESS)
 		return rc;
 
-	if (mode != MIGRATE_SYNC_NO_COPY)
-		folio_migrate_copy(dst, src);
+	if (mode == MIGRATE_SYNC_NO_COPY || folio_is_ltram(dst))
+		folio_migrate_flags(dst, src);	/* LtRAM data programmed above */
 	else
-		folio_migrate_flags(dst, src);
+		folio_migrate_copy(dst, src);
 	return MIGRATEPAGE_SUCCESS;
 }
 
