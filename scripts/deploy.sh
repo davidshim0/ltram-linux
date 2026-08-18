@@ -29,11 +29,34 @@ IMG="$OUT/arch/arm64/boot/Image"
 [ -f "$IMG" ] || { echo "!! no Image at $IMG — build first"; exit 3; }
 case "$KREL" in *+) echo "!! kernelrelease '$KREL' ends in '+'; fix before deploying"; exit 4;; esac
 
-echo "=== deploying $WHICH — kernel release: $KREL ==="
+echo "=== deploying $WHICH ==="
+if [ -f "$OUT/BUILDINFO" ]; then
+    cat "$OUT/BUILDINFO"
+else
+    echo "!! no $OUT/BUILDINFO — this build predates identity recording, or was not built"
+    echo "!! by build.sh. Rebuild if you need to know what this is."
+    echo "kernel release  $KREL"
+fi
+echo
 
 echo "--- 1/3 kernel -> gateway:/srv/tftp/userkernels/hushim/vmlinuz ---"
 scp -q "$IMG" hushim@enzian-gateway.inf.ethz.ch:/srv/tftp/userkernels/hushim/vmlinuz
-ssh -q hushim@enzian-gateway.inf.ethz.ch "ls -la /srv/tftp/userkernels/hushim/vmlinuz"
+
+# Verify what LANDED, not what was sent. ls gives a size and a date, and both match
+# between builds often enough to be useless -- two of our own Images are byte-identical
+# in size. The hash is the only thing that answers "is the kernel on the gateway the one
+# I just built?", which is the question you are standing at the board asking.
+LOCAL_SHA=$(sha256sum "$IMG" | cut -d' ' -f1)
+REMOTE_SHA=$(ssh -q hushim@enzian-gateway.inf.ethz.ch "sha256sum /srv/tftp/userkernels/hushim/vmlinuz" | cut -d' ' -f1)
+if [ "$LOCAL_SHA" = "$REMOTE_SHA" ]; then
+    echo "    sha256 $LOCAL_SHA — gateway MATCHES local"
+else
+    echo "!! GATEWAY MISMATCH — the copy did not land intact"
+    echo "!!   local   $LOCAL_SHA"
+    echo "!!   gateway $REMOTE_SHA"
+    exit 5
+fi
+ssh -q hushim@enzian-gateway.inf.ethz.ch "ls -la /srv/tftp/userkernels/hushim/"
 
 # z08's root is 4.4 GB and each kernel's module tree is ~145 MB, so two trees plus an
 # initramfs do not fit. Free the ones we can rebuild before shipping the new one. Every

@@ -151,11 +151,55 @@ make -C "$SRC" O="$OUT" -j"$JOBS" Image modules dtbs
 make -C "$SRC" O="$OUT" INSTALL_MOD_STRIP=1 INSTALL_MOD_PATH="$OUT/modroot" modules_install
 
 KREL=$(make -C "$SRC" O="$OUT" -s kernelrelease)
+IMG="$OUT/arch/arm64/boot/Image"
+
+# ---- identity ---------------------------------------------------------------
+# Printed at the end and written to $OUT/BUILDINFO so it travels with the artifact.
+#
+# The point is being able to answer, standing at the board, "is the thing that booted
+# the thing I built?" -- and neither a date nor a size answers that. The Image sha256
+# does: deploy.sh re-hashes what actually landed on the gateway and compares.
+#
+# git describe carries the tag when HEAD is exactly on one, and tag-N-gHASH when it is
+# not, so a build from an untagged commit cannot silently claim to be a tagged release.
+FINISHED=$(date '+%Y-%m-%d %H:%M:%S %Z')
+DESCRIBE=$(git -C "$BASE" describe --tags --always --dirty 2>/dev/null || echo "not a git checkout")
+COMMIT=$(git -C "$BASE" rev-parse --short HEAD 2>/dev/null || echo unknown)
+BRANCH=$(git -C "$BASE" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+IMGSHA=$(sha256sum "$IMG" | cut -d' ' -f1)
+NMOD=$(find "$OUT/modroot/lib/modules" -type f -name '*.ko*' 2>/dev/null | wc -l)
+MODSZ=$(du -sh "$OUT/modroot/lib/modules" 2>/dev/null | cut -f1)
+CCVER=$(${CROSS_COMPILE}gcc --version | head -1)
+
+{
+  echo "target          $WHICH"
+  echo "kernel release  $KREL"
+  echo "version         $DESCRIBE"
+  echo "commit          $COMMIT  (branch $BRANCH)"
+  echo "built           $FINISHED"
+  echo "toolchain       $CCVER"
+  echo "Image           $IMG"
+  echo "Image size      $(stat -c%s "$IMG") bytes"
+  echo "Image sha256    $IMGSHA"
+  echo "modules         $NMOD objects, $MODSZ"
+} > "$OUT/BUILDINFO"
+
 echo
-echo "=== BUILT: $KREL ==="
-ls -la "$OUT/arch/arm64/boot/Image"
-# Ubuntu's config compresses modules, so they install as *.ko.zst -- counting *.ko
-# alone reports 0 and looks like the build produced nothing.
-echo "modules: $(find "$OUT/modroot/lib/modules" -type f -name '*.ko*' 2>/dev/null | wc -l) objects, $(du -sh "$OUT/modroot/lib/modules" 2>/dev/null | cut -f1)"
+echo "================================================================"
+cat "$OUT/BUILDINFO"
+echo "================================================================"
+
+# A dirty tree means the version name above is a claim the tree does not support:
+# the tag names a commit, and the build contains something else.
+case "$DESCRIBE" in
+  *-dirty)
+    echo
+    echo "!! WORKING TREE IS DIRTY — '$DESCRIBE' does not describe what was built."
+    echo "!! Commit or stash before archiving this as a baseline."
+    git -C "$BASE" status --short | head -10
+    ;;
+esac
+
 echo
+echo "Written to $OUT/BUILDINFO — deploy.sh reads it and verifies the sha256 on the gateway."
 echo "Next: deploy.sh $WHICH  (see README for what z08 has to do with it)"
