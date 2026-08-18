@@ -1065,6 +1065,29 @@ static bool should_skip_region(struct memblock_type *type,
 	if (nid != NUMA_NO_NODE && nid != m_nid)
 		return true;
 
+#ifdef CONFIG_LTRAM
+	/*
+	 * Boot-time allocators -- per-CPU areas, swiotlb, the qspinlock hash,
+	 * CPU-entry page tables -- ask for NUMA_NO_NODE. memblock searches
+	 * TOP-DOWN, and the flash window is the HIGHEST-PFN range on this
+	 * layout, so the default answer would be LtRAM: every store silently
+	 * discarded, and the kernel believing it is valid.
+	 *
+	 * Skip the RANGE. Do NOT rewrite the request to node 0, which is what
+	 * this used to do: until numa_init() calls memblock_set_node(), every
+	 * region added by memblock_add() is still tagged MAX_NUMNODES, so the
+	 * nid test above rejects ALL of them and every top-down allocation
+	 * fails -- including the page-table allocations in paging_init(), which
+	 * runs before any console exists. Filtering the range instead has no
+	 * ordering dependency: ltram_end_pfn is 0 until the window is declared,
+	 * so this is inert before that and exact afterwards.
+	 */
+	if (nid != LTRAM_NUMA_NODE && ltram_end_pfn &&
+	    PFN_DOWN(m->base) >= ltram_start_pfn &&
+	    PFN_DOWN(m->base) < ltram_end_pfn)
+		return true;
+#endif
+
 	/* skip hotpluggable memory regions if needed */
 	if (movable_node_is_enabled() && memblock_is_hotpluggable(m) &&
 	    !(flags & MEMBLOCK_HOTPLUG))
@@ -1218,24 +1241,6 @@ void __init_memblock __next_mem_range_rev(u64 *idx, int nid,
 
 	if (WARN_ONCE(nid == MAX_NUMNODES, "Usage of MAX_NUMNODES is deprecated. Use NUMA_NO_NODE instead\n"))
 		nid = NUMA_NO_NODE;
-
-#ifdef CONFIG_LTRAM
-	/*
-	 * Boot-time allocators -- per-CPU areas, swiotlb, the qspinlock hash,
-	 * CPU-entry page tables -- ask for NUMA_NO_NODE. memblock then searches
-	 * TOP-DOWN, and the flash window is the HIGHEST-PFN range on this
-	 * layout, so the default answer is LtRAM. Every store to that memory is
-	 * silently discarded and the kernel believes it is valid.
-	 *
-	 * Pin those to node 0. For the common case this is identical to a kernel
-	 * with no LtRAM at all: same top-down search, starting from the top of
-	 * node 0 instead. The retry path below can still fall back to any node
-	 * if node 0 is exhausted, which is what the stray-allocation warning
-	 * exists to catch.
-	 */
-	if (nid == NUMA_NO_NODE)
-		nid = 0;
-#endif
 
 	if (*idx == (u64)ULLONG_MAX) {
 		idx_a = type_a->cnt - 1;

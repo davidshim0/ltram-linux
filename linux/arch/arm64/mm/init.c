@@ -335,17 +335,22 @@ void __init bootmem_init(void)
 	 * NUMA is initialised. The window is not in any firmware table on this
 	 * platform, so if it is not injected here it does not exist at all.
 	 */
+	pr_info("ltram-dbg: bootmem_init enter\n");
 	ltram_declare_node();
+	pr_info("ltram-dbg: declare_node done\n");
 
 	min = PFN_UP(memblock_start_of_DRAM());
 	max = PFN_DOWN(memblock_end_of_DRAM());
+	pr_info("ltram-dbg: min=%lu max=%lu\n", min, max);
 
 	early_memtest(min << PAGE_SHIFT, max << PAGE_SHIFT);
 
 	max_pfn = max_low_pfn = max;
 	min_low_pfn = min;
 
+	pr_info("ltram-dbg: -> arch_numa_init\n");
 	arch_numa_init();
+	pr_info("ltram-dbg: arch_numa_init done\n");
 
 	/*
 	 * must be done after arch_numa_init() which calls numa_init() to
@@ -362,8 +367,12 @@ void __init bootmem_init(void)
 	 * sparse_init() tries to allocate memory from memblock, so must be
 	 * done after the fixed reservations
 	 */
+	pr_info("ltram-dbg: -> sparse_init\n");
 	sparse_init();
+	pr_info("ltram-dbg: sparse_init done\n");
+	pr_info("ltram-dbg: -> zone_sizes_init\n");
 	zone_sizes_init();
+	pr_info("ltram-dbg: zone_sizes_init done\n");
 
 	/*
 	 * Reserve the CMA area after arm64_dma_phys_limit was initialised.
