@@ -22,3 +22,8 @@ workloads/*/ltram-inspect.native
 
 build-*.log
 probe_*.log
+
+# Prebuilt workload binaries (rebuild with each workload's Makefile)
+workloads/pagerank/workloads/pr
+workloads/rwstress/ltram_rw_stress
+workloads/basic_tests/cow_to_dram

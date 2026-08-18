@@ -1,0 +1,139 @@
+#!/bin/sh
+
+INTERACTIVE=0
+
+detect_interactive() {
+    # Check kernel command line for interactive=1
+    if grep -q "interactive=1" /proc/cmdline; then
+        echo "Interactive mode detected: skipping workload and shutdown."
+        INTERACTIVE=1
+    fi
+}
+
+start_run() {
+    mkdir -p /mnt/workloads
+    mkdir -p /mnt/results
+    mkdir -p /mnt/inputs
+
+    # Mount the shared directories from the host
+    mount -t 9p -o trans=virtio workloads /mnt/workloads
+    mount -t 9p -o trans=virtio results /mnt/results
+    mount -t 9p -o trans=virtio inputs /mnt/inputs
+
+    # Verify NUMA topology was picked up correctly
+    numactl --hardware > /mnt/results/numa-topology.txt
+
+    # Enable NUMA balancing
+    # echo 1 > /proc/sys/kernel/numa_balancing
+
+    # Snapshot vmstat before workload
+    cp /proc/vmstat /mnt/results/vmstat-before.txt
+
+    echo 1 > /proc/sys/vm/overcommit_memory
+
+    # Start monitoring
+    sh /mnt/workloads/monitoring/meminfo_log.sh > /mnt/results/meminfo_$1.txt &
+}
+
+run_workload() {
+    # If we're in interactive mode, skip running any workload
+    if [ "$INTERACTIVE" -eq 1 ]; then
+        echo "Interactive mode: not running any workload."
+        return 0
+    fi
+
+    echo "Kernel boot parameter requested workload: $1"
+
+    case "$1" in
+        matmul) matmul ;;
+        gapbs) gapbs_pagerank ;;
+        redis) redis ;;
+        llama) llama ;;
+        *) echo "Unknown workload: $1. Defaulting to matmul."; matmul ;;
+    esac
+}
+
+matmul() {
+    echo "Starting Matrix Multiplication workload..."
+
+    # numactl --membind=0 forces all allocations to Node 0 (DRAM)
+    numactl --cpunodebind=0 --membind=0 /mnt/workloads/matmul/matrix_multiply > /mnt/results/matrix-output.txt
+
+    echo "Matrix Multiplication complete."
+}
+
+gapbs_pagerank() {
+    echo "Running GAPbs PageRank..."
+
+    # -g 20 generates a Kronecker graph with 2^20 vertices
+    # numactl --membind=0 forces all allocations to Node 0 (DRAM)
+    numactl --cpunodebind=0 --membind=0 /mnt/workloads/pr -g 20 > /mnt/results/pr-output.txt 2>&1
+
+    echo "PageRank complete."
+}
+
+redis() {
+    export LD_LIBRARY_PATH=/mnt/workloads/YCSB-C/install:$LD_LIBRARY_PATH
+
+    ip link set lo up
+
+    echo "Starting Redis server on Node 0..."
+    numactl --cpunodebind=0 --membind=0 redis-server --save "" --daemonize yes
+    sleep 2
+
+    WORKLOAD_PATH="/mnt/workloads/YCSB-C/workloads/workloadmini.spec"
+
+    echo "Phase 1: Loading data into Redis..."
+    /mnt/workloads/YCSB-C/ycsbc -db redis -P "$WORKLOAD_PATH" > /mnt/results/ycsb-load.txt 2>&1
+
+    echo "Phase 2: Running operations..."
+    /mnt/workloads/YCSB-C/ycsbc -db redis -P "$WORKLOAD_PATH" > /mnt/results/ycsb-run.txt 2>&1
+}
+
+llama() {
+    WORKLOAD_PATH="/mnt/workloads/llama/llama-bench"
+    MODEL_PATH="/mnt/inputs/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+
+    numactl --cpunodebind=0 --membind=0 $WORKLOAD_PATH -m $MODEL_PATH 2>&1
+}
+
+end_run() {
+    # Snapshot vmstat after
+    cp /proc/vmstat /mnt/results/vmstat-after.txt
+
+    # Per-node memory breakdown
+    for node in 0 1; do
+      cat /sys/devices/system/node/node${node}/meminfo \
+        > /mnt/results/node${node}-meminfo.txt
+    done
+
+    # End monitoring
+    sh /mnt/workloads/monitoring/meminfo_log.sh --end /mnt/results/meminfo_$1.txt > /mnt/results/meminfo_summary_$1.txt
+
+    # Your custom debugfs counters (once you've added them to the kernel)
+    cat /sys/kernel/debug/ltram/stats > /mnt/results/ltram-stats.txt 2>/dev/null || true
+
+    # In interactive mode, do not power off the VM
+    if [ "$INTERACTIVE" -eq 1 ]; then
+        echo "Interactive mode: leaving VM running."
+        return 0
+    fi
+
+    # Done — power off
+    echo "Workload complete. Powering off..."
+    poweroff -f
+}
+
+# Extract the value of ltram_workload from /proc/cmdline
+SELECTED=$(grep -o 'ltram_workload=[^ ]*' /proc/cmdline | cut -d= -f2)
+
+case "$1" in
+	start)
+        detect_interactive
+        start_run $SELECTED
+        run_workload $SELECTED
+        end_run $SELECTED;;
+	*)
+		echo "Usage: $0 {start}"
+		exit 1
+esac

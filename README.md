@@ -74,6 +74,41 @@ Produces `out-vanilla/arch/arm64/boot/Image` plus stripped modules under
 `out-vanilla/modroot/`. `LOCALVERSION` tags it `-vanilla68` so `uname -r` distinguishes it
 from the golden kernel at a glance.
 
+## Booting it — `emg acquire`
+
+Run **on the gateway**, not here. Deploy first, or the machine boots whatever the gateway
+happened to be holding.
+
+```bash
+emg acquire -n ltram -g 2025-07-28 \
+    -k hushim/vmlinuz -i hushim/initrd.img zuestoll08
+```
+
+| field | means |
+|---|---|
+| `-n ltram` | the **persistent volume**. `emg release` does *not* delete a named volume, so `~/nor_eci`, `/lib/modules/*` and ssh keys survive release/acquire. A new name gets you a bare machine with none of your tools. |
+| `-g 2025-07-28` | the golden root image |
+| `-k` / `-i` | paths under `/srv/tftp/userkernels` on the gateway — where `deploy.sh` and `push-initrd.sh` put them |
+| `zuestoll08` | the node |
+
+Drop `-k` and `-i` to boot the stock golden image with no custom kernel.
+
+**Check what the gateway is actually holding before you acquire.** A stale `vmlinuz` there
+is indistinguishable from a bad kernel once the machine is up:
+
+```bash
+ls -la /srv/tftp/userkernels/hushim/
+```
+
+The full order:
+
+```bash
+./scripts/build.sh ltram                 # on ba8
+./scripts/deploy.sh ltram                # kernel -> gateway, modules -> z08
+./scripts/push-initrd.sh 6.8.0-ltram     # initrd generated on z08 -> gateway
+emg acquire -n ltram -g 2025-07-28 -k hushim/vmlinuz -i hushim/initrd.img zuestoll08
+```
+
 ## Known variables, stated rather than discovered later
 
 **Toolchain.** The golden kernel was built with `aarch64-linux-gnu-gcc-13`; ba8 has
