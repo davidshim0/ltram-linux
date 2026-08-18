@@ -156,12 +156,22 @@ static void __init zone_sizes_init(void)
 	max_zone_pfns[ZONE_NORMAL] = max_pfn;
 #ifdef CONFIG_LTRAM
 	/*
-	 * ZONE_LTRAM is the highest zone and covers the top of the address
-	 * space, so it ends where memory ends. free_area_init() derives each
-	 * zone from the previous boundary, so ZONE_NORMAL keeps everything
-	 * below the flash window and ZONE_LTRAM takes the window itself.
+	 * free_area_init() derives each zone from the PREVIOUS zone's boundary,
+	 * so ZONE_NORMAL has to END where the flash window BEGINS. Setting both
+	 * entries to max_pfn -- which this used to do, while the comment claimed
+	 * otherwise -- makes ZONE_LTRAM span max_pfn..max_pfn, i.e. nothing, and
+	 * lets ZONE_NORMAL swallow the window:
+	 *
+	 *   Normal   [mem 0x0000000100000000-0x000001400fffffff]
+	 *   LtRAM    empty
+	 *
+	 * ZONE_DEVICE sits between the two with max_zone_pfns[] left at 0, which
+	 * free_area_init() renders as empty without disturbing the boundaries.
 	 */
-	max_zone_pfns[ZONE_LTRAM] = max_pfn;
+	if (ltram_start_pfn) {
+		max_zone_pfns[ZONE_NORMAL] = ltram_start_pfn;
+		max_zone_pfns[ZONE_LTRAM]  = max_pfn;
+	}
 #endif
 
 	free_area_init(max_zone_pfns);
