@@ -17,6 +17,9 @@
 #include <linux/atomic.h>
 #include <linux/io.h>
 #include <linux/moduleparam.h>
+#include <linux/module.h>
+#include <linux/spinlock.h>
+#include <linux/highmem.h>
 
 unsigned long ltram_start_pfn __read_mostly;
 unsigned long ltram_end_pfn   __read_mostly;
@@ -64,6 +67,102 @@ void __init ltram_declare_node(void)
 		LTRAM_NUMA_NODE, LTRAM_PHYS_BASE, LTRAM_PHYS_SIZE >> 20,
 		ltram_start_pfn, ltram_end_pfn, ltram_end_pfn - ltram_start_pfn);
 }
+
+
+/*
+ * ---- the write backend ---------------------------------------------------
+ *
+ * The NOR driver is a module and can be unloaded while a migration is in
+ * flight. A bare pointer plus a NULL check is not enough: the check can pass,
+ * the module can go away, and the call then lands in freed text. So every call
+ * holds a module reference for its duration, and unregister waits.
+ */
+static const struct ltram_flash_ops *ltram_ops;
+static DEFINE_SPINLOCK(ltram_ops_lock);
+
+static atomic64_t ltram_writes_ok;
+static atomic64_t ltram_writes_failed;
+
+int ltram_register_flash_ops(const struct ltram_flash_ops *ops)
+{
+	if (!ops || !ops->write_page)
+		return -EINVAL;
+
+	spin_lock(&ltram_ops_lock);
+	if (ltram_ops) {
+		spin_unlock(&ltram_ops_lock);
+		return -EBUSY;
+	}
+	ltram_ops = ops;
+	spin_unlock(&ltram_ops_lock);
+
+	pr_info("ltram: flash backend registered by %s\n",
+		ops->owner ? module_name(ops->owner) : "builtin");
+	return 0;
+}
+EXPORT_SYMBOL_GPL(ltram_register_flash_ops);
+
+void ltram_unregister_flash_ops(const struct ltram_flash_ops *ops)
+{
+	spin_lock(&ltram_ops_lock);
+	if (ltram_ops == ops)
+		ltram_ops = NULL;
+	spin_unlock(&ltram_ops_lock);
+	pr_info("ltram: flash backend unregistered\n");
+}
+EXPORT_SYMBOL_GPL(ltram_unregister_flash_ops);
+
+bool ltram_have_flash_ops(void)
+{
+	bool have;
+
+	spin_lock(&ltram_ops_lock);
+	have = ltram_ops != NULL;
+	spin_unlock(&ltram_ops_lock);
+	return have;
+}
+
+/*
+ * Program one page of flash. Refuses rather than pretending: with no backend
+ * registered this returns -ENODEV, so a caller cannot mistake "nothing wrote
+ * it" for success -- which is the whole failure mode this subsystem exists to
+ * eliminate.
+ */
+int ltram_write_page(unsigned long dst_pfn, const void *src)
+{
+	const struct ltram_flash_ops *ops;
+	struct module *owner;
+	int rc;
+
+	if (WARN_ON_ONCE(!pfn_is_ltram(dst_pfn)))
+		return -EINVAL;
+
+	spin_lock(&ltram_ops_lock);
+	ops = ltram_ops;
+	owner = ops ? ops->owner : NULL;
+	/* pin the provider before dropping the lock, so it cannot unload
+	 * between here and the call */
+	if (ops && owner && !try_module_get(owner))
+		ops = NULL;
+	spin_unlock(&ltram_ops_lock);
+
+	if (!ops) {
+		atomic64_inc(&ltram_writes_failed);
+		return -ENODEV;
+	}
+
+	rc = ops->write_page(dst_pfn, src);
+
+	if (owner)
+		module_put(owner);
+
+	if (rc)
+		atomic64_inc(&ltram_writes_failed);
+	else
+		atomic64_inc(&ltram_writes_ok);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(ltram_write_page);
 
 /*
  * ---- boot-time read self-test -------------------------------------------
@@ -160,6 +259,52 @@ static int __init ltram_selftest(void)
 }
 late_initcall(ltram_selftest);
 
+/*
+ * echo "<pfn> <u32 pattern>" > /sys/kernel/debug/ltram/write_test
+ *
+ * Fills a page with the pattern and programs it through the backend. Exists so
+ * the write path can be exercised with one page before any migration machinery
+ * depends on it -- verify by reading the page back with the cache evicted, and
+ * by watching the FPGA status word advance (beats +64, pages +16, erases +1).
+ * The counter movement is the honest witness: a write that silently did nothing
+ * leaves correct-looking cached data and zero counter delta.
+ */
+static ssize_t ltram_write_test(struct file *f, const char __user *ubuf,
+				size_t len, loff_t *ppos)
+{
+	unsigned long pfn;
+	unsigned int pat;
+	char buf[64];
+	u32 *page;
+	int rc, i;
+
+	if (len >= sizeof(buf))
+		return -EINVAL;
+	if (copy_from_user(buf, ubuf, len))
+		return -EFAULT;
+	buf[len] = 0;
+	if (sscanf(buf, "%lu %x", &pfn, &pat) != 2)
+		return -EINVAL;
+
+	page = (u32 *)__get_free_page(GFP_KERNEL);
+	if (!page)
+		return -ENOMEM;
+	for (i = 0; i < PAGE_SIZE / 4; i++)
+		page[i] = pat;
+
+	rc = ltram_write_page(pfn, page);
+	free_page((unsigned long)page);
+
+	pr_info("ltram: write_test pfn %lu pattern %08x -> %d\n", pfn, pat, rc);
+	return rc ? rc : len;
+}
+
+static const struct file_operations ltram_write_test_fops = {
+	.owner = THIS_MODULE,
+	.write = ltram_write_test,
+	.llseek = noop_llseek,
+};
+
 static int __init ltram_debugfs_init(void)
 {
 	struct dentry *d;
@@ -172,6 +317,9 @@ static int __init ltram_debugfs_init(void)
 			   (u64 *)&ltram_stray_allocs.counter);
 	debugfs_create_ulong("start_pfn", 0444, d, &ltram_start_pfn);
 	debugfs_create_ulong("end_pfn",   0444, d, &ltram_end_pfn);
+	debugfs_create_u64("writes_ok",     0444, d, (u64 *)&ltram_writes_ok.counter);
+	debugfs_create_u64("writes_failed", 0444, d, (u64 *)&ltram_writes_failed.counter);
+	debugfs_create_file("write_test", 0200, d, NULL, &ltram_write_test_fops);
 	return 0;
 }
 late_initcall(ltram_debugfs_init);
