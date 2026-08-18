@@ -15,6 +15,8 @@
 #include <linux/printk.h>
 #include <linux/debugfs.h>
 #include <linux/atomic.h>
+#include <linux/io.h>
+#include <linux/moduleparam.h>
 
 unsigned long ltram_start_pfn __read_mostly;
 unsigned long ltram_end_pfn   __read_mostly;
@@ -125,6 +127,101 @@ void __init ltram_declare_node(void)
 		LTRAM_NUMA_NODE, LTRAM_PHYS_BASE, LTRAM_PHYS_SIZE >> 20,
 		ltram_start_pfn, ltram_end_pfn, ltram_end_pfn - ltram_start_pfn);
 }
+
+/*
+ * ---- boot-time read self-test -------------------------------------------
+ *
+ * Proves the window is mapped, coherent and readable from kernel context --
+ * which is a different claim from "the node appears in /proc". It reads only:
+ * the CPU physically cannot store here, so the write half of the self-test has
+ * to wait until the NOR driver registers a DMA backend.
+ *
+ * The harness pattern is SELF-CHECKING, which is what makes this possible with
+ * no userspace and no reference file: every 32-bit word equals its own byte
+ * offset within the device xored with a seed, so the expected value at any
+ * address is computable here.
+ *
+ * Sampling: a stride that is coprime with both the 4 KiB sector and the 128 B
+ * cache line, so the walk crosses sector and line boundaries instead of
+ * sitting in one comfortable region. The known read-side fault on this
+ * hardware only appears on the FIRST word of a line, and a test that never
+ * lands there will not see it.
+ */
+static unsigned int ltram_selftest_words = 1024;
+core_param(ltram_selftest_words, ltram_selftest_words, uint, 0444);
+static unsigned int ltram_selftest_seed;
+core_param(ltram_selftest_seed, ltram_selftest_seed, uint, 0444);
+
+static int __init ltram_selftest(void)
+{
+	void __iomem *base;
+	unsigned int i, erased = 0, zero = 0, matched = 0;
+	u64 stride = 4099;	/* coprime with 4096 and 128 */
+	u32 sum = 0;
+
+	if (!ltram_end_pfn || !ltram_selftest_words)
+		return 0;
+
+	/*
+	 * Late enough that the FPGA is programmed and the ECI link is up.
+	 * Reading before that is an external abort -- a dead boot with nothing
+	 * after it on the console -- which is why this is a late initcall and
+	 * not part of the declaration path.
+	 */
+	base = memremap(LTRAM_PHYS_BASE, LTRAM_PHYS_SIZE, MEMREMAP_WB);
+	if (!base) {
+		pr_err("ltram: self-test could not map the window\n");
+		return 0;
+	}
+
+	for (i = 0; i < ltram_selftest_words; i++) {
+		u64 off = ((u64)i * stride * 4) % (LTRAM_PHYS_SIZE - 4);
+		u32 got;
+
+		off &= ~3ULL;
+		got = readl(base + off);
+		sum += got;
+
+		if (got == 0xFFFFFFFFu)
+			erased++;
+		else if (got == 0)
+			zero++;
+
+		/*
+		 * The harness writes word = (byte offset) ^ seed, but the seed is
+		 * PER SECTOR, so a single seed cannot describe the whole device.
+		 * Verification is therefore opt-in: pass ltram_selftest_seed= after
+		 * filling a region with one known seed. Without it this reports a
+		 * fingerprint rather than asserting a pattern the device may not
+		 * hold -- a test that cries wolf on healthy hardware is worse than
+		 * no test, because it trains you to ignore it.
+		 */
+		if (ltram_selftest_seed && got == ((u32)off ^ ltram_selftest_seed))
+			matched++;
+
+		if (i < 4)
+			pr_info("ltram: self-test sample +0x%08llx = %08x\n", off, got);
+	}
+	memunmap(base);
+
+	pr_info("ltram: self-test read %u words, stride %llu: erased(ff) %u, zero %u, checksum %08x\n",
+		ltram_selftest_words, stride, erased, zero, sum);
+
+	if (ltram_selftest_seed)
+		pr_info("ltram: self-test seed 0x%08x: %u/%u words match offset^seed%s\n",
+			ltram_selftest_seed, matched, ltram_selftest_words,
+			matched == ltram_selftest_words ? "" : "  <-- MISMATCH");
+
+	/*
+	 * The load-bearing result is not any particular value: it is that we got
+	 * here at all. Reaching this line means the window is mapped, readable
+	 * from kernel context, and did not abort -- which is the claim step 3
+	 * exists to make. Values are for cross-checking against the harness.
+	 */
+	pr_info("ltram: self-test completed without abort -- window is readable from kernel context\n");
+	return 0;
+}
+late_initcall(ltram_selftest);
 
 static int __init ltram_debugfs_init(void)
 {
