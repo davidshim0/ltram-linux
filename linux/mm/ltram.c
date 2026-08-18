@@ -164,6 +164,49 @@ int ltram_write_page(unsigned long dst_pfn, const void *src)
 }
 EXPORT_SYMBOL_GPL(ltram_write_page);
 
+
+/*
+ * ---- migration into flash -------------------------------------------------
+ */
+bool folio_is_ltram(const struct folio *folio)
+{
+	return folio && pfn_is_ltram(folio_pfn((struct folio *)folio));
+}
+EXPORT_SYMBOL_GPL(folio_is_ltram);
+
+/*
+ * Program every page of @dst from @src through the driver.
+ *
+ * Called from migrate_folio_extra() BEFORE folio_migrate_mapping(), which is
+ * the whole point: at that moment try_to_migrate() has already unmapped @src,
+ * so its contents are stable, and a failure here aborts the migration with
+ * nothing published. Hooked after the mapping move there would be no way to
+ * fail safely -- the mapping would point at flash that never received the data,
+ * which is exactly the silent corruption this exists to prevent.
+ */
+int ltram_copy_to_flash(struct folio *dst, struct folio *src)
+{
+	long nr = folio_nr_pages(dst);
+	long i;
+
+	if (WARN_ON_ONCE(folio_nr_pages(src) != nr))
+		return -EINVAL;
+
+	for (i = 0; i < nr; i++) {
+		void *from = kmap_local_folio(src, i * PAGE_SIZE);
+		int rc = ltram_write_page(folio_pfn(dst) + i, from);
+
+		kunmap_local(from);
+		if (rc) {
+			pr_warn_ratelimited("ltram: flash write failed at page %ld/%ld of folio pfn %lu (%d) -- migration aborted\n",
+					    i, nr, folio_pfn(dst), rc);
+			return rc;
+		}
+	}
+	return 0;
+}
+EXPORT_SYMBOL_GPL(ltram_copy_to_flash);
+
 /*
  * ---- boot-time read self-test -------------------------------------------
  *
