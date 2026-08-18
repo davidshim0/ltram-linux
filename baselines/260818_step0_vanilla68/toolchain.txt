@@ -1,0 +1,2 @@
+aarch64-linux-gnu-gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+host gcc: gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
