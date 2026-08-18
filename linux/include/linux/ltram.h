@@ -5,14 +5,19 @@
  *
  * THE ONE HARDWARE FACT EVERYTHING FOLLOWS FROM:
  *
- *   The CPU can LOAD from this window coherently. It can never STORE to it.
- *   A store is not faulted or reported -- the instruction retires normally and
- *   the data is silently discarded. A later load returns the previous flash
- *   contents, which look entirely plausible.
+ *   A STORE TO THE COHERENT READ WINDOW IS SILENTLY DISCARDED. It is not
+ *   faulted or reported -- the instruction retires normally, the data goes
+ *   nowhere, and a later load returns the previous flash contents, which look
+ *   entirely plausible.
  *
- * So every mechanism here exists to manufacture a signal the hardware does not
- * give us. Data reaches the array only through the FPGA's DMA descriptor ring,
- * driven by the NOR driver.
+ * The device is not read-only. The CPU writes to it constantly, just through a
+ * different window: the driver stores a descriptor to the FPGA's uncached MMIO
+ * window and the DMA engine then reads the source page out of DRAM and programs
+ * it. Three windows exist -- cacheable reads at RD_BASE, MMIO control at
+ * IO_BASE, erase trigger at ER_BASE -- and only RD_BASE is coherent.
+ *
+ * What is impossible is memcpy() INTO the read window, which is precisely what
+ * folio_migrate_copy() does. That is why ltram_copy_to_flash() exists.
  */
 #ifndef _LINUX_LTRAM_H
 #define _LINUX_LTRAM_H

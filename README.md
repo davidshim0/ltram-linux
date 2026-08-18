@@ -6,11 +6,25 @@ Micron MT35XU02GCBA octal-DDR NOR flash, reached over ECI through the Enzian FPG
 presented to Linux as a NUMA node and a memory zone, with a placement policy that
 promotes read-mostly pages onto it. Cavium ThunderX arm64 + Xilinx VU9P.
 
-**The one hardware fact everything follows from:** the processor can LOAD from the flash
-window coherently, and can never STORE to it. A store retires normally and the data is
-silently discarded; a later load returns the previous flash contents, which look entirely
-plausible. Data reaches the array only through the FPGA's DMA ring. Every mechanism here
-exists to manufacture a signal the hardware does not give.
+The CPU reaches the flash through **three separate windows**, and only one of them is
+coherent:
+
+| window | mapping | what it does |
+|---|---|---|
+| `rd_win` @ `RD_BASE` | `ioremap_cache` | **reads.** Coherent, cacheable, served by `read_manager` |
+| `io_win` @ `IO_BASE` | `ioremap` (uncached) | **control.** `writeq(desc, io_win + dst)` hands the DMA engine a descriptor |
+| `er_win` @ `ER_BASE` | `ioremap` (uncached) | erase trigger |
+
+**A store to the read window is silently discarded.** It retires normally, the data goes
+nowhere, and a later load returns the previous flash contents — which look entirely
+plausible. Writes reach the array by a different route: the CPU stores a descriptor to
+`io_win` carrying `(len << 40) | dma_handle`, and the FPGA's DMA engine then reads the
+source page out of DRAM and programs it.
+
+So the CPU can absolutely write to this device. What it cannot do is
+`memcpy(flash_window, src, n)` — and that is exactly what `folio_migrate_copy()` does,
+which is why migrating a page into flash moved the mapping and not the data until the
+hook in step 5.
 
 ## Layout
 
