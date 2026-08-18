@@ -19,6 +19,7 @@
 
 #include <linux/types.h>
 #include <linux/init.h>
+#include <linux/errno.h>
 
 /* The coherent NOR read window. RD_BASE carries the node bit (40) and the
  * marker bit (38) that separates NOR traffic from DMA traffic on the shared
@@ -43,6 +44,41 @@ static inline bool pfn_is_ltram(unsigned long pfn)
 	return pfn >= ltram_start_pfn && pfn < ltram_end_pfn;
 }
 
+/*
+ * The write backend.
+ *
+ * mm/ owns the zone and the policy; it must know nothing about the FPGA. The
+ * NOR driver fills this in and registers it, so the only coupling is one
+ * function pointer.
+ */
+struct ltram_flash_ops {
+	struct module *owner;
+	/*
+	 * Erase and program one PAGE_SIZE region.  @dst_pfn is inside
+	 * ZONE_LTRAM, @src is a kernel-mapped source page.
+	 *
+	 * MAY SLEEP -- an erase is ~16.4 ms and the DMA ~1.3 ms.  Must not
+	 * return until the data is durably committed: the caller publishes the
+	 * migration immediately afterwards, and there is no second chance to
+	 * notice a failure.
+	 *
+	 * The DMA programs the array behind the CPU's back, so a cached copy of
+	 * the destination line can be stale.  Any read-back verify inside the
+	 * implementation must evict first, with a physical address -- on this
+	 * machine `dc civac` is a no-op because the LLC is the point of
+	 * coherence, so a verify without eviction re-reads the very line it is
+	 * meant to check and always passes.
+	 *
+	 * Returns 0 on success, negative errno on failure.
+	 */
+	int (*write_page)(unsigned long dst_pfn, const void *src);
+};
+
+int  ltram_register_flash_ops(const struct ltram_flash_ops *ops);
+void ltram_unregister_flash_ops(const struct ltram_flash_ops *ops);
+bool ltram_have_flash_ops(void);
+int  ltram_write_page(unsigned long dst_pfn, const void *src);
+
 void __init ltram_declare_node(void);
 void ltram_note_stray_alloc(unsigned long pfn, const char *where);
 
@@ -51,6 +87,8 @@ void ltram_note_stray_alloc(unsigned long pfn, const char *where);
 static inline bool pfn_is_ltram(unsigned long pfn) { return false; }
 static inline void ltram_declare_node(void) { }
 static inline void ltram_note_stray_alloc(unsigned long pfn, const char *w) { }
+static inline bool ltram_have_flash_ops(void) { return false; }
+static inline int ltram_write_page(unsigned long p, const void *s) { return -ENODEV; }
 
 #endif /* CONFIG_LTRAM */
 #endif /* _LINUX_LTRAM_H */
