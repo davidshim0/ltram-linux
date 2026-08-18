@@ -399,6 +399,29 @@ static int __init numa_init(int (*init_func)(void))
 	if (ret < 0)
 		goto out_free_distance;
 
+#ifdef CONFIG_LTRAM
+	/*
+	 * The flash window is in NO firmware table, so init_func() -- which
+	 * parses ACPI SRAT or the device tree -- cannot have seen it.
+	 * ltram_declare_node() put the range into memblock tagged node 1, but
+	 * that is invisible to the NUMA layer, and numa_init() clears
+	 * numa_nodes_parsed at the top of this function anyway.
+	 *
+	 * So the node has to be declared HERE: after the clear, after the
+	 * parser, and before numa_register_nodes() turns the mask into
+	 * pg_data_t allocations. Without it, node 1 is never registered,
+	 * NODE_DATA(1) stays NULL, and free_area_init() dereferences it --
+	 * reading offset 0xa8 from NULL after printing exactly one
+	 * "NUMA: NODE_DATA" line where two nodes should give two.
+	 *
+	 * numa_add_memblk() is the idiomatic entry point: it sets the memblock
+	 * node and adds the bit to numa_nodes_parsed in one step.
+	 */
+	if (ltram_end_pfn)
+		numa_add_memblk(LTRAM_NUMA_NODE, LTRAM_PHYS_BASE,
+				LTRAM_PHYS_BASE + LTRAM_PHYS_SIZE);
+#endif
+
 	if (nodes_empty(numa_nodes_parsed)) {
 		pr_info("No NUMA configuration found\n");
 		ret = -EINVAL;
