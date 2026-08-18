@@ -1,0 +1,45 @@
+cache-probe  region 256 MiB  scrub 64 MiB  line 128 B  order sequential (prefetch + TLB HELP -- contrast run)
+scrub          3.4 ms per pass over 64 MiB
+  WORKSET      LINES    COLD_ns    WARM_ns COLD/WARM WARM_STEP
+   256.0M    2097152     101.38     101.35      1.0x       --
+   181.0M    1482924     101.39     101.37      1.0x     +0.0%
+   128.0M    1048595     101.44     101.37      1.0x     -0.0%
+    90.5M     741475     101.48     101.44      1.0x     +0.1%
+    64.0M     524307     101.57     101.52      1.0x     +0.1%
+    45.3M     370744     101.62     101.57      1.0x     +0.0%
+    32.0M     262158     101.66      99.51      1.0x     -2.0%
+    22.6M     185375     101.71      89.10      1.1x    -10.5%
+    16.0M     131081     101.86      48.86      2.1x    -45.2%
+    11.3M      92689     101.67      30.20      3.4x    -38.2%
+     8.0M      65541     102.04      22.50      4.5x    -25.5%
+     5.7M      46344     102.16      22.44      4.6x     -0.3%
+     4.0M      32770     101.69      22.45      4.5x     +0.0%
+     2.8M      23172     101.43      22.44      4.5x     -0.0%
+     2.0M      16385     102.80      22.44      4.6x     +0.0%
+     1.4M      11586     102.26      22.41      4.6x     -0.1%
+     1.0M       8192     102.47      21.82      4.7x     -2.7%
+     724K       5792     104.87      21.63      4.8x     -0.9%
+     512K       4095     103.30      21.62      4.8x     -0.0%
+     362K       2895     100.06      21.61      4.6x     -0.0%
+     256K       2047      99.94      21.61      4.6x     -0.0%
+     181K       1447     100.17      21.60      4.6x     -0.0%
+     128K       1023     100.59      21.34      4.7x     -1.2%
+      90K        723     101.26      21.34      4.7x     -0.0%
+      64K        511     101.40      21.34      4.8x     -0.0%
+      45K        361     102.41      20.07      5.1x     -5.9%
+      32K        255     103.12       1.53     67.3x    -92.4%
+      22K        180     103.94       1.52     68.2x     -0.5%
+      16K        127     104.41       1.52     68.6x     -0.2%
+      11K         89     107.19       1.52     70.5x     -0.1%
+       8K         62     109.92       1.52     72.4x     -0.1%
+       5K         43     118.37       1.52     77.9x     +0.0%
+
+WARM is the topology: a knee is where WARM_STEP jumps and then settles.
+
+COLD is a DRAM latency only while the working set spans enough pages that
+the prefetcher cannot amortise the fill. Below roughly 1 MiB a cold pass
+touches few enough pages that hardware prefetch fills them wholesale, and
+COLD becomes a bandwidth figure -- do not read the small-size COLD numbers
+as latencies. Its diagnostic value is at the top of the sweep: if COLD
+there is not flat near the DRAM latency, the scrub is not evicting and
+nothing below can be trusted either.
