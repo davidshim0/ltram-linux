@@ -1,0 +1,60 @@
+matmul  N=7168  iters=20  runs=10  seed=20260818
+  weights     196.0 MiB  mprotect PROT_READ ok
+  result       28.0 KiB
+RANGES pid=11034
+RANGE weights 0xeb7644400000 0xeb7650800000 205520896
+RANGE result  0xeb7650b2e000 0xeb7650b35000 28672
+PHYS window  none -- CONFIG_LTRAM=n or debugfs not mounted; every page will classify as DRAM
+PHYS start  weights  pages    50176  present    50176  first pfn 0x000152c4c  phys 0x000152c4c000  huge 0/98  pfnsum 0x3a90be0468224ee1  [base]
+PHYS start  input    pages        7  present        7  first pfn 0x00014f93e  phys 0x00014f93e000  pfnsum 0xc58d757ab6530d85  [base]
+PHYS start  result   pages        7  present        7  first pfn 0x00014f945  phys 0x00014f945000  pfnsum 0xc3074b4322ffc278  [base]
+  run  1/10     6.850 s
+PHYS run1   weights  pages    50176  present    50176  first pfn 0x000152c4c  phys 0x000152c4c000  huge 0/98  pfnsum 0x3a90be0468224ee1  [same]
+PHYS run1   input    pages        7  present        7  first pfn 0x00014f93e  phys 0x00014f93e000  pfnsum 0xc58d757ab6530d85  [same]
+PHYS run1   result   pages        7  present        7  first pfn 0x00014f945  phys 0x00014f945000  pfnsum 0xc3074b4322ffc278  [same]
+  run  2/10     6.851 s
+PHYS run2   weights  pages    50176  present    50176  first pfn 0x000152c4c  phys 0x000152c4c000  huge 0/98  pfnsum 0x3a90be0468224ee1  [same]
+PHYS run2   input    pages        7  present        7  first pfn 0x00014f93e  phys 0x00014f93e000  pfnsum 0xc58d757ab6530d85  [same]
+PHYS run2   result   pages        7  present        7  first pfn 0x00014f945  phys 0x00014f945000  pfnsum 0xc3074b4322ffc278  [same]
+  run  3/10     6.850 s
+PHYS run3   weights  pages    50176  present    50176  first pfn 0x000152c4c  phys 0x000152c4c000  huge 0/98  pfnsum 0x3a90be0468224ee1  [same]
+PHYS run3   input    pages        7  present        7  first pfn 0x00014f93e  phys 0x00014f93e000  pfnsum 0xc58d757ab6530d85  [same]
+PHYS run3   result   pages        7  present        7  first pfn 0x00014f945  phys 0x00014f945000  pfnsum 0xc3074b4322ffc278  [same]
+  run  4/10     6.850 s
+PHYS run4   weights  pages    50176  present    50176  first pfn 0x000152c4c  phys 0x000152c4c000  huge 0/98  pfnsum 0x3a90be0468224ee1  [same]
+PHYS run4   input    pages        7  present        7  first pfn 0x00014f93e  phys 0x00014f93e000  pfnsum 0xc58d757ab6530d85  [same]
+PHYS run4   result   pages        7  present        7  first pfn 0x00014f945  phys 0x00014f945000  pfnsum 0xc3074b4322ffc278  [same]
+  run  5/10     6.850 s
+PHYS run5   weights  pages    50176  present    50176  first pfn 0x000152c4c  phys 0x000152c4c000  huge 0/98  pfnsum 0x3a90be0468224ee1  [same]
+PHYS run5   input    pages        7  present        7  first pfn 0x00014f93e  phys 0x00014f93e000  pfnsum 0xc58d757ab6530d85  [same]
+PHYS run5   result   pages        7  present        7  first pfn 0x00014f945  phys 0x00014f945000  pfnsum 0xc3074b4322ffc278  [same]
+  run  6/10     6.851 s
+PHYS run6   weights  pages    50176  present    50176  first pfn 0x000152c4c  phys 0x000152c4c000  huge 0/98  pfnsum 0x3a90be0468224ee1  [same]
+PHYS run6   input    pages        7  present        7  first pfn 0x00014f93e  phys 0x00014f93e000  pfnsum 0xc58d757ab6530d85  [same]
+PHYS run6   result   pages        7  present        7  first pfn 0x00014f945  phys 0x00014f945000  pfnsum 0xc3074b4322ffc278  [same]
+  run  7/10     6.851 s
+PHYS run7   weights  pages    50176  present    50176  first pfn 0x000152c4c  phys 0x000152c4c000  huge 0/98  pfnsum 0x3a90be0468224ee1  [same]
+PHYS run7   input    pages        7  present        7  first pfn 0x00014f93e  phys 0x00014f93e000  pfnsum 0xc58d757ab6530d85  [same]
+PHYS run7   result   pages        7  present        7  first pfn 0x00014f945  phys 0x00014f945000  pfnsum 0xc3074b4322ffc278  [same]
+  run  8/10     6.851 s
+PHYS run8   weights  pages    50176  present    50176  first pfn 0x000152c4c  phys 0x000152c4c000  huge 0/98  pfnsum 0x3a90be0468224ee1  [same]
+PHYS run8   input    pages        7  present        7  first pfn 0x00014f93e  phys 0x00014f93e000  pfnsum 0xc58d757ab6530d85  [same]
+PHYS run8   result   pages        7  present        7  first pfn 0x00014f945  phys 0x00014f945000  pfnsum 0xc3074b4322ffc278  [same]
+  run  9/10     6.850 s
+PHYS run9   weights  pages    50176  present    50176  first pfn 0x000152c4c  phys 0x000152c4c000  huge 0/98  pfnsum 0x3a90be0468224ee1  [same]
+PHYS run9   input    pages        7  present        7  first pfn 0x00014f93e  phys 0x00014f93e000  pfnsum 0xc58d757ab6530d85  [same]
+PHYS run9   result   pages        7  present        7  first pfn 0x00014f945  phys 0x00014f945000  pfnsum 0xc3074b4322ffc278  [same]
+  run 10/10     6.851 s
+PHYS run10  weights  pages    50176  present    50176  first pfn 0x000152c4c  phys 0x000152c4c000  huge 0/98  pfnsum 0x3a90be0468224ee1  [same]
+PHYS run10  input    pages        7  present        7  first pfn 0x00014f93e  phys 0x00014f93e000  pfnsum 0xc58d757ab6530d85  [same]
+PHYS run10  result   pages        7  present        7  first pfn 0x00014f945  phys 0x00014f945000  pfnsum 0xc3074b4322ffc278  [same]
+RESULT mean 6.850 s   sd 0.000 s   (0.00%)
+DIGEST 41bd154efbce9bd07461680229516268bd481e8bbdb3d187cd8937ca7ae93a92
+PHYS end    weights  pages    50176  present    50176  first pfn 0x000152c4c  phys 0x000152c4c000  huge 0/98  pfnsum 0x3a90be0468224ee1  [same]
+PHYS end    input    pages        7  present        7  first pfn 0x00014f93e  phys 0x00014f93e000  pfnsum 0xc58d757ab6530d85  [same]
+PHYS end    result   pages        7  present        7  first pfn 0x00014f945  phys 0x00014f945000  pfnsum 0xc3074b4322ffc278  [same]
+PHYS verdict weights  pfnsum constant across 12 reports -- no page of this region moved
+PHYS verdict input    pfnsum constant across 12 reports -- no page of this region moved
+PHYS verdict result   pfnsum constant across 12 reports -- no page of this region moved
+PHYS overhead 4.852 s over 12 reports -- EXCLUDED from every run time and from RESULT
+GATE PASS: variance <= 2% -- usable as a control
