@@ -20,7 +20,7 @@ All measured on this machine, not assumed.
 |---|---:|---|
 | **NOR read, per 128 B line** | **787 ns** | `test=43`, 2026-08-15. Identical within 0.3% for sequential, random, dependent and independent access — see §0.3 |
 | **DRAM read, per 128 B line** | **124 ns** | `test=43` dependent chase; a userspace control gave 137 ns |
-| **NOR : DRAM** | **6.3x** | measured, not derived from two different primitives |
+| **NOR : DRAM** | **6.0x random, 7.8x sequential** | 787 ns against §0.0's 132 ns / 101 ns. NOR is pattern-insensitive (§0.3) and DRAM is not, so the ratio *depends on the access pattern* — the single 6.3x figure previously here assumed it did not |
 | flash access alone (`r4`) | 98 cycles (min = max) | VIO, 33.3 M reads |
 | write, beats landed (`st_wait=1`) | 918 µs | **not safe to read** |
 | write, pages retired (`st_wait=2`) | **1330 µs** | safe to repoint a PTE |
@@ -29,6 +29,90 @@ All measured on this machine, not assumed.
 | page ↔ sector | **1:1** (both 4 KB) | no translation layer needed |
 | rated endurance | 100,000 erases/sector | datasheet |
 | **hardware DBM (FEAT_HAFDBS)** | **ABSENT** — `HAFDBS=0` | probe module, 2026-08-14 |
+
+### 0.0 The CPU side, measured 2026-08-18 — added because the NOR figures above had no comparable counterpart **[D]**
+
+**The memory hierarchy, in three lines.** These are the numbers to quote; everything
+below is the supporting detail.
+
+```
+L1D     32 KiB   per core            1.52 ns    3.0 cycles
+L2      16 MiB   shared, all 48 cpus  22.4 ns   44.9 cycles     <- this IS the LLC
+DRAM                                  132 ns              random dependent chase
+                                      101 ns              sequential — locality is worth 1.31x
+```
+
+Measured with `workloads/tools/cache-probe`, one dependent load per 128 B line: no
+prefetch to exploit, no memory-level parallelism to hide behind, so these are latencies
+rather than throughputs. NOR's 787 ns sits directly against the 132 ns line.
+
+| quantity | value | source |
+|---|---:|---|
+| core clock (RCLK) | **2000 MHz** | Cavium boot stub, `SKU: CN8890-2000BG2601` |
+| cache line | 128 B | `getconf LEVEL1_DCACHE_LINESIZE`; matches the 128 B line used throughout |
+| **L1 D-cache** | **32 KiB** per core | `matmul` sweep — floor holds to a 24.4 KiB working set, first miss at 32.3 KiB |
+| **L2 (= LLC)** | **16,384 KiB**, shared by **all 48 cores** | boot stub `L2: 16384 KB`; `shared_cpu_list 0-47` |
+| L2 hit cost over L1 | +0.39 ns/element (~0.8 cycles) | sweep — flat from 65 KiB to 8 MiB, a 128× range |
+| **FMA dependency floor** | **3.566 ns/element = 7.13 cycles** | sweep floor at 24.4 KiB; `acc += row[j]*x[j]` contracts to one FMADD and the chain is serial on `acc` |
+| **L1 D hit latency** | **1.52 ns = 3.0 cycles** | `cache-probe` dependent chase, flat below 32 KiB |
+| **L2 hit latency** | **22.4 ns = 44.9 cycles** | `cache-probe --seq` plateau, 8 MiB down to 64 KiB |
+| **effective L2 capacity** | **~8 MiB** for one stream (67% hits at the nominal 16 MiB) | `cache-probe --seq` |
+| DRAM, dependent **random** chase | 132 ns per 128 B line | `cache-probe` top plateau |
+| DRAM, dependent **sequential** chase | 101 ns per 128 B line | `cache-probe --seq`; row-buffer and TLB locality, worth 1.31x |
+| **DRAM read, streaming** | **~99 ns per 128 B line** | 196 MiB matmul point minus the FMA floor |
+
+#### There is no private L2 — that is why the L1→L2 step is so large **[D]**
+
+ThunderX goes L1 straight to a **chip-wide shared cache**. What the boot stub and
+`sysfs` call "L2" is architecturally an LLC: 16 MiB, `shared_cpu_list 0-47`, and
+**44.9 cycles** away. On a machine with a private mid-level you would see two moderate
+steps (ba8, x86: L1 0.74 ns → L2 2.57 ns → L3 9.5 ns); here there is one 14.7x step
+from 1.52 ns to 22.4 ns and then nothing until DRAM. Two data cache levels, not three.
+
+Consequence for placement: **there is no cheap tier between the core and a 16 MiB
+structure shared with 47 other cores.** Any argument that reasons about "L2-resident
+working sets" is reasoning about a resource the whole machine competes for.
+
+#### Latency and throughput differ by the overlap factor, and both are recorded above **[D]**
+
+The per-line latencies and the per-element figures are the same hardware seen two ways;
+mixing them is how §0.3 went wrong the first time.
+
+| level | latency (per 128 B line) | serialised per element | matmul, measured | overlap |
+|---|---:|---:|---:|---:|
+| L2 | 22.4 ns | 0.70 ns | 0.39 ns | 1.8x |
+| DRAM | 101 ns (seq) | 3.16 ns | 3.10 ns | ~1.0x |
+
+**`cache-probe --seq` (101 ns/line) and matmul's streaming cost (99 ns/line) agree to 2%**,
+from completely independent instruments — one a dependent pointer chase, the other a
+strided FMA loop. Together with `test=43`'s 124 ns chase and the probe's 132 ns random
+chase, the DRAM figure is now confirmed four ways.
+
+`sysfs` reports none of this: `/sys/devices/system/cpu/cpu0/cache/index*/size` does not
+exist on this kernel and every `getconf` cache size returns 0, because arm64 takes cache
+geometry from firmware and the device tree carries no `cache-size` property. The boot stub
+and a working-set sweep are the only sources.
+
+**Two figures previously in circulation were wrong**: L1 is 32 KiB, not 16 KiB, and L2 is
+16 MiB, not 256 KiB. The sweep and the boot stub agree against both.
+
+#### Why the L2 knee is a ramp and not a cliff **[D]**
+
+A sequential sweep gives every line a reuse distance of exactly `|W|`, so under true LRU
+the transition would be a **step**: ~100% hits below capacity, ~0% above (sequential
+thrashing). Measured, it is a ramp — implied hit rate 93% at 12 MiB, 68% at 16 MiB, 45% at
+20 MiB, 27% at 32 MiB, 8% at 196 MiB, tracking `C/W` rather than falling off a cliff. That
+is the signature of **random or pseudo-random replacement**, which degrades gracefully.
+
+Two consequences worth carrying:
+
+- **Effective capacity is well under 16 MiB.** Hit rate at exactly 16 MiB is ~68%, not
+  ~100%, because that L2 is shared with 47 other cores, the page tables and everything else
+  running. Never size an experiment assuming the whole 16 MiB.
+- **The knee is not small, it is distributed.** No single step exceeds +17.6%, but
+  8 MiB → 196 MiB is **+68%** in total: 3.95 → 6.667 ns/element, a swing of 87 ns per
+  128 B line — which is the DRAM latency, arriving spread over a decade of working-set
+  size instead of at one boundary.
 
 ### 0.1 The wear budget — the binding constraint on the whole system **[D]**
 
