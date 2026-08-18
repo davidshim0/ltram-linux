@@ -74,6 +74,43 @@ Produces `out-vanilla/arch/arm64/boot/Image` plus stripped modules under
 `out-vanilla/modroot/`. `LOCALVERSION` tags it `-vanilla68` so `uname -r` distinguishes it
 from the golden kernel at a glance.
 
+## Knowing what you built
+
+Every build ends with an identity block, also written to `out-<target>/BUILDINFO`:
+
+```
+target          ltram
+kernel release  6.8.0-ltram
+version         260818_step6_policy
+commit          8571a099a  (branch main)
+built           2026-08-18 21:14:52 CEST
+toolchain       aarch64-linux-gnu-gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+Image           /local/home/hushim/ltram-linux/out-ltram/arch/arm64/boot/Image
+Image size      49871360 bytes
+Image sha256    e03fe70fde91c2c088821092d7cfb475149fc7298e8ffdf16694e9426185b139
+modules         7707 objects, 145M
+```
+
+**The sha256 is the line that matters.** Date and size do not identify a kernel — two of
+our own Images have byte-identical sizes. `deploy.sh` prints this block, then re-hashes
+what actually landed on the gateway and refuses to continue if it differs, so the question
+"is the kernel about to boot the one I just built?" has an answer rather than an
+impression.
+
+**`version` comes from `git describe --tags --dirty`.** On a tag it is the tag name. Off
+one it is `tag-N-gHASH`, so a build from an untagged commit cannot silently claim to be a
+release. If the working tree is dirty the build says so loudly and tells you not to
+archive it as a baseline — the tag names a commit, and a dirty build contains something
+else.
+
+To check on the board that the running kernel is what you think:
+
+```bash
+uname -r                                   # kernel release
+cat /proc/version                          # build host and timestamp
+ssh gateway sha256sum /srv/tftp/userkernels/hushim/vmlinuz   # vs BUILDINFO
+```
+
 ## Booting it — `emg acquire`
 
 Run **on the gateway**, not here. Deploy first, or the machine boots whatever the gateway
