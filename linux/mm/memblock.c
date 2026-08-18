@@ -1081,8 +1081,22 @@ static bool should_skip_region(struct memblock_type *type,
 	 * runs before any console exists. Filtering the range instead has no
 	 * ordering dependency: ltram_end_pfn is 0 until the window is declared,
 	 * so this is inert before that and exact afterwards.
+	 *
+	 * THERE IS NO EXEMPTION FOR LTRAM_NUMA_NODE ITSELF. An earlier version
+	 * allowed an explicit node-1 request through, on the reasoning that a
+	 * caller naming the node must mean it. It does not: sparse_index_alloc()
+	 * asks for memory on the node it is describing, so node 1's own section
+	 * index was allocated out of flash and the memset() that follows took a
+	 * level-0 translation fault -- the linear map does not cover the window.
+	 *
+	 * Nothing may ever memblock-allocate from this window. Its pages are
+	 * owned by the bitmap allocator in mm/ltram_policy.c and are never
+	 * released to buddy (managed stays 0), so a memblock allocation landing
+	 * here is always a bug. memblock_alloc_range_nid() retries with
+	 * NUMA_NO_NODE when an exact-node search fails, so a node-1 request
+	 * degrades to DRAM instead of failing.
 	 */
-	if (nid != LTRAM_NUMA_NODE && ltram_end_pfn &&
+	if (ltram_end_pfn &&
 	    PFN_DOWN(m->base) >= ltram_start_pfn &&
 	    PFN_DOWN(m->base) < ltram_end_pfn)
 		return true;
