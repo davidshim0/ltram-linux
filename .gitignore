@@ -1,0 +1,24 @@
+# Build outputs: regenerable.
+out-vanilla/
+out-ltram/
+modbuild/
+hostdeps/
+
+# Archived kernel images and modules are too large for git. The RECORD of each
+# baseline -- RESULT.md, the resolved config, SHA256SUMS -- is tracked; the binaries
+# live on disk beside it and in the snapshot zip.
+baselines/*/Image
+baselines/*/initrd.img
+baselines/*/modules.tar.gz
+baselines/*/System.map
+baselines/*/*.ko
+
+# Compiled workloads
+workloads/*/matmul
+workloads/*/matmul.native
+workloads/*/ltram-inspect
+workloads/*/ltram-inspect.native
+*.o
+
+build-*.log
+probe_*.log
