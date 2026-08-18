@@ -1,0 +1,14 @@
+# Workload definition: ycsbc (YCSB-C workload A against in-memory Redis)
+#
+# PREP brings up loopback and starts redis-server (idempotent: skipped if one
+# is already running). The measured RUN is the YCSB-C load + transaction mix;
+# all data lives in Redis's anonymous memory, so expect pgfault/pgalloc to
+# dominate and file counters to stay flat.
+#
+# libtbb.so.12 lives at /mnt/workloads (NOT in a YCSB-C/install dir, which does
+# not exist), so LD_LIBRARY_PATH points there. Swap workloada.spec for any
+# spec in YCSB-C/workloads/ (workloada..f, workloadmini) to change the mix.
+
+LABEL=ycsbc
+PREP='ip link set lo up 2>/dev/null; pidof redis-server >/dev/null || numactl --cpunodebind=0 --membind=0 redis-server --save "" --daemonize yes; sleep 1'
+RUN='LD_LIBRARY_PATH=/mnt/workloads:$LD_LIBRARY_PATH /mnt/workloads/YCSB-C/ycsbc -db redis -P /mnt/workloads/YCSB-C/workloads/workloada.spec'

@@ -1,0 +1,14 @@
+# Workload definition: matmul (dense matrix multiply)
+#
+# Reads matrices A and B, writes C. Anonymous-memory heavy; the LOAD phase
+# (alloc + fill_random) writes, the multiply phase mostly reads A/B.
+#
+# Fields (all optional except LABEL and RUN):
+#   LABEL  short name; names the output CSV (profile_<LABEL>.csv)
+#   PREP   setup command, run UNMEASURED before the snapshot window
+#   RUN    the command that profile_workload.sh wraps and measures
+# To change iteration count, append the iters arg to RUN (e.g. ... matrix_multiply 50).
+
+LABEL=matmul
+PREP=
+RUN='numactl --cpunodebind=0 --membind=0 /mnt/workloads/matmul/matrix_multiply'

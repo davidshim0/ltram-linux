@@ -1,0 +1,23 @@
+# Workload definition: llama (llama.cpp llama-bench, read-only weight mmap)
+#
+# llama-bench mmaps the GGUF weights PROT_READ (read-only), so the kernel routes
+# those file-backed pages to ZONE_LTRAM -- the whole point of this workload:
+# model weights are large and never written, the ideal LtRAM candidate.
+#
+# The model (491 MB) is larger than the LtRAM zone (256 MB), so expect PARTIAL
+# placement: node-1 FilePages climbs toward ~256 MB while Dirty/Writeback stay
+# ~0 (weights are never written). Inference throughput (tokens/s) is written to
+# results/llama-bench.csv.
+#
+# IMPORTANT: no --membind=0 here (unlike matmul/pagerank). Pinning memory to
+# node 0 would exclude the LtRAM node and defeat the read-only routing. We pin
+# CPUs to node 0 (the only node with CPUs) but leave memory free to route to
+# LtRAM. Keep mmap ON (-mmp 1, the default); NEVER pass --no-mmap -- that loads
+# weights into writable anonymous buffers, which do NOT route to LtRAM.
+#
+# Binary + .so closure live in workloads/llama/ (staged by scripts/stage-llama.sh
+# and gitignored); the model lives in inputs/ (override path with LLAMA_MODEL).
+
+LABEL=llama
+PREP=
+RUN='LD_LIBRARY_PATH=/mnt/workloads/llama numactl --cpunodebind=0 /mnt/workloads/llama/llama-bench -m ${LLAMA_MODEL:-/mnt/inputs/qwen2.5-0.5b-instruct-q4_k_m.gguf} -t 4 -mmp 1 -o csv > /mnt/results/llama-bench.csv'

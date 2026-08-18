@@ -1,0 +1,10 @@
+# Workload definition: rwstress (read-only -> writable transition test)
+#
+# THE hypothesis stress test. Maps a file PROT_READ (so its pages route to
+# LtRAM), then mprotect()s it writable and writes every page -- forcing the
+# exact "a read-only LtRAM page became writable" event the policy bets against.
+# Watch for "ltram: write-fault on LtRAM page" in dmesg and a nonzero Dirty in
+# profile_rwstress.node. Pages default 256 (1 MB); raise the arg for more.
+LABEL=rwstress
+PREP=
+RUN='/mnt/workloads/rwstress/ltram_rw_stress 256'
