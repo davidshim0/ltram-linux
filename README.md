@@ -1,5 +1,7 @@
 # ltram-linux — NOR flash as coherent memory on Enzian
 
+**Start with [HANDOFF.md](HANDOFF.md)** — where the project stands, what is proven, what is untested, and the decisions behind it.
+
 Micron MT35XU02GCBA octal-DDR NOR flash, reached over ECI through the Enzian FPGA,
 presented to Linux as a NUMA node and a memory zone, with a placement policy that
 promotes read-mostly pages onto it. Cavium ThunderX arm64 + Xilinx VU9P.
