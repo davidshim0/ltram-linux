@@ -1,0 +1,10 @@
+target          ltram
+kernel          260819_step4_backend
+tooling         260819_step3_selftest
+kernel release  6.8.0-ltram
+built           2026-08-19 13:56:50 CEST
+toolchain       aarch64-linux-gnu-gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
+Image           /local/home/hushim/ltram-linux/out-ltram/arch/arm64/boot/Image
+Image size      50000384 bytes
+Image sha256    ef4700a1d7e629831c89ebb74a908b6b076dd4b4e1796348e86c56499d2bc2c5
+modules         7707 objects, 145M
