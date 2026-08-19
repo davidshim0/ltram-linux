@@ -44,21 +44,84 @@ void ltram_note_stray_alloc(unsigned long pfn, const char *where)
  * the window is not in any firmware table -- unlike x86 where the node comes
  * from SRAT -- so it has to be injected here or it does not exist at all.
  */
+/*
+ * "ltram=off" on the kernel command line skips the declaration entirely: no node,
+ * no zone, no memblock change. The resulting boot is equivalent to CONFIG_LTRAM=n,
+ * which makes every LtRAM kernel here recoverable without a rebuild -- if a change
+ * to this path breaks boot, the previous image still boots with one word added to
+ * the command line.
+ */
+static bool ltram_disabled __initdata;
+
+static int __init ltram_setup(char *str)
+{
+	if (str && !strcmp(str, "off"))
+		ltram_disabled = true;
+	return 1;
+}
+__setup("ltram=", ltram_setup);
+
 void __init ltram_declare_node(void)
 {
 	int rc;
+
+	if (ltram_disabled) {
+		pr_info("ltram: disabled on the command line (ltram=off)\n");
+		return;
+	}
+
+	/*
+	 * The pfn bounds must be live BEFORE the range enters memblock. Anything
+	 * keyed on them -- and the fault-path predicate pfn_is_ltram() -- would
+	 * otherwise see 0 for the window between the add and the assignment.
+	 */
+	ltram_start_pfn = PFN_UP(LTRAM_PHYS_BASE);
+	ltram_end_pfn   = PFN_DOWN(LTRAM_PHYS_BASE + LTRAM_PHYS_SIZE);
 
 	rc = memblock_add_node(LTRAM_PHYS_BASE, LTRAM_PHYS_SIZE,
 			       LTRAM_NUMA_NODE, MEMBLOCK_NONE);
 	if (rc) {
 		pr_err("ltram: memblock_add_node failed (%d) -- LtRAM disabled\n", rc);
+		ltram_start_pfn = ltram_end_pfn = 0;
 		return;
 	}
 
-	ltram_start_pfn = PFN_UP(LTRAM_PHYS_BASE);
-	ltram_end_pfn   = PFN_DOWN(LTRAM_PHYS_BASE + LTRAM_PHYS_SIZE);
+	/*
+	 * RESERVE it, rather than filtering it out of memblock iteration.
+	 *
+	 * This is the whole fix for "the window has no kernel address". The two
+	 * things we need pull in opposite directions through one function:
+	 *
+	 *   for_each_free_mem_range()  -- allocation -- must NEVER return this
+	 *   for_each_mem_range()       -- what map_mem() walks to build the
+	 *                                 linear map -- MUST see it
+	 *
+	 * Both run through should_skip_region(), so the range filter that used to
+	 * live there did both jobs: it kept boot allocations off flash AND kept
+	 * map_mem() from ever mapping the window. Every kernel mapping API then
+	 * broke, because memblock_add_node() had already flipped
+	 * pfn_is_map_memory() to true: ioremap_cache() started returning
+	 * __phys_to_virt() of an address with no page-table entry, ioremap()
+	 * started returning NULL, and memremap(MEMREMAP_WB) followed
+	 * ioremap_cache(). The first touch was a level-0 translation fault.
+	 *
+	 * A reservation separates them exactly. Reserved memory is subtracted
+	 * from the allocation iterator and skipped by memblock_free_all(), so
+	 * nothing allocates here and the pages are never released to buddy --
+	 * ZONE_LTRAM keeps managed == 0, which is what makes residency
+	 * enforceable. But reserved memory is still MEMORY: for_each_mem_range()
+	 * walks it and map_mem() maps it, so the window has a kernel virtual
+	 * address and page_address() works on its struct pages -- which step 5
+	 * requires for the migration destination.
+	 */
+	rc = memblock_reserve(LTRAM_PHYS_BASE, LTRAM_PHYS_SIZE);
+	if (rc) {
+		pr_err("ltram: memblock_reserve failed (%d) -- LtRAM disabled\n", rc);
+		ltram_start_pfn = ltram_end_pfn = 0;
+		return;
+	}
 
-	pr_info("ltram: node %d = 0x%llx + %llu MiB, pfn %lu..%lu (%lu pages)\n",
+	pr_info("ltram: node %d = 0x%llx + %llu MiB, pfn %lu..%lu (%lu pages), reserved\n",
 		LTRAM_NUMA_NODE, LTRAM_PHYS_BASE, LTRAM_PHYS_SIZE >> 20,
 		ltram_start_pfn, ltram_end_pfn, ltram_end_pfn - ltram_start_pfn);
 }
