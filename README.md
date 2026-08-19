@@ -97,7 +97,7 @@ Every build ends with an identity block, also written to `out-<target>/BUILDINFO
 ```
 target          ltram
 kernel release  6.8.0-ltram
-version         260818_step6_policy
+version         260819_step6_policy
 commit          8571a099a  (branch main)
 built           2026-08-18 21:14:52 CEST
 toolchain       aarch64-linux-gnu-gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0

@@ -85,11 +85,11 @@ directory and git tag always share the name.
 260818_v6.8-base        pristine mainline v6.8 under linux/   (no step: it isn't one)
 260818_step0_vanilla68  the buildable control
 260818_step1_matmul     the measurement control
-260818_step2_zone       node 1 and ZONE_LTRAM
-260818_step3_selftest   boot-time read self-test
-260818_step4_backend    the registerable flash write backend
-260818_step5_migrate    migration routed through the driver, not memcpy
-260818_step6_policy     policy vtable, page allocator, scanner, pid targeting
+260819_step2_zone       node 1 and ZONE_LTRAM
+260819_step3_selftest   boot-time read self-test
+260819_step4_backend    the registerable flash write backend
+260819_step5_migrate    migration routed through the driver, not memcpy
+260819_step6_policy     policy vtable, page allocator, scanner, pid targeting
 ```
 
 `git checkout <tag>` gives the source, the script that built it, the config it was built

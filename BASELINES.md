@@ -21,7 +21,7 @@ with no second step to forget.
 ```bash
 git tag -l                       # every step and baseline
 git log --oneline 260818_v6.8-base..    # one commit per step
-git checkout 260818_step4_backend
+git checkout 260819_step4_backend
 ./scripts/build.sh ltram         # linux/ with CONFIG_LTRAM on
 ./scripts/build.sh vanilla       # the same tree with it off -- the control
 ```
@@ -32,11 +32,11 @@ Steps, in order:
 |---|---|
 | `260818_v6.8-base` | pristine mainline v6.8 under `linux/`, nothing else |
 | `260818_step0_vanilla68` · `260818_step1_matmul` | scripts, configs, workloads, docs. **No kernel change** |
-| `260818_step2_zone` | node 1 and `ZONE_LTRAM` |
-| `260818_step3_selftest` | boot-time read self-test |
-| `260818_step4_backend` | the registerable flash write backend |
-| `260818_step5_migrate` | migration routed through the driver, not memcpy |
-| `260818_step6_policy` | policy vtable, page allocator, scanner, pid targeting |
+| `260819_step2_zone` | node 1 and `ZONE_LTRAM` |
+| `260819_step3_selftest` | boot-time read self-test |
+| `260819_step4_backend` | the registerable flash write backend |
+| `260819_step5_migrate` | migration routed through the driver, not memcpy |
+| `260819_step6_policy` | policy vtable, page allocator, scanner, pid targeting |
 
 **Upstream history is not carried.** `linux/` was imported as a tree, so `git blame` on
 kernel code we did not write stops at `260818_v6.8-base`. Our own history is complete, one
@@ -131,22 +131,48 @@ to choose a subset. `--protect-weights` proved the read-only claim rather than a
 
 ---
 
-## The LtRAM steps — all BUILT, none BOOTED
+## Step 2 is VERIFIED ON HARDWARE — 19 August 2026
+
+`260819_step2_zone` booted zuestoll08 and passed every sub-check:
+`Node 1, zone LtRAM` **managed 0** with spanned/present 65536, `stray_allocs` **0**
+against a gate of 3, and `numactl --membind=1` **refused** with a page allocation
+failure rather than quietly handing over flash pages. Full evidence and the two
+measurement mistakes worth not repeating are in
+`baselines/260819_step2_zone/RESULT.md`.
+
+Getting there took three fixes that are now part of step 2, because without them the
+kernel does not boot at all — a `sparse_index_alloc` panic and a boot hang. They sit
+between the step-2 commit and step 3, so **every later step carries them**:
+
+```
+a99d9b20c  mm/memblock: skip the LtRAM range instead of rewriting the request to node 0
+42e4a611b  mm/memblock: never allocate from the LtRAM window, not even for node 1
+b8b4ed2a7  arm64, arch_numa: give ZONE_LTRAM a range, and register node 1 with NUMA
+```
+
+The hunt itself is recorded in `baselines/260819_step2_zone/DEBUG-2026-08-18-boot-hang.md`.
+
+> The old `260818_step2_zone` … `260818_step6_policy` tags were **deleted**. They named
+> kernels built on a step 2 that cannot boot, so checking one out and building it would
+> have wasted an hour and looked like a new bug. `260818_v6.8-base`,
+> `260818_step0_vanilla68` and `260818_step1_matmul` are kept — those were verified.
+
+## The remaining LtRAM steps — BUILT, none BOOTED
 
 Branch `ltram-arm64`, all on mainline v6.8 (`e8f897f4af`) — the same commit as the vanilla
 baseline, so they share an ancestor and the comparison is honest.
 
 | step | tag | archive | what it adds |
 |---|---|---|---|
-| 2 | `260818_step2_zone` | `baselines/260818_step2_zone/` (Image + initrd + modules) | node 1 + ZONE_LTRAM; allocator excluded by zonelist; boot allocations, memmap and pgdat forced to node 0 |
-| 3 | `260818_step3_selftest` | `baselines/260818_step3_selftest/` | boot-time read self-test |
-| 4 | `260818_step4_backend` | `baselines/260818_step4_backend/` | registerable flash write backend, debugfs `write_test` |
-| 5 | `260818_step5_migrate` | *(source only — code is in step 6's image)* | migration routed through the driver, hooked before the mapping moves |
-| 6 | `260818_step6_policy` | `baselines/260818_step6_policy/` **+ step 7 tooling** | policy vtable, private page allocator, scanner, pid targeting |
+| 2 | `260819_step2_zone` | `baselines/260819_step2_zone/` (Image + initrd + modules) | node 1 + ZONE_LTRAM; allocator excluded by zonelist; boot allocations, memmap and pgdat forced to node 0 |
+| 3 | `260819_step3_selftest` | `baselines/260819_step3_selftest/` | boot-time read self-test |
+| 4 | `260819_step4_backend` | `baselines/260819_step4_backend/` | registerable flash write backend, debugfs `write_test` |
+| 5 | `260819_step5_migrate` | *(source only — code is in step 6's image)* | migration routed through the driver, hooked before the mapping moves |
+| 6 | `260819_step6_policy` | `baselines/260819_step6_policy/` **+ step 7 tooling** | policy vtable, private page allocator, scanner, pid targeting |
 
 **Deploy step 6's image** — it contains everything. Its archive holds the Image, modules,
 `ltram-inspect` and `run-experiment.sh`; the initrd is unchanged since step 2, so use
-`baselines/260818_step2_zone/initrd.img`.
+`baselines/260819_step2_zone/initrd.img`.
 
 ### CONFIG_LTRAM=n is inert, and that is the point
 
