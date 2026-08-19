@@ -1,0 +1,16 @@
+#-----------------------------------------------------------
+# Vivado v2023.2 (64-bit)
+# SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+# IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+# SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+# Start of session at: Tue Aug 18 23:28:50 2026
+# Process ID: 3616407
+# Current directory: /local/home/hushim/ltram-linux
+# Command line: vivado -mode batch -source pgm_169_phy200.tcl
+# Log file: /local/home/hushim/ltram-linux/vivado.log
+# Journal file: /local/home/hushim/ltram-linux/vivado.jou
+# Running On: enzian-ba8.inf.ethz.ch, OS: Linux, CPU Frequency: 4500.000 MHz, CPU Physical cores: 32, Host memory: 66513 MB
+#-----------------------------------------------------------
+source pgm_169_phy200.tcl
+couldn't read file "pgm_169_phy200.tcl": no such file or directory
+INFO: [Common 17-206] Exiting Vivado at Tue Aug 18 23:28:53 2026...
