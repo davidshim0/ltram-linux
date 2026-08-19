@@ -208,7 +208,20 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 		    folio_isolate_lru(folio)) {
 			list_add(&folio->lru, &ctx->candidates);
 			ctx->nr++;
-			continue;			/* isolate holds its own ref */
+			/*
+			 * DROP OUR REFERENCE. folio_isolate_lru() took its own,
+			 * and that is the one the candidate list owns from here.
+			 * Keeping the folio_try_get() reference as well leaves the
+			 * folio at +2 where folio_migrate_mapping() expects +1, so
+			 * every migration returns -EAGAIN and fails BEFORE reaching
+			 * the flash hook -- silently, because the failure looks like
+			 * ordinary migration contention.
+			 *
+			 * Measured: 448 promote_failed, 0 promoted, and the FPGA
+			 * status word did not move at all.
+			 */
+			folio_put(folio);
+			continue;
 		}
 
 		/*
