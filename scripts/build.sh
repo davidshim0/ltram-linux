@@ -121,6 +121,25 @@ fi
     --disable LOCALVERSION_AUTO \
     ${LTRAM_CFG:-$CFG}
 
+# ---- automatic NUMA balancing: OFF from boot --------------------------------
+# Declaring node 1 takes num_online_nodes() to 2, and mm/mempolicy.c then turns automatic
+# NUMA balancing ON because Ubuntu's config sets DEFAULT_ENABLED. On the vanilla control
+# there was one node, so it stayed off -- meaning the control and the experiment differed
+# in a way that had nothing to do with LtRAM.
+#
+# It has to be off for a second, larger reason: it uses the SAME mechanism on the SAME
+# PTEs as the placement policy, and wants the opposite outcome. It sets PROT_NONE to
+# sample access while our scanner write-protects to observe writes, so each clobbers the
+# other's state; and it migrates pages TOWARD the local node -- node 0 -- which undoes
+# every promotion the policy makes.
+#
+# Disabling the DEFAULT rather than compiling the feature out (CONFIG_NUMA_BALANCING stays
+# y) is deliberate: stock NUMA balancing is the obvious comparison policy -- "what would
+# Linux do on its own?" -- and leaving the code in makes that one sysctl away instead of a
+# rebuild. check_numabalancing_enable() still logs "Disabling automatic NUMA balancing",
+# so the state is visible in dmesg rather than being invisible until someone measures it.
+"$SRC"/scripts/config --file "$OUT/.config" --disable NUMA_BALANCING_DEFAULT_ENABLED
+
 # ---- the settings this machine cannot boot without --------------------------
 # Set explicitly rather than trusting olddefconfig, and verified after.
 "$SRC"/scripts/config --file "$OUT/.config" \
@@ -144,6 +163,14 @@ for sym in ISCSI_TCP IP_PNP_DHCP THUNDER_NIC_VF RODATA_FULL_DEFAULT_ENABLED BLK_
         printf "  %-34s MISSING\n" "CONFIG_$sym"; fail=1
     fi
 done
+# ...and one that must be ABSENT. Automatic NUMA balancing fights the placement policy
+# for the same PTEs, so a build with it defaulted on is not a build we want to measure.
+if grep -q "^CONFIG_NUMA_BALANCING_DEFAULT_ENABLED=y" "$OUT/.config"; then
+    printf "  %-34s SHOULD BE OFF\n" "CONFIG_NUMA_BALANCING_DEFAULT_ENABLED"; fail=1
+else
+    printf "  %-34s off (correct)\n" "CONFIG_NUMA_BALANCING_DEFAULT_ENABLED"
+fi
+
 [ $fail -eq 0 ] || { echo "!! required config missing — refusing to build a kernel that cannot boot"; exit 4; }
 
 # ---- build ------------------------------------------------------------------
