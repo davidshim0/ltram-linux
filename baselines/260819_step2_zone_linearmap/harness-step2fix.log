@@ -1,0 +1,91 @@
+[   78.388028] nor_eci_fulltest: loading out-of-tree module taints kernel.
+[   78.395555] fulltest: ## BUILD 2026-08-10.yieldall.v65 (cond_resched in ALL 10 udelay poll loops -- test=37 Phase A erase poll was the 4th copy of this bug and soft-locked CPU#45)  (erase triggers route through trigger_erase(): evicts the er_win line first)
+[   78.395567] fulltest: STATUS WORD raw=0x0000000000000000  bytes=0 beats=0 pages=0 erases=0  hw_busy=0 er_infl=0 sch=0  -> all-zero — EXPECTED at init (free-running counters start at 0 and nothing has run yet). This does NOT mean a pre-132 bitstream. The real proof is the st_wait census at end of run: it can only be non-empty if the BEAT counter actually advanced by 64 per sector.
+[   78.396532] fulltest: ## MMIO INTEGRITY: cycle-counter went backwards 0/2000, constant varied 0/2000 -> CLEAN
+[   78.396543] fulltest: ## ANTI_STARVE_N left at the FPGA default, reports 0
+[   78.396691] fulltest: worker started (watch dmesg; 'rmmod nor_eci_fulltest' to stop)
+[   78.396699] fulltest: START test=32 sectors [0..64) pattern=ADDRESS-STAMP (word=its offset)
+[   78.396711] fulltest: WCOV3: sectors [0..64), 1 passes, PASS-MAJOR, evict_mode=1 trig_rotate=0 cvm_er_win=1
+[   78.396717] fulltest: ## ---- WCOV3 pass-major RUN 0 ----
+[   78.396722] fulltest: WCOV3 | pass sector | trigger time      | erase | write |
+[   78.396726] fulltest: WCOV3 BASELINE: idling 2000 ms before pass 0 — sample the probes now
+[   80.411858] fulltest: WCOV3 >>> PASS 0 STARTING NOW (64 sectors, seed 11)
+[   80.717310] fulltest: ## WCOV3 | p0 s0 | trig  570ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   81.021289] fulltest: ## WCOV3 | p0 s1 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   81.325289] fulltest: ## WCOV3 | p0 s2 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   81.629289] fulltest: ## WCOV3 | p0 s3 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   81.933288] fulltest: ## WCOV3 | p0 s4 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   82.237288] fulltest: ## WCOV3 | p0 s5 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   82.541288] fulltest: ## WCOV3 | p0 s6 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   82.845287] fulltest: ## WCOV3 | p0 s7 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   83.149288] fulltest: ## WCOV3 | p0 s8 | trig  380ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   83.453288] fulltest: ## WCOV3 | p0 s9 | trig  440ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   83.757288] fulltest: ## WCOV3 | p0 s10 | trig  380ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   84.061288] fulltest: ## WCOV3 | p0 s11 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   84.365277] fulltest: ## WCOV3 | p0 s12 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   84.669287] fulltest: ## WCOV3 | p0 s13 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   84.973299] fulltest: ## WCOV3 | p0 s14 | trig  450ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   85.277287] fulltest: ## WCOV3 | p0 s15 | trig  430ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   85.581275] fulltest: ## WCOV3 | p0 s16 | trig  420ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   85.885287] fulltest: ## WCOV3 | p0 s17 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   86.189287] fulltest: ## WCOV3 | p0 s18 | trig  380ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   86.493287] fulltest: ## WCOV3 | p0 s19 | trig  380ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   86.797286] fulltest: ## WCOV3 | p0 s20 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   87.101287] fulltest: ## WCOV3 | p0 s21 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   87.405287] fulltest: ## WCOV3 | p0 s22 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   87.709286] fulltest: ## WCOV3 | p0 s23 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   88.013287] fulltest: ## WCOV3 | p0 s24 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   88.317276] fulltest: ## WCOV3 | p0 s25 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   88.621286] fulltest: ## WCOV3 | p0 s26 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   88.925286] fulltest: ## WCOV3 | p0 s27 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   89.229285] fulltest: ## WCOV3 | p0 s28 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   89.533285] fulltest: ## WCOV3 | p0 s29 | trig  430ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   89.837286] fulltest: ## WCOV3 | p0 s30 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   90.141285] fulltest: ## WCOV3 | p0 s31 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   90.445327] fulltest: ## WCOV3 | p0 s32 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   90.749296] fulltest: ## WCOV3 | p0 s33 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   91.053306] fulltest: ## WCOV3 | p0 s34 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   91.357286] fulltest: ## WCOV3 | p0 s35 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   91.661285] fulltest: ## WCOV3 | p0 s36 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   91.965285] fulltest: ## WCOV3 | p0 s37 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   92.269272] fulltest: ## WCOV3 | p0 s38 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   92.573284] fulltest: ## WCOV3 | p0 s39 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   92.877285] fulltest: ## WCOV3 | p0 s40 | trig  420ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   93.181285] fulltest: ## WCOV3 | p0 s41 | trig  450ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   93.485285] fulltest: ## WCOV3 | p0 s42 | trig  420ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   93.789285] fulltest: ## WCOV3 | p0 s43 | trig  420ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   94.093284] fulltest: ## WCOV3 | p0 s44 | trig  430ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   94.397295] fulltest: ## WCOV3 | p0 s45 | trig  420ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   94.701284] fulltest: ## WCOV3 | p0 s46 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   95.005284] fulltest: ## WCOV3 | p0 s47 | trig  440ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   95.309284] fulltest: ## WCOV3 | p0 s48 | trig  420ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   95.613262] fulltest: ## WCOV3 | p0 s49 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   95.917284] fulltest: ## WCOV3 | p0 s50 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   96.221284] fulltest: ## WCOV3 | p0 s51 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   96.525282] fulltest: ## WCOV3 | p0 s52 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   96.829283] fulltest: ## WCOV3 | p0 s53 | trig  430ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   97.133284] fulltest: ## WCOV3 | p0 s54 | trig  400ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   97.437283] fulltest: ## WCOV3 | p0 s55 | trig  430ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   97.741283] fulltest: ## WCOV3 | p0 s56 | trig  430ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   98.045284] fulltest: ## WCOV3 | p0 s57 | trig  420ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   98.349283] fulltest: ## WCOV3 | p0 s58 | trig  460ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   98.653282] fulltest: ## WCOV3 | p0 s59 | trig  430ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   98.957282] fulltest: ## WCOV3 | p0 s60 | trig  450ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   99.261283] fulltest: ## WCOV3 | p0 s61 | trig  420ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   99.565283] fulltest: ## WCOV3 | p0 s62 | trig  390ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   99.869282] fulltest: ## WCOV3 | p0 s63 | trig  440ns SENT     | erase  ok  | write  ok  | 0 FF | ERASE-1st @+0x0 got=00000000 | WRITE-1st @+0x0 got=00000000 |
+[   99.869296] fulltest: WCOV3 PASS 0 done: erase bad=0  write bad=0  (64 sectors) clean
+[   99.869303] fulltest: WCOV3 <<< PASS 0 ENDED, idling 2000 ms — sample the probes now
+[  101.915850] fulltest: ## WCOV3 RUN 0 PASS: 64 sectors x 1 passes, cvm_er_win=1, total bad=0 ================
+[  101.915862] fulltest: ## CENSUS erase-trigger: 0 issued, 0 CACHE HITS (never reached the FPGA) | ns min/avg/max 0/0/0
+[  101.915868] fulltest: ## CENSUS dma-write   : 64 issued | us min/avg/max 1321/1325/1365
+[  101.915874] fulltest: ## CENSUS sector-read : 0 issued, 0 from CACHE | ns/word min/avg/max 0/0/0
+[  101.915881] fulltest: ## CENSUS status-word: raw=0x0040001000001000  bytes=4096 beats=4096 pages=0 erases=64  hw_busy=0 er_infl=0 sch=0
+[  101.915889] fulltest: ## CENSUS st_wait     : 64 waits | us avg/max 738/778  (extra time after the engine said 4096)
+[  101.915894] fulltest: ===== PHASED SUMMARY: sectors=0 erase_fail=0 ff_bad=0 wr_timeout=0 data_bad=0 aborted=0 =====
+[  103.931867] fulltest: ## CENSUS erase-trigger: 0 issued, 0 CACHE HITS (never reached the FPGA) | ns min/avg/max 0/0/0
+[  103.931882] fulltest: ## CENSUS dma-write   : 64 issued | us min/avg/max 1321/1325/1365
+[  103.931889] fulltest: ## CENSUS sector-read : 0 issued, 0 from CACHE | ns/word min/avg/max 0/0/0
+[  103.931895] fulltest: ## CENSUS status-word: raw=0x0040001000001000  bytes=4096 beats=4096 pages=0 erases=64  hw_busy=0 er_infl=0 sch=0
+[  103.931903] fulltest: ## CENSUS st_wait     : 64 waits | us avg/max 738/778  (extra time after the engine said 4096)
+[  103.931909] fulltest: ===== FINAL SUMMARY: sectors=0 erase_fail=0 ff_bad=0 wr_timeout=0 data_bad=0 aborted=0 =====
