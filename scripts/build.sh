@@ -202,11 +202,16 @@ CCVER=$(${CROSS_COMPILE}gcc --version | head -1)
 
 {
   echo "target          $WHICH"
-  [ -n "${STEP_TAG:-}" ] && echo "kernel from     $STEP_TAG"
-  [ -n "${STEP_TOOLING:-}" ] && echo "tooling from    $STEP_TOOLING"
+  # With build-step.sh the kernel and the tooling come from different commits, so name
+  # both. Reporting only the tooling describe here read like the kernel's version.
+  if [ -n "${STEP_TAG:-}" ]; then
+      echo "kernel          $STEP_TAG"
+      echo "tooling         ${STEP_TOOLING:-$DESCRIBE}"
+  else
+      echo "version         $DESCRIBE"
+      echo "commit          $COMMIT  (branch $BRANCH)"
+  fi
   echo "kernel release  $KREL"
-  echo "version         $DESCRIBE"
-  echo "commit          $COMMIT  (branch $BRANCH)"
   echo "built           $FINISHED"
   echo "toolchain       $CCVER"
   echo "Image           $IMG"
