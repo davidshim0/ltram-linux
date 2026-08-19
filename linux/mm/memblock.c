@@ -1065,42 +1065,23 @@ static bool should_skip_region(struct memblock_type *type,
 	if (nid != NUMA_NO_NODE && nid != m_nid)
 		return true;
 
-#ifdef CONFIG_LTRAM
 	/*
-	 * Boot-time allocators -- per-CPU areas, swiotlb, the qspinlock hash,
-	 * CPU-entry page tables -- ask for NUMA_NO_NODE. memblock searches
-	 * TOP-DOWN, and the flash window is the HIGHEST-PFN range on this
-	 * layout, so the default answer would be LtRAM: every store silently
-	 * discarded, and the kernel believing it is valid.
+	 * NOTE: there is deliberately NO LtRAM range filter here any more.
 	 *
-	 * Skip the RANGE. Do NOT rewrite the request to node 0, which is what
-	 * this used to do: until numa_init() calls memblock_set_node(), every
-	 * region added by memblock_add() is still tagged MAX_NUMNODES, so the
-	 * nid test above rejects ALL of them and every top-down allocation
-	 * fails -- including the page-table allocations in paging_init(), which
-	 * runs before any console exists. Filtering the range instead has no
-	 * ordering dependency: ltram_end_pfn is 0 until the window is declared,
-	 * so this is inert before that and exact afterwards.
+	 * One used to live at this point to keep boot allocations off the flash
+	 * window. It worked, and it also broke everything: should_skip_region()
+	 * backs BOTH for_each_free_mem_range() (allocation) and
+	 * for_each_mem_range(), which map_mem() walks to build the linear map.
+	 * Filtering here therefore left the window registered as memory --
+	 * pfn_is_map_memory() true -- with no page-table entry, so
+	 * ioremap_cache() returned an unmapped __phys_to_virt() address,
+	 * ioremap() returned NULL, and the first access took a level-0
+	 * translation fault.
 	 *
-	 * THERE IS NO EXEMPTION FOR LTRAM_NUMA_NODE ITSELF. An earlier version
-	 * allowed an explicit node-1 request through, on the reasoning that a
-	 * caller naming the node must mean it. It does not: sparse_index_alloc()
-	 * asks for memory on the node it is describing, so node 1's own section
-	 * index was allocated out of flash and the memset() that follows took a
-	 * level-0 translation fault -- the linear map does not cover the window.
-	 *
-	 * Nothing may ever memblock-allocate from this window. Its pages are
-	 * owned by the bitmap allocator in mm/ltram_policy.c and are never
-	 * released to buddy (managed stays 0), so a memblock allocation landing
-	 * here is always a bug. memblock_alloc_range_nid() retries with
-	 * NUMA_NO_NODE when an exact-node search fails, so a node-1 request
-	 * degrades to DRAM instead of failing.
+	 * The window is memblock_reserve()d in ltram_declare_node() instead.
+	 * Reservation is subtracted from the allocation iterator but not from
+	 * plain memory iteration, which is precisely the distinction needed.
 	 */
-	if (ltram_end_pfn &&
-	    PFN_DOWN(m->base) >= ltram_start_pfn &&
-	    PFN_DOWN(m->base) < ltram_end_pfn)
-		return true;
-#endif
 
 	/* skip hotpluggable memory regions if needed */
 	if (movable_node_is_enabled() && memblock_is_hotpluggable(m) &&

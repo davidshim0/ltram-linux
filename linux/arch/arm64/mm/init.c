@@ -333,6 +333,24 @@ void __init arm64_memblock_init(void)
 	early_init_fdt_scan_reserved_mem();
 
 	high_memory = __va(memblock_end_of_DRAM() - 1) + 1;
+
+	/*
+	 * Declare the flash window HERE, at the end of arm64_memblock_init(),
+	 * and not in bootmem_init(). paging_init() runs between the two and is
+	 * what calls map_mem(); a range added after that point sits in
+	 * memblock.memory with no linear mapping -- registered as memory, with
+	 * no kernel virtual address. That was the defect this ordering fixes.
+	 *
+	 * Safe before paging_init() because ltram_declare_node() RESERVES the
+	 * range, so the page-table allocations there cannot land on flash.
+	 *
+	 * Deliberately AFTER high_memory is computed. memblock_end_of_DRAM()
+	 * would otherwise include the window and push high_memory past it --
+	 * which the old ordering never did, because the declaration used to run
+	 * in bootmem_init(), long after this line. Keeping high_memory at the
+	 * end of DRAM preserves that, and this fix has no business changing it.
+	 */
+	ltram_declare_node();
 }
 
 void __init bootmem_init(void)
@@ -346,8 +364,6 @@ void __init bootmem_init(void)
 	 * platform, so if it is not injected here it does not exist at all.
 	 */
 	pr_info("ltram-dbg: bootmem_init enter\n");
-	ltram_declare_node();
-	pr_info("ltram-dbg: declare_node done\n");
 
 	min = PFN_UP(memblock_start_of_DRAM());
 	max = PFN_DOWN(memblock_end_of_DRAM());

@@ -22,3 +22,13 @@ workloads/*/ltram-inspect.native
 
 build-*.log
 probe_*.log
+
+# Prebuilt workload binaries (rebuild with each workload's Makefile)
+workloads/pagerank/workloads/pr
+workloads/rwstress/ltram_rw_stress
+workloads/basic_tests/cow_to_dram
+
+# build-step.sh's throwaway worktrees. No trailing slash: git treats an embedded
+# repository as a gitlink rather than a directory, so ".step-worktrees/" would not
+# match and it would be staged as a broken submodule pointer.
+.step-worktrees
