@@ -152,6 +152,30 @@ static const struct ltram_policy *policy = &policy_clean_run;
 /* ---- counters ------------------------------------------------------------- */
 static atomic64_t stat_scanned, stat_promoted, stat_promote_failed, stat_demoted;
 
+/* ---- why a scanned page was NOT selected ----------------------------------
+ * "scanned 5184674, promoted 0, promote_failed 0" says a page was looked at and
+ * never chosen, and says NOTHING about which test rejected it. Four different
+ * bugs produce that same triple, and one of them is not in should_promote() at
+ * all: if should_promote() returns true and folio_isolate_lru() then fails, the
+ * page falls through to the re-arm and is counted nowhere.
+ *
+ * These six separate every path that can end in "not promoted":
+ *
+ *   rej_dirty_ro     dirty, NOT writable -- the mprotect(PROT_READ) weights.
+ *                    Confirms the issue-10 hypothesis if this dominates.
+ *   rej_dirty_rw     dirty AND writable -- a page the re-arm should be able to
+ *                    clean. If this stays high while rearmed also climbs, the
+ *                    re-arm is firing and not clearing anything, which is a
+ *                    DIFFERENT bug from the hypothesis and is not fixed by it.
+ *   rej_runs_short   seen clean, but clean_runs < clean_passes_required. The
+ *                    policy is working and just needs more passes.
+ *   sel_isolated     chosen and isolated -- became a candidate.
+ *   sel_isolate_fail chosen but folio_isolate_lru() refused. Invisible before.
+ *   rearmed          the write-protect actually executed.
+ */
+static atomic64_t rej_dirty_ro, rej_dirty_rw, rej_runs_short,
+		  sel_isolated, sel_isolate_fail, rearmed;
+
 /* ---- targeting ------------------------------------------------------------ */
 static pid_t target_pid;
 static DEFINE_MUTEX(target_lock);
@@ -204,8 +228,12 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 			}
 		}
 
-		if (policy->should_promote(folio, o, dirty) &&
-		    folio_isolate_lru(folio)) {
+		if (policy->should_promote(folio, o, dirty)) {
+			if (!folio_isolate_lru(folio)) {
+				atomic64_inc(&sel_isolate_fail);
+				goto rearm;
+			}
+			atomic64_inc(&sel_isolated);
 			list_add(&folio->lru, &ctx->candidates);
 			ctx->nr++;
 			/*
@@ -224,6 +252,11 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 			continue;
 		}
 
+		if (dirty)
+			atomic64_inc(pte_write(p) ? &rej_dirty_rw : &rej_dirty_ro);
+		else
+			atomic64_inc(&rej_runs_short);
+rearm:
 		/*
 		 * Re-arm write observation. There is NO hardware dirty-bit
 		 * management on this CPU (measured: ID_AA64MMFR1_EL1 HAFDBS = 0),
@@ -244,6 +277,7 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 		if (dirty && pte_write(p)) {
 			ptep_set_wrprotect(walk->mm, addr, pte);
 			flush_tlb_page(walk->vma, addr);
+			atomic64_inc(&rearmed);
 		}
 		folio_put(folio);
 	}
@@ -354,11 +388,20 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		"promote_failed    %lld\n"
 		"demoted           %lld\n"
 		"pages_in_use      %lld\n"
-		"pages_total       %lu\n",
+		"pages_total       %lu\n"
+		"rej_dirty_ro      %lld\n"
+		"rej_dirty_rw      %lld\n"
+		"rej_runs_short    %lld\n"
+		"sel_isolated      %lld\n"
+		"sel_isolate_fail  %lld\n"
+		"rearmed           %lld\n",
 		policy->name, target_pid,
 		atomic64_read(&stat_scanned), atomic64_read(&stat_promoted),
 		atomic64_read(&stat_promote_failed), atomic64_read(&stat_demoted),
-		atomic64_read(&ltram_pages_in_use), ltram_nr_pages);
+		atomic64_read(&ltram_pages_in_use), ltram_nr_pages,
+		atomic64_read(&rej_dirty_ro), atomic64_read(&rej_dirty_rw),
+		atomic64_read(&rej_runs_short), atomic64_read(&sel_isolated),
+		atomic64_read(&sel_isolate_fail), atomic64_read(&rearmed));
 }
 
 static struct kobj_attribute target_pid_attr = __ATTR_RW(target_pid);
