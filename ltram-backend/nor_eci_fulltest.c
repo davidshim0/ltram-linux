@@ -418,6 +418,7 @@ static unsigned int  wr_pct       = 20;   // test=30: percent of soak ops that a
 static unsigned int  erase_gap_ms = 0;    // test=24: wait between the write and the erase
 static unsigned long filler_base  = 0;     // test=23: where the intervening writes go (0 = start_sector+2000)
 static unsigned long other_sector = 1000;  // test=21: Y = X + this
+static unsigned int  fail_writes = 0;  // 1 = make write_page() return -EIO, for step 5's negative test
 static unsigned int  provide_ops = 0;  // 1 = register the LtRAM write backend and idle
 static unsigned int  cvm_ok   = 0;     // test=17 is DISABLED until this is 1 — see the SError note
 module_param(test, uint, 0444);
@@ -437,6 +438,7 @@ module_param(skip_fill, uint, 0444);
 module_param(iters, uint, 0444);
 module_param(cvm_ok, uint, 0444);
 module_param(provide_ops, uint, 0444);
+module_param(fail_writes, uint, 0644);
 module_param(other_sector, ulong, 0444);
 module_param(filler_base, ulong, 0444);
 module_param(erase_gap_ms, uint, 0444);
@@ -6695,6 +6697,15 @@ static int ft_ltram_write_page(unsigned long dst_pfn, const void *src)
         return -EINVAL;
     }
     sec = (pa - RD_BASE) / SECT_SZ;
+
+    /* Step 5's negative test. The positive path passes whether or not the hook is
+     * placed correctly; only a FAILING write shows whether a failure is safe -- the
+     * migration must abort with the page still in DRAM and its contents intact.
+     * Writable at runtime (0644) so one boot can do both halves. */
+    if (fail_writes) {
+        pr_warn("fulltest: write_page sector %llu INJECTED -EIO (fail_writes=1)\n", sec);
+        return -EIO;
+    }
 
     /* MAY SLEEP, and must not return until the data is durably committed: the caller
      * publishes the migration immediately afterwards with no second chance to notice
