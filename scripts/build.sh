@@ -26,7 +26,9 @@ set -euo pipefail
 # is exactly the property that makes the A/B comparison mean anything -- one config
 # symbol separates the two kernels, not two trees.
 BASE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-SRC=$BASE/linux
+# KSRC lets build-step.sh point us at an earlier step's kernel while keeping THIS
+# script, this config seed and these assertions. Tags pin the kernel; tooling is latest.
+SRC=${KSRC:-$BASE/linux}
 
 WHICH=${1:?usage: build.sh vanilla|ltram}
 case "$WHICH" in
@@ -200,6 +202,8 @@ CCVER=$(${CROSS_COMPILE}gcc --version | head -1)
 
 {
   echo "target          $WHICH"
+  [ -n "${STEP_TAG:-}" ] && echo "kernel from     $STEP_TAG"
+  [ -n "${STEP_TOOLING:-}" ] && echo "tooling from    $STEP_TOOLING"
   echo "kernel release  $KREL"
   echo "version         $DESCRIBE"
   echo "commit          $COMMIT  (branch $BRANCH)"
