@@ -1,218 +1,217 @@
-# Where this stands — 18 August 2026
+# Where this stands — 19 August 2026, end of the hardware bring-up session
 
-Read this first. It is written for someone with no memory of how any of it got here.
+Read this first. Written for someone with no memory of how any of it got here.
 
 ## The project in one paragraph
 
 Micron MT35XU02GCBA octal-DDR NOR flash, reached over ECI through the Enzian FPGA,
 presented to Linux as a NUMA node and a memory zone ("LtRAM"), with a kernel placement
 policy that promotes read-mostly pages onto it. Cavium ThunderX arm64 plus Xilinx VU9P.
-Sources and cross-builds live on `enzian-ba8`; everything runs on `zuestoll08`.
+Sources and cross-builds on `enzian-ba8`; everything runs on `zuestoll08`.
 
 ## The one hardware fact everything follows from
 
-The CPU reaches the flash through **three separate windows**, and only one of them is
-coherent:
+The CPU reaches the flash through **three windows**, and only one is coherent:
 
-| window | mapping | what it does |
+| window | mapping | role |
 |---|---|---|
-| `rd_win` @ `RD_BASE` | `ioremap_cache` | **reads.** Coherent, cacheable, served by `read_manager` |
-| `io_win` @ `IO_BASE` | `ioremap` (uncached) | **control.** `writeq(desc, io_win + dst)` hands the DMA engine a descriptor |
-| `er_win` @ `ER_BASE` | `ioremap` (uncached) | erase trigger |
+| `rd_win` @ `RD_BASE 0x14000000000` | `ioremap_cache` | **reads** — coherent, cacheable |
+| `io_win` @ `IO_BASE 0x900000000000` | `ioremap` (uncached) | **control** — `writeq(desc, io_win + dst)` |
+| `er_win` @ `ER_BASE 0x1C000000000` | `ioremap` (uncached) | erase trigger |
 
-**A store to the read window is silently discarded.** It retires normally, the data goes
-nowhere, and a later load returns the previous flash contents — which look entirely
-plausible. Writes reach the array by a different route: the CPU stores a descriptor to
-`io_win` carrying `(len << 40) | dma_handle`, and the FPGA's DMA engine then reads the
-source page out of DRAM and programs it.
+**A store to the READ window is silently discarded.** It retires normally, the data goes
+nowhere, and a later load returns the previous flash contents, which look plausible. The
+device is **not** read-only — the CPU writes to it on every sector program, by storing a
+descriptor to `io_win` after which the FPGA's DMA engine reads the source page out of DRAM
+and programs it. What is impossible is `memcpy()` INTO the read window, which is exactly
+what `folio_migrate_copy()` does, and the only reason `ltram_copy_to_flash()` exists.
 
-So the CPU can absolutely write to this device. What it cannot do is
-`memcpy(flash_window, src, n)` — and that is exactly what `folio_migrate_copy()` does,
-which is why migrating a page into flash moved the mapping and not the data until the
-hook in step 5.
+## STATUS: gates 2, 3 and 4 PASS on hardware. Step 6 is blocked.
 
-Because that failure is silent, the mechanisms that guard it are all refusals: `-ENODEV`
-when no backend is registered, a failed migration that leaves the page in DRAM, a digest
-that gates a timing number, a deploy that re-hashes the kernel on the gateway.
+| gate | state | evidence |
+|---|---|---|
+| 2 node + zone | **PASS** | `spanned/present 65536`, **`managed 0`**, `stray_allocs 0`, `numactl --membind=1` refused |
+| 2b window reachable from kernel | **PASS** | harness loads, 64 sectors erase+write+verify, `bad=0` |
+| 3 boot self-test | **PASS** | `self-test completed without abort`; read the address stamp back correctly |
+| 4 backend, refusal | **PASS** | no backend &rarr; `-ENODEV` (`-19`), `writes_failed 1`, `writes_ok 0` |
+| 4 backend, positive | **PASS** | page programmed; FPGA `beats +64, pages +16, erases +1`; data confirmed by a later boot's self-test checksum changing `099708ea` &rarr; `00663ddc` |
+| 5 migration hook | **mechanism proven, negative test NOT RUN** | 379 pages migrated with FPGA counters exact |
+| 6 policy | **BLOCKED — see issue 10** | 5,184,674 scanned, **0 weights promoted** |
+| 7 measurement | not started | blocked by 6 |
 
-## Status
+## THE BLOCKER — issue 10
 
-**The FPGA side is settled. Do not reopen it.** `169_phy200` is golden: whole-device soak
-over all 65,536 sectors, 125,465 writes, 240,071 reads, fill 0 / soak 0 / final sweep 0 /
-erase-incomplete 0. A `test=42` census of 7,012,352 words returned 0 bad, 0 ppm. The
-full FPGA record is `SNAPSHOT.md` in `VivadoProjects` on ba8 — what is golden, the two
-fault modes, and what was tried in each of ~250 numbered folders.
-
-**The Linux side is built and completely untested on hardware.** All seven steps compile,
-are tagged, and are archived. Steps 0 and 1 have hardware results. Steps 2 through 6 have
-never run on a board.
-
-| gate | step | what must be true | state |
-|---|---|---|---|
-| boots at all with the new zone | 2 | `uname -r` = `6.8.0-ltram`, iSCSI root mounts | **open** |
-| node 1 declared, allocator excludes it | 2 | `/sys/devices/system/node/node1` exists; ZONE_LTRAM `nr_free_pages` never drops | **open** |
-| boot leak under 3 pages | 2 | stray-alloc counter in dmesg | **open** |
-| window readable from kernel context | 3 | `self-test completed without abort` appears | **open** |
-| one page programmed through the driver | 4 | `writes_ok` increments; status word `beats +64 pages +16 erases +1` | **open** |
-| migration carries the data | 5 | positive test AND the `-EIO` negative test | **open** |
-| policy promotes weights, never the result buffer | 6 | `ltram-inspect`: weights high %, result **0** | **open** |
-| end-to-end off/on with the digest intact | 7 | both runs reproduce `41bd154e...` | **open** |
-
-Deploy **step 6's image** — it contains steps 2 through 6 plus step 7's tooling.
-
-## The repository
-
-One repository, `github.com/davidshim0/ltram-linux`, cloned on ba8 at
-`/local/home/hushim/ltram-linux`.
+The policy scans millions of pages and promotes **none of the weights**:
 
 ```
-linux/          the kernel: mainline v6.8 plus one commit per step
-scripts/        build.sh  deploy.sh  push-initrd.sh  assert_kconfig.sh
-configs/        golden-6.8.0-64.config, the seed for every build
-workloads/      matmul, ltram-inspect, YCSB-C, rwstress, basic_tests, pagerank,
-                monitoring, profiles
-docs/           design decisions, kernel architecture, migration mechanism
-baselines/      one directory per verified build, indexed by BASELINES.md
-reference/      not on the build path: the earlier out-of-tree module, the FPGA
-                harness source, the buildroot/VM config
+scanned         5184674      promoted 0      promote_failed 0
+weights   50176 pages      0 LtRAM (0.0%)    50176 DRAM
+result        7 pages      0 LtRAM (0.0%)        7 DRAM
 ```
 
-Names are `YYMMDD_stepN_what` — date first so tags and archives sort chronologically,
-step number only when the thing really is one step of an ordered sequence. Archive
-directory and git tag always share the name.
+Zero candidates were ever selected — `promote_failed` is 0 too, so nothing was attempted.
 
-```
-260818_v6.8-base        pristine mainline v6.8 under linux/   (no step: it isn't one)
-260818_step0_vanilla68  the buildable control
-260818_step1_matmul     the measurement control
-260819_step2_zone       node 1 and ZONE_LTRAM
-260819_step3_selftest   boot-time read self-test
-260819_step4_backend    the registerable flash write backend
-260819_step5_migrate    migration routed through the driver, not memcpy
-260819_step6_policy     policy vtable, page allocator, scanner, pid targeting
+**Suspected cause, NOT yet confirmed.** `matmul --protect-weights` mprotects the weights
+`PROT_READ`, so `pte_write()` is false, so the re-arm
+
+```c
+if (dirty && pte_write(p)) { ptep_set_wrprotect(...); flush_tlb_page(...); }
 ```
 
-`git checkout <tag>` gives the source, the script that built it, the config it was built
-with, and what happened when it ran — atomically. That was the point of collapsing three
-repositories into one.
+never runs, so the dirty bit set during the initial fill is **never cleared**.
+`should_promote()` sees a dirty page every pass and the clean-run counter never advances.
+A page that cannot be written without faulting is trivially clean; the policy treats it as
+permanently dirty.
 
-**Upstream history is not carried.** `linux/` was imported as a tree, so `git blame` on
-kernel code we did not write stops at `260818_v6.8-base`. Our own history is complete.
+**Likely fix:** treat `!pte_write(p)` as clean in `should_promote()`, or clear the dirty
+bit for read-only mappings instead of trying to write-protect what is already unwritable.
 
-## Key decisions, so they are not re-litigated
+**FIRST ACTION: instrument `should_promote()` with a per-rejection-reason counter.** The
+diagnosis above is a hypothesis. A counter would have answered it immediately, and its
+absence is why it is still a hypothesis.
 
-- **NUMA node AND zone.** The node is what userspace and the migration machinery address;
-  the zone keeps the allocator from ever handing out a flash page by accident.
-- **`ZONE_LTRAM` is in no zonelist**, and its pages are never released to buddy
-  (`managed` stays 0). That is *how* residency is enforced — and it forces
-  `mm/ltram_policy.c` to own the pages through a private bitmap allocator, because the
-  buddy allocator cannot hand out a flash page even when asked.
-- **`ZONE_LTRAM` is excluded from `GFP_ZONE_TABLE`**, exactly as `ZONE_DEVICE` is.
-  2^4 x 3 = 48 fits in 64 bits; 2^5 x 3 = 96 does not. The compiler only says
-  "shift count >= width" from inside a macro.
-- **The migration hook goes BEFORE `folio_migrate_mapping()`.** There the source is
-  already unmapped so its contents are stable, and a flash error returns with nothing
-  published — the page stays in DRAM, contents intact. Hooked after, there is no way to
-  fail safely.
-- **Write-protect-and-fault, not clear-young.** This CPU has no hardware dirty-bit
-  management (`ID_AA64MMFR1_EL1` HAFDBS = 0, measured). Clearing young observes *access*;
-  the policy is about *writes*.
-- **A vtable, not BPF `struct_ops`, for now.** The policy call is ~30 ns against a 16.4 ms
-  erase — 1 : 550,000 — so dispatch cost is irrelevant. The reason is debuggability in a
-  project whose defining hazard is silent failure. The interface is already the shape
-  `struct_ops` needs. Switch at three or more policies worth comparing.
-- **sysfs `target_pid`, not `prctl`.** Attaching to a *running* process is the point: the
-  workload reaches steady state first, and before/after happens in one process lifetime.
-- **Large folios and pinned pages are ineligible.** A 2 MiB folio is 512 flash sectors, so
-  one write anywhere in it demotes all 512 — 256x the wear of a wrong guess on a base page.
-- **Read-back verify must evict with a PHYSICAL address (`CVMCACHE`).** `dc civac` is a
-  no-op here: the LLC is the point of coherence, so a verify without eviction re-reads the
-  line it is meant to check and always passes.
-- **Archive the resolved `.config`, not just the tag.** `build.sh` transforms the golden
-  config through `olddefconfig`; Kconfig defaults move between versions.
+The 379 promotions seen earlier were the process's **other** anonymous pages — heap, stack,
+libc — which is why provenance shows 0% for both named regions. The mechanism works end to
+end; it is aimed at the wrong pages.
 
-## Settled, with the evidence
+## What was fixed this session
 
-- **Toolchain.** `aarch64-linux-gnu-gcc-11` built the vanilla control that booted z08 and
-  passed every hardware test. gcc-13 is not needed and is not packaged for Ubuntu 22.04.
-- **tftp.** `/srv/tftp/userkernels/hushim/` is owned by `hushim` and writable.
-  `deploy.sh` scp's straight in. No admin in the loop.
-- **Trail is a WINDOW, not a floor.** +0.209 gives sparse b16 faults, **+0.433 is clean**,
-  +0.650 is gross corruption. Three bitstreams from one race of 179 prove the bracket.
+**Issue 1 — the window had no kernel address (was blocking steps 3-5).**
+`ltram_declare_node()` ran in `bootmem_init()`, after `paging_init()` built the linear map,
+so the range was in `memblock.memory` (making `pfn_is_map_memory()` true) with no page-table
+entry. `ioremap_cache()` returned an unmapped `__phys_to_virt()`, `ioremap()` returned NULL,
+`memremap(MEMREMAP_WB)` followed `ioremap_cache()`. First touch = level-0 translation fault.
 
-## Live constraints
+**Two causes, not one.** `should_skip_region()` backs BOTH `for_each_free_mem_range()`
+(allocation) AND `for_each_mem_range()`, which `map_mem()` walks. The step-2 range filter
+there kept allocations off flash *and* hid the range from the linear map. Moving the
+declaration earlier alone would not have helped.
 
-- **z08 `/` is 4.4 GB and sits at 97%, 146 MB free.** `modules_install` plus an initramfs
-  does not fit. `deploy.sh` prunes old module trees. Never build on z08.
-- **Initramfs cannot be built on ba8.** It has to be generated on z08 with
-  `initramfs-tools` after modules are installed, because only z08 has the iSCSI userspace.
-  `Image` alone is not a bootable deliverable.
-- **Mainline vs Ubuntu.** The golden kernel is Ubuntu's `6.8.0-64-generic`, patched;
-  `linux/` is mainline v6.8. If something works under golden and breaks here, "Ubuntu's
-  patches" is a live explanation alongside "our config".
-- **NEVER `sudo reboot` zuestoll08.** iSCSI tears down before root unmounts, the journal
+Fix: **`memblock_reserve()` the range** (excluded from allocation and from
+`memblock_free_all()`, so `managed` stays 0, but still walked by plain memory iteration so
+`map_mem()` maps it) and declare it at the end of `arm64_memblock_init()`, after
+`high_memory` is computed. Runtime escape hatch: **`ltram=off`** on the kernel command line
+skips the declaration entirely.
+
+**Issue 9 — `mm/ltram_policy.c` leaked a folio reference per candidate.**
+`folio_try_get()` then `folio_isolate_lru()` — which takes its own ref — and the promote
+path `continue`d without dropping the first. Candidates reached `migrate_pages()` at +2
+where `folio_migrate_mapping()` expects +1, so every one returned `-EAGAIN`. Symptom:
+`promote_failed 448, promoted 0`. Fix is one `folio_put()`; `mm/madvise.c` is the pattern.
+
+**Issue 3 — declaring a second node silently enabled automatic NUMA balancing.**
+`num_online_nodes() > 1` plus Ubuntu's `CONFIG_NUMA_BALANCING_DEFAULT_ENABLED=y`. It uses
+the SAME mechanism on the SAME PTEs as the policy and wants the opposite outcome: it sets
+`PROT_NONE` to sample access while the scanner write-protects to observe writes, and it
+migrates pages TOWARD node 0, undoing every promotion. Now `--disable
+NUMA_BALANCING_DEFAULT_ENABLED` in `build.sh`, with a NEGATIVE assertion beside the
+boot-critical symbols. `CONFIG_NUMA_BALANCING` stays `y` deliberately — stock NUMA
+balancing is the obvious comparison policy, one sysctl away.
+
+**Issue 6 — `rmmod` use-after-free.** `ft_exit()` called `kthread_stop()` on a worker that
+may already have exited: `refcount_t: addition on 0`, then a NULL deref, so `rmmod`
+segfaulted and the module could never be unloaded — a full reboot each time. Now guarded.
+
+**Issue 5 — an old step tag carries old tooling.** Checking out a step tag rewinds
+`scripts/` too, so step 3 was first built by a `build.sh` predating the NUMA fix and came
+out with balancing defaulted ON, silently. Use **`./scripts/build-step.sh <tag>`**, which
+checks the tag into a throwaway worktree and builds it with the CURRENT scripts, recording
+both halves in `BUILDINFO`.
+
+## New this session: the write backend
+
+Nothing in the kernel implements `write_page()`, so the write path was untestable. The FPGA
+harness now supplies one — `ltram-backend/nor_eci_fulltest.c`:
+
+```bash
+sudo insmod nor_eci_fulltest.ko provide_ops=1   # register the backend, start no worker
+echo 1 > /sys/module/nor_eci_fulltest/parameters/fail_writes   # inject -EIO
+```
+
+It waits on the FPGA's **erase counter**, not a fixed sleep — a dropped trigger is invisible
+to a sleep and has bitten this project before.
+
+## STILL OPEN
+
+- **Issue 10** (above) — the blocker.
+- **Step 5's negative test has NEVER RUN.** Two attempts failed for setup reasons: wrong
+  module loaded, then no candidates to migrate. This is the test that validates hook
+  placement — the positive path passes whether or not the hook precedes
+  `folio_migrate_mapping()`. Procedure: `fail_writes=1`, then assert the migration FAILS,
+  the page is STILL IN DRAM, and its contents are STILL CORRECT.
+- **Issue 12 — one unexplained hard reset** during a migration run. No oops, no panic text,
+  log stops mid-stream. `pstore` has never worked here (`efi_pstore ... error (-5)`), so
+  nothing is captured. Has not recurred. Leading explanation: `rmmod` was run while
+  migrations were in flight, unregistering the backend mid-migration — self-inflicted, not
+  proven. **Attach a console before the next long migration run.**
+- **Failed migrations still cost an erase.** The hook writes flash before the mapping move,
+  so a migration that then fails has already burned an erase+program. Correct for safety;
+  real wear against the 41.5 erases/s budget.
+- **A 6.72% variance run** was seen once (`matmul` usually reports 0.01-0.04%). Unexplained.
+  Anything that noisy fails the workload's own gate for validating a regression.
+
+## Gotchas that cost real time
+
+- **The FPGA status word only prints at module load.** `dmesg | grep "STATUS WORD" | tail -1`
+  returns a stale snapshot; `rmmod`/`insmod` to sample. Misreading this nearly produced a
+  report of catastrophic corruption that was not happening (issue 11).
+- **Status word `erases` and `pages` are 8-bit and wrap at 256** — compare modulo 256.
+  Worked example for 379 writes: `beats 12352 + 379*64 = 36608`,
+  `erases (193+379)&0xFF = 60`, `pages (16+379*16)&0xFF = 192`. All three matched.
+- **`grep -A12` on `/proc/zoneinfo` cuts off before `managed`** (~45 lines of per-node stats
+  intervene). Use `sed -n '/Node 1, zone *LtRAM/,/^Node /p'`. An `awk` anchored on
+  `/zone +LtRAM/` matches **node 0's** empty LtRAM zone first and reports 0/0/0.
+- **Never edit `scripts/*.sh` while a build runs** — bash reads a script by byte offset and
+  resumes mid-token. **Never run two builds on one output directory.** After any raced or
+  interrupted build, delete the output directory: a truncated `.o` links without complaint.
+- **Check `BUILDINFO`, not the exit code.** A build can exit 0 with a stale identity block.
+- **`kinit` on the gateway expires roughly hourly** and blocks every deploy.
+- **z08 `/` is at 98%** — deploy the Image only, not the 145 MB module tree. Drivers are `=y`
+  so boot does not need it.
+- **NEVER `sudo reboot` zuestoll08** — iSCSI tears down before root unmounts, the journal
   aborts, systemd freezes, and the BMC cycle WIPES the FPGA. Use
-  `echo b > /proc/sysrq-trigger`.
-- **`emg release` does not delete a named volume.** `ltram` is persistent, so `~/nor_eci`,
-  `/lib/modules/*` and ssh keys survive.
-- **Gateway ssh dying is Kerberos, not the key.** `kinit` on the gateway.
+  `sudo sh -c 'echo b > /proc/sysrq-trigger'`.
+- **Do not `rmmod` the backend while a target pid is set.**
 
-## Current deployment state
+## The record
 
-z08 is running `6.8.0-vanilla68`. `/lib/modules/6.8.0-ltram` and
-`/boot/initrd.img-6.8.0-ltram` are staged there, **but the gateway is still serving the
-vanilla vmlinuz** — the LtRAM kernel has never been put in front of the boot loader.
+| what | where |
+|---|---|
+| implementation steps + **12 issue reports** | https://claude.ai/code/artifact/2a15f6cb-b540-41cb-bad9-2e403466d4c2 |
+| **issue 10 — the blocker** | https://claude.ai/code/artifact/5a22f854-d1e9-41c8-b74f-58bedbf07a69 |
+| issue 1 — linear map (resolved) | https://claude.ai/code/artifact/2b0ca5ef-ca05-4d59-a2ae-2f39d3af970c |
+| issue 9 — folio refcount (resolved) | https://claude.ai/code/artifact/d4904e3e-1ba2-4104-b8a7-2da0214b48c4 |
+| issue 11 — stale status word (resolved) | https://claude.ai/code/artifact/ceef8d43-ac65-42b9-81f8-196958ff75ae |
+| issue 12 — hard reset (open) | https://claude.ai/code/artifact/f9dba960-2bbf-4d0c-b681-4196a357ab5d |
+| baseline registry | `BASELINES.md` |
+| per-gate evidence | `baselines/260819_*/RESULT.md` |
+| FPGA campaign | `SNAPSHOT.md` in `~/VivadoProjects`, and github.com/davidshim0/ltram-fpga |
 
-## Open questions
+Artifact links 404 on the university account — open them with the personal account.
 
-- Every hardware gate above.
-- **Read-side capture fault, unresolved.** Single bit, DQ5/DQ6, first beat of a 128 B
-  line, flash content provably correct, roughly 1 in 48,000 reads. An FPGA problem: the
-  RWDS input path has no timing constraint in any bitstream. Sets a noise floor under
-  every measurement. Known, not blocking.
-- **The step-7 delta mixes three effects** — reads hitting flash, a different NUMA node,
-  and migration cost — and no control separates them on this hardware (a DRAM-backed
-  node 1 does not exist). Report it as combined and say so.
-- **Migration hook coverage is narrower than it looks.** `migrate_folio_extra()` is one
-  entry point; `buffer_migrate_folio()` and the huge-page paths do not pass through it.
-- The address-slice fix from 179/180 is **still latent in 169** and unapplied.
-- `tb_read_write_scheduler` has 18 pre-existing failures.
+## State of the tree
+
+- **`main`** — steps 2-6 with the linear-map fix; tags `260819_step2_solid`,
+  `260819_step3_selftest`, `260819_step4_backend` are hardware-verified and archived.
+- **`step6-refcount`** — `main` plus the folio-reference fix. **This is the current working
+  kernel** and what is deployed.
+- Deployed on z08: `6.8.0-ltram #1 ... 17:10:31`, Image `608ce04b...`.
+- Gateway restore points: `vmlinuz.prev-step2`, `.prev-step3`, `.prev-step4`, `.prev-step6`.
+- Bitstream **`169_phy200`**, confirmed by `st_wait` 738-739 us. Survived the hard reset.
 
 ## Commands
 
 ```bash
-# build -- ends with an identity block: tag, commit, date, toolchain, Image sha256
-./scripts/build.sh ltram
-./scripts/build.sh vanilla
-./scripts/assert_kconfig.sh out-ltram/.config
+./scripts/build-step.sh <tag>          # build an older step with CURRENT tooling
+./scripts/build.sh ltram|vanilla       # build the checked-out tree
+./scripts/deploy.sh ltram              # kernel -> gateway, modules -> z08
+sudo sh -c 'echo b > /proc/sysrq-trigger'    # reboot z08 -- never `sudo reboot`
 
-# deploy -- prints that block, then re-hashes the kernel ON THE GATEWAY and aborts on
-# a mismatch, so "is the kernel about to boot the one I built?" has an answer
-./scripts/deploy.sh ltram
-./scripts/push-initrd.sh 6.8.0-ltram
-
-# then, ON THE GATEWAY
+# on the gateway
 emg acquire -n ltram -g 2025-07-28 -k hushim/vmlinuz -i hushim/initrd.img zuestoll08
+
+# on z08
+sudo insmod ~/nor_eci/nor_eci_fulltest_ltram.ko provide_ops=1
+bash ~/gate2.sh          # gate 2, all sub-checks
+bash ~/gatefull.sh       # steps 5+6: provenance then the negative test
 ```
-
-Confirm which bitstream is on the chip before trusting any result: `st_wait` around
-736-743 us means `169_phy200`; around 1329 us means 179/t51.
-
-## Where else the record lives
-
-| what | where |
-|---|---|
-| step-by-step implementation pages | https://claude.ai/code/artifact/2a15f6cb-b540-41cb-bad9-2e403466d4c2 |
-| the build plan with test methodology | https://claude.ai/code/artifact/41ad587e-5f89-4cbc-8b09-475f46f24527 |
-| the FPGA campaign record | `SNAPSHOT.md` in `VivadoProjects` on ba8 |
-| design decisions | `docs/DESIGN-DECISIONS.md` |
-| baseline registry | `BASELINES.md` |
-
-Artifact links 404 on the university account — open them with the personal account.
-
-## Still on disk, deliberately
-
-`ltram-kernel` (54 GB), `ltram-new` (28 GB) and `ltram-policy-bench` (2.6 GB) are the
-superseded directories. Everything unique in them has been copied here and verified
-against checksums. They are kept until the first six steps are finished on hardware, then
-they can go.
