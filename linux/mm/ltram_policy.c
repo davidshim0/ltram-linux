@@ -147,13 +147,13 @@ static DEFINE_XARRAY(ltram_obs);
 struct ltram_policy {
 	const char *name;
 	void (*pass_begin)(void);
-	bool (*should_promote)(struct folio *f, struct ltram_obs *o, bool dirty);
+	bool (*should_promote)(struct folio *f, struct ltram_obs *o, bool written);
 	void (*pass_end)(void);
 };
 
-static bool clean_run_should_promote(struct folio *f, struct ltram_obs *o, bool dirty)
+static bool clean_run_should_promote(struct folio *f, struct ltram_obs *o, bool written)
 {
-	if (dirty) {
+	if (written) {
 		o->clean_runs = 0;
 		return false;
 	}
@@ -193,8 +193,8 @@ static atomic64_t stat_scanned, stat_promoted, stat_promote_failed;
  *   sel_isolate_fail chosen but folio_isolate_lru() refused. Invisible before.
  *   rearmed          the write-protect actually executed.
  */
-static atomic64_t rej_dirty_ro, rej_dirty_rw, rej_runs_short,
-		  sel_isolated, sel_isolate_fail, rearmed;
+static atomic64_t rej_writable, rej_runs_short,
+		  sel_isolated, sel_isolate_fail, rearmed, stale_dirty;
 
 /* ---- targeting ------------------------------------------------------------ */
 static pid_t target_pid;
@@ -221,7 +221,7 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 		pte_t p = ptep_get(pte);
 		struct folio *folio;
 		struct ltram_obs *o;
-		bool dirty;
+		bool written;
 
 		if (!pte_present(p))
 			continue;
@@ -237,7 +237,41 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 			continue;
 
 		atomic64_inc(&stat_scanned);
-		dirty = pte_dirty(p);
+
+		/*
+		 * "Has this page been written since I last armed it?"
+		 *
+		 * NOT pte_dirty(). That is (PTE_DIRTY | writable-and-not-rdonly),
+		 * and PTE_DIRTY is a one-way latch: set by the fault handler on
+		 * the first write a page ever takes, preserved by pte_modify()
+		 * across mprotect, re-set rather than cleared by pte_wrprotect(),
+		 * and cleared only by pte_mkclean() -- which nothing here calls.
+		 * It answers "was this page EVER written", which is the question
+		 * the swap path needs and not the one this policy asks. Measured
+		 * cost of asking it: 13,247,550 of 13,258,954 scans rejected, and
+		 * not one weight page ever promoted.
+		 *
+		 * Write permission is the honest signal on this CPU. With
+		 * HAFDBS = 0 nothing but the page-fault handler can restore it
+		 * after the scanner takes it away, so !pte_write means exactly
+		 * "no write has trapped since we armed this page". The scanner
+		 * clears it; only a real trapped write sets it back.
+		 *
+		 * pte_write() alone is bit 51; the hardware also needs PTE_RDONLY
+		 * clear before a store actually lands, so this is conservative --
+		 * it can call a page written for one extra pass when a store
+		 * would in fact have trapped. One pass, and it keeps this to
+		 * generic kernel API rather than an arm64-only macro.
+		 */
+		written = pte_write(p);
+
+		/*
+		 * Pages the OLD rule would have rejected and this one accepts.
+		 * Purely observational: it is the A/B for this change, visible in
+		 * the same run rather than across two boots.
+		 */
+		if (pte_dirty(p) && !written)
+			atomic64_inc(&stale_dirty);
 
 		o = xa_load(&ltram_obs, folio_pfn(folio));
 		if (!o) {
@@ -248,7 +282,7 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 			}
 		}
 
-		if (policy->should_promote(folio, o, dirty)) {
+		if (policy->should_promote(folio, o, written)) {
 			if (!folio_isolate_lru(folio)) {
 				atomic64_inc(&sel_isolate_fail);
 				goto rearm;
@@ -272,8 +306,8 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 			continue;
 		}
 
-		if (dirty)
-			atomic64_inc(pte_write(p) ? &rej_dirty_rw : &rej_dirty_ro);
+		if (written)
+			atomic64_inc(&rej_writable);
 		else
 			atomic64_inc(&rej_runs_short);
 rearm:
@@ -294,7 +328,7 @@ rearm:
 		 * software dirty tracking and the reason the scan interval is a
 		 * tunable.
 		 */
-		if (dirty && pte_write(p)) {
+		if (written) {
 			ptep_set_wrprotect(walk->mm, addr, pte);
 			flush_tlb_page(walk->vma, addr);
 			atomic64_inc(&rearmed);
@@ -409,9 +443,9 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		"demoted           %lld\n"
 		"pages_in_use      %lld\n"
 		"pages_total       %lu\n"
-		"rej_dirty_ro      %lld\n"
-		"rej_dirty_rw      %lld\n"
+		"rej_writable      %lld\n"
 		"rej_runs_short    %lld\n"
+		"stale_dirty       %lld\n"
 		"sel_isolated      %lld\n"
 		"sel_isolate_fail  %lld\n"
 		"rearmed           %lld\n",
@@ -419,8 +453,8 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		atomic64_read(&stat_scanned), atomic64_read(&stat_promoted),
 		atomic64_read(&stat_promote_failed), atomic64_read(&stat_demoted),
 		atomic64_read(&ltram_pages_in_use), ltram_nr_pages,
-		atomic64_read(&rej_dirty_ro), atomic64_read(&rej_dirty_rw),
-		atomic64_read(&rej_runs_short), atomic64_read(&sel_isolated),
+		atomic64_read(&rej_writable), atomic64_read(&rej_runs_short),
+		atomic64_read(&stale_dirty), atomic64_read(&sel_isolated),
 		atomic64_read(&sel_isolate_fail), atomic64_read(&rearmed));
 }
 
