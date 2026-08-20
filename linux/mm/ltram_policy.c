@@ -48,6 +48,7 @@ module_param(promote_batch, uint, 0644);
 static unsigned long *ltram_free_bitmap;	/* 1 = free */
 static unsigned long ltram_nr_pages;
 static DEFINE_SPINLOCK(ltram_alloc_lock);
+static atomic64_t stat_demoted;
 static atomic64_t ltram_pages_in_use;
 
 static struct page *ltram_alloc_page(void)
@@ -110,6 +111,25 @@ static void ltram_put_new_folio(struct folio *dst, unsigned long private)
 	ltram_free_page_back(&dst->page);
 }
 
+/*
+ * Hand a flash page back to the bitmap. Reached from __folio_put_small() when
+ * the last reference to a promoted page goes away -- normally because a write
+ * fault demoted it back to DRAM and wp_page_copy() dropped the original.
+ *
+ * These pages are NOT buddy's. ZONE_LTRAM is in no zonelist and its managed
+ * count is zero, so free_unref_page() would be handing the allocator a page it
+ * has never owned and does not account for.
+ */
+void ltram_free_folio(struct folio *folio)
+{
+	ltram_free_page_back(&folio->page);
+}
+
+void ltram_note_demotion(void)
+{
+	atomic64_inc(&stat_demoted);
+}
+
 /* ---- per-page observation -------------------------------------------------
  * Keyed by pfn. Small and sparse: only pages of the target that have been seen
  * clean at least once appear here.
@@ -150,7 +170,7 @@ static const struct ltram_policy policy_clean_run = {
 static const struct ltram_policy *policy = &policy_clean_run;
 
 /* ---- counters ------------------------------------------------------------- */
-static atomic64_t stat_scanned, stat_promoted, stat_promote_failed, stat_demoted;
+static atomic64_t stat_scanned, stat_promoted, stat_promote_failed;
 
 /* ---- why a scanned page was NOT selected ----------------------------------
  * "scanned 5184674, promoted 0, promote_failed 0" says a page was looked at and

@@ -92,6 +92,13 @@ int  ltram_copy_to_flash(struct folio *dst, struct folio *src);
 void __init ltram_declare_node(void);
 void ltram_note_stray_alloc(unsigned long pfn, const char *where);
 
+/* Return a flash page to the bitmap allocator in mm/ltram_policy.c. These pages
+ * were never given to buddy (managed stays 0), so the ordinary free path would
+ * corrupt buddy's accounting with a page it never owned. */
+void ltram_free_folio(struct folio *folio);
+/* A write forced a flash page back to DRAM. */
+void ltram_note_demotion(void);
+
 #else  /* !CONFIG_LTRAM */
 
 static inline bool pfn_is_ltram(unsigned long pfn) { return false; }
@@ -100,6 +107,8 @@ static inline void ltram_note_stray_alloc(unsigned long pfn, const char *w) { }
 static inline bool ltram_have_flash_ops(void) { return false; }
 static inline int ltram_write_page(unsigned long p, const void *s) { return -ENODEV; }
 static inline bool folio_is_ltram(const struct folio *f) { return false; }
+static inline void ltram_free_folio(struct folio *f) { }
+static inline void ltram_note_demotion(void) { }
 static inline int ltram_copy_to_flash(struct folio *d, struct folio *s) { return -ENODEV; }
 
 #endif /* CONFIG_LTRAM */

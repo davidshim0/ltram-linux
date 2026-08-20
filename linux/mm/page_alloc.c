@@ -1090,6 +1090,20 @@ static void kernel_init_pages(struct page *page, int numpages)
 static __always_inline bool free_pages_prepare(struct page *page,
 			unsigned int order, fpi_t fpi_flags)
 {
+#ifdef CONFIG_LTRAM
+	/*
+	 * A flash page must never reach buddy. ZONE_LTRAM is in no zonelist and
+	 * its managed count is zero, so buddy has never owned these pages and
+	 * does not account for them -- freeing one here corrupts the allocator
+	 * quietly. The demotion path redirects in __folio_put_small(); this is
+	 * the backstop that makes any route we have missed announce itself
+	 * instead of going undetected.
+	 */
+	if (unlikely(pfn_is_ltram(page_to_pfn(page)))) {
+		ltram_note_stray_alloc(page_to_pfn(page), "free_pages_prepare");
+		return false;
+	}
+#endif
 	int bad = 0;
 	bool skip_kasan_poison = should_skip_kasan_poison(page, fpi_flags);
 	bool init = want_init_on_free();

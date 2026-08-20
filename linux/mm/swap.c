@@ -15,6 +15,7 @@
  */
 
 #include <linux/mm.h>
+#include <linux/ltram.h>
 #include <linux/sched.h>
 #include <linux/kernel_stat.h>
 #include <linux/swap.h>
@@ -103,6 +104,16 @@ static void __folio_put_small(struct folio *folio)
 {
 	__page_cache_release(folio);
 	mem_cgroup_uncharge(folio);
+	/*
+	 * All the bookkeeping above still applies to a flash page; only the
+	 * final hand-off differs. ZONE_LTRAM pages were never released to
+	 * buddy, so free_unref_page() would give the allocator a page it does
+	 * not account for.
+	 */
+	if (unlikely(folio_is_ltram(folio))) {
+		ltram_free_folio(folio);
+		return;
+	}
 	free_unref_page(&folio->page, 0);
 }
 

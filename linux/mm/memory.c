@@ -42,6 +42,7 @@
 
 #include <linux/kernel_stat.h>
 #include <linux/mm.h>
+#include <linux/ltram.h>
 #include <linux/mm_inline.h>
 #include <linux/sched/mm.h>
 #include <linux/sched/coredump.h>
@@ -3500,7 +3501,22 @@ static vm_fault_t do_wp_page(struct vm_fault *vmf)
 	 * If we encounter a page that is marked exclusive, we must reuse
 	 * the page without further checks.
 	 */
-	if (folio && folio_test_anon(folio) &&
+	/*
+	 * NEVER reuse a flash page in place. wp_page_reuse() would call
+	 * maybe_mkwrite(), which on arm64 sets PTE_WRITE and clears PTE_RDONLY
+	 * unconditionally -- handing the process write access to the ECI read
+	 * window, where every store retires normally and is silently discarded.
+	 * That is the exact failure this subsystem exists to prevent.
+	 *
+	 * Falling through to wp_page_copy() IS the demotion: it allocates a
+	 * fresh page (never flash -- ZONE_LTRAM is in no zonelist), copies the
+	 * contents across (reads from flash work), installs a writable PTE
+	 * pointing at DRAM, and drops the last reference to the flash page.
+	 */
+	if (folio && folio_is_ltram(folio))
+		ltram_note_demotion();
+
+	if (folio && folio_test_anon(folio) && !folio_is_ltram(folio) &&
 	    (PageAnonExclusive(vmf->page) || wp_can_reuse_anon_folio(folio, vma))) {
 		if (!PageAnonExclusive(vmf->page))
 			SetPageAnonExclusive(vmf->page);

@@ -220,7 +220,14 @@ static bool remove_migration_pte(struct folio *folio,
 			pte = pte_mkold(pte);
 		if (folio_test_dirty(folio) && is_migration_entry_dirty(entry))
 			pte = pte_mkdirty(pte);
-		if (is_writable_migration_entry(entry))
+		/*
+		 * A writable migration entry restored onto a flash folio would
+		 * grant write access with no fault and no mprotect -- the one
+		 * route into a writable LtRAM PTE that does not pass through
+		 * do_wp_page(). DESIGN-DECISIONS 4.2 rule 1: never set
+		 * PTE_WRITE on an LtRAM PTE.
+		 */
+		if (is_writable_migration_entry(entry) && !folio_is_ltram(folio))
 			pte = pte_mkwrite(pte, vma);
 		else if (pte_swp_uffd_wp(old_pte))
 			pte = pte_mkuffd_wp(pte);
