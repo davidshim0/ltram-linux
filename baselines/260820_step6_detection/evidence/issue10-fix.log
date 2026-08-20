@@ -1,0 +1,127 @@
+kernel : 6.8.0-ltram
+PREEMPT_DYNAMIC Thu Aug 20 06:22:55 CEST 2026
+backend: 0 nor_eci module(s) loaded  (expect 0)
+batch  : 32
+output : /home/enzian/issue10-fix-0820-0444
+
+================ phase A ================
+argv: --n 7168 --iters 1000 --runs 1 --verify --protect-weights --print-ranges
+matmul pid 1675, filling...
+attached at 04:45:09; scanning for 240 s
+detached at 04:49:09; waiting for matmul
+matmul exit status 0
+
+---- counters, delta over the 240 s attach ----
+demoted                         0
+pages_in_use                    0
+pages_total                     0
+policy                          0
+promoted                        0
+promote_failed               7456
+rearmed                        41
+rej_runs_short             101154
+rej_writable                   41
+scanned                    110732
+sel_isolated                 7456
+sel_isolate_fail             2081
+stale_dirty                108999
+target_pid                   1675
+
+  weights     196.0 MiB  mprotect PROT_READ ok
+  result       28.0 KiB
+RANGE weights 0xe0f3f4200000 0xe0f400600000 205520896
+RANGE result  0xe0f4008ae000 0xe0f4008b5000 28672
+RESULT mean 344.864 s   sd 0.000 s   (0.00%)
+DIGEST eac2220487404436a5b74268e67b0e566b399179edc059d9c1004380980e4994
+
+================ phase B ================
+argv: --n 7168 --iters 1000 --runs 1 --verify --print-ranges
+matmul pid 1745, filling...
+attached at 04:50:55; scanning for 240 s
+detached at 04:54:55; waiting for matmul
+matmul exit status 0
+
+---- counters, delta over the 240 s attach ----
+demoted                         0
+pages_in_use                    0
+pages_total                     0
+policy                          0
+promoted                        0
+promote_failed               7488
+rearmed                     50179
+rej_runs_short             100360
+rej_writable                50179
+scanned                    159654
+sel_isolated                 7488
+sel_isolate_fail             1627
+stale_dirty                108450
+target_pid                   1745
+
+  weights     196.0 MiB  (writable -- pass --protect-weights to prove RO)
+  result       28.0 KiB
+RANGE weights 0xff9103a00000 0xff910fe00000 205520896
+RANGE result  0xff911010b000 0xff9110112000 28672
+RESULT mean 344.867 s   sd 0.000 s   (0.00%)
+DIGEST eac2220487404436a5b74268e67b0e566b399179edc059d9c1004380980e4994
+
+================ raw ================
+-- /home/enzian/issue10-fix-0820-0444/A.before
+policy            clean-run
+target_pid        0
+scanned           0
+promoted          0
+promote_failed    0
+demoted           0
+pages_in_use      0
+pages_total       65536
+rej_writable      0
+rej_runs_short    0
+stale_dirty       0
+sel_isolated      0
+sel_isolate_fail  0
+rearmed           0
+-- /home/enzian/issue10-fix-0820-0444/B.before
+policy            clean-run
+target_pid        0
+scanned           110732
+promoted          0
+promote_failed    7456
+demoted           0
+pages_in_use      0
+pages_total       65536
+rej_writable      41
+rej_runs_short    101154
+stale_dirty       108999
+sel_isolated      7456
+sel_isolate_fail  2081
+rearmed           41
+-- /home/enzian/issue10-fix-0820-0444/A.after
+policy            clean-run
+target_pid        1675
+scanned           110732
+promoted          0
+promote_failed    7456
+demoted           0
+pages_in_use      0
+pages_total       65536
+rej_writable      41
+rej_runs_short    101154
+stale_dirty       108999
+sel_isolated      7456
+sel_isolate_fail  2081
+rearmed           41
+-- /home/enzian/issue10-fix-0820-0444/B.after
+policy            clean-run
+target_pid        1745
+scanned           270386
+promoted          0
+promote_failed    14944
+demoted           0
+pages_in_use      0
+pages_total       65536
+rej_writable      50220
+rej_runs_short    201514
+stale_dirty       217449
+sel_isolated      14944
+sel_isolate_fail  3708
+rearmed           50220

@@ -1,0 +1,10 @@
+matmul  N=7168  iters=1000  runs=1  seed=20260818
+  weights     196.0 MiB  (writable -- pass --protect-weights to prove RO)
+  result       28.0 KiB
+RANGES pid=1745
+RANGE weights 0xff9103a00000 0xff910fe00000 205520896
+RANGE result  0xff911010b000 0xff9110112000 28672
+  run  1/1   344.867 s
+RESULT mean 344.867 s   sd 0.000 s   (0.00%)
+DIGEST eac2220487404436a5b74268e67b0e566b399179edc059d9c1004380980e4994
+GATE PASS: variance <= 2% -- usable as a control

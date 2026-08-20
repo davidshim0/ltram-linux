@@ -202,6 +202,60 @@ what makes an A/B measurement mean anything.
 
 ---
 
+## 260820_step6_detection — issue 10 closed, VERIFIED ON HARDWARE 20 August 2026
+
+The step-6 blocker is fixed: the policy scanner detects read-mostly pages, **with no
+application hint of any kind**. Full evidence in
+`baselines/260820_step6_detection/RESULT.md`.
+
+The scanner asked `pte_dirty()` — *has this page ever been written?* On arm64 that reads bit
+55, which is set at first write and which nothing in LtRAM ever clears (`pte_wrprotect()`
+**sets** it, `pte_modify()` preserves it, `pte_mkclean()` is called nowhere here) — and this
+CPU has no hardware DBM and arm64 has no soft-dirty. Every weight page was therefore
+permanently ineligible. It now asks `pte_write()` — *is it writable right now?* — which the
+scanner can itself change by write-protecting and waiting for a fault.
+
+| commit | what |
+|---|---|
+| `a06b6973c` | count WHY a scanned page was not selected — turned the hypothesis into a measurement |
+| `f558a316f` | a flash page may never be writable, and may never reach buddy — `do_wp_page`, `remove_migration_pte`, `__folio_put_small`, `free_pages_prepare` |
+| `244a66761` | ask whether a page was written, not whether it was ever written |
+
+Measured over a 240 s attach, `matmul --n 7168 --iters 1000 --runs 1`:
+
+| | 08-19 broken | A: `--protect-weights` | B: **no hint** |
+|---|---|---|---|
+| `rej_dirty_ro` → `rej_writable` | 13,247,550 | 41 | 50,179 |
+| `rearmed` | 40 | 41 | **50,179** |
+| `stale_dirty` | *(n/a)* | 108,999 | 108,450 |
+| `sel_isolated` | 8,384 | 7,456 | **7,488** |
+| DIGEST | `eac22204…` | `eac22204…` | `eac22204…` |
+
+**`rej_writable == rearmed == 50,179` against exactly 50,176 weight pages** is the mechanism in
+one line: pass 1 rejects every writable weight page and write-protects it, the application never
+writes them again, pass 2 onward reads them clean. Armed exactly once each, never twice.
+
+Phase B reaches the same `sel_isolated` as phase A, so **the `mprotect` hint bought nothing** —
+it only skipped pass 1. Cost of transparency is one extra sweep to arm, paid once.
+
+**Not proven by this run:** the `nor_eci` backend was deliberately not loaded, so `promoted` is
+0 and `promote_failed == sel_isolated` by construction — detection is proven, the flash write
+path is untouched by this evidence, and `demoted 0` means the new demotion guard is still
+unexercised. `sel_isolate_fail` at 18-22% of selections is a real, separate, unexplained loss.
+
+**Two traps for reading these counters:**
+
+- **A large `scanned` is the symptom of finding nothing.** `walk_page_range(mm, 0, TASK_SIZE)`
+  restarts at address 0 every pass with no cursor and the pte loop is gated on
+  `ctx->nr < promote_batch`, so a healthy pass short-circuits early. 13.2 M → 110,732 is the
+  fix working, not a regression.
+- **`promote_batch = 32` at 1 pass/s caps promotion at 32 pages/s** — 26 minutes to drain
+  50,176 pages. Both phases saturated it on every pass, so `sel_isolated` measures the cap, not
+  the predicate. Live-writable at `/sys/module/ltram_policy/parameters/promote_batch`; the
+  default is set by the wear budget, so raise it only for measurement.
+
+---
+
 ## Conventions worth not rediscovering
 
 - **Archive the resolved `config`, not just the tag.** `build.sh` transforms Ubuntu's

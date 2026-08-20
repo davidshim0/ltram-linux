@@ -1,0 +1,14 @@
+policy            clean-run
+target_pid        0
+scanned           0
+promoted          0
+promote_failed    0
+demoted           0
+pages_in_use      0
+pages_total       65536
+rej_writable      0
+rej_runs_short    0
+stale_dirty       0
+sel_isolated      0
+sel_isolate_fail  0
+rearmed           0
