@@ -37,9 +37,10 @@ what `folio_migrate_copy()` does, and the only reason `ltram_copy_to_flash()` ex
 | 4 backend, positive | **PASS** | page programmed; FPGA `beats +64, pages +16, erases +1`; data confirmed by a later boot's self-test checksum changing `099708ea` &rarr; `00663ddc` |
 | 5 migration hook | **mechanism proven, negative test NOT RUN** | 379 pages migrated with FPGA counters exact |
 | 6 policy, detection | **PASS — issue 10 fixed 2026-08-20** | no application hint: `rej_writable == rearmed == 50,179` against exactly 50,176 weight pages |
-| 6 policy, end to end | **PASS 2026-08-20** | 16,384/16,384 weight pages resident on NOR, digest matched on all 15 runs, 4.87x DRAM |
-| 6 capacity (window full) | **CONTAMINATED — re-run** | a page leak had eaten a quarter of the window first |
+| 6 policy, end to end | **PASS 2026-08-20 (re-proven)** | digest identical on 15/15 runs with `late_free 6,779` -- sectors actually recycled |
+| 6 capacity (window full) | **NOT RUN** | earlier attempt contaminated by the leak; leak now fixed |
 | 6 writeback (demotion) | **NOT RUN** | `ltram-writeback` built and staged, never executed |
+| 6 steady-state cost | **partial** | 4.87x measured once, but on the run whose sectors were never reused |
 | 7 measurement | not started | unblocked |
 
 ## ISSUE 10 IS FIXED — 2026-08-20
@@ -159,6 +160,42 @@ echo 1 > /sys/module/nor_eci_fulltest/parameters/fail_writes   # inject -EIO
 
 It waits on the FPGA's **erase counter**, not a fixed sleep — a dropped trigger is invisible
 to a sleep and has bitten this project before.
+
+## THREE BUGS FOUND ON 2026-08-20, ALL FIXED, ALL PREVIOUSLY LATENT
+
+They were stacked: each one hid the next, so they could only be found in this order.
+
+| commit | bug | what was hiding it |
+|---|---|---|
+| `e6f915089` | **Flash page leak.** `release_pages()`/`free_unref_page_list()` -- the batch path process exit and munmap take -- bypass the `__folio_put_small()` hook, so pages hit the `free_pages_prepare()` backstop, stayed out of buddy, and were then dropped. 16,502 lost in one evening. | Nothing. Found by its own dmesg flood, which then filled a root filesystem already at 14 MB free and made the box unreachable. |
+| `53fc3a101` | **Page-cache folios promoted to flash.** No anonymity filter, and the scanner *preferred* file-backed text -- it is the most read-mostly memory a process has. Migration then took `__buffer_migrate_folio()`, which is in the SError panic trace. | Never looked for. `rej_not_anon` now shows ~850-1,100 refusals per run, so it was happening constantly. |
+| `529197685` | **Stale CPU cache lines on sector reuse.** `rd_win` is `ioremap_cache`d and an FPGA-side erase/program does not invalidate it. The backend's verifiers always knew this (`inval_sector()` exists for it); the migration path never called it. A freshly promoted page could be read out of a line belonging to the sector's previous occupant. | **The leak.** While flash pages never returned to the bitmap, no sector was ever reused, so no line could be stale. |
+
+**The third one is the reason to be careful about what "PASS" meant.** The first station-4
+run matched its digest on all 15 runs -- and passed for the wrong reason. Fixing the leak
+enabled sector reuse and the corruption appeared at run 12 of 15:
+
+```
+run1  8873ba56c40ff27a3bc077dd36c2fce7aedb72c7c06a30ec15cd22488dc23302
+run12 8d57ab9cafc64a8109040cb6f50f3a87fc127177ea5fd0da67c5516acb24eba5
+```
+
+The re-run with all three fixed is clean: 15/15, `late_free 6,779` against `promoted 6,784`,
+zero write or promotion failures. Evidence in `baselines/260820_step6_flash/`.
+
+**The lesson worth carrying:** a fix that makes a system exercise a path it never exercised
+before is not a regression when the next thing breaks. Both later bugs were older than the
+fixes that exposed them.
+
+**The backend module was rebuilt** for `529197685` and deployed as
+`~/nor_eci/nor_eci_fulltest_ltram.ko`; the previous one is kept as `.pre-invalfix`. Rebuild it
+whenever `ltram-backend/nor_eci_fulltest.c` changes:
+
+```bash
+mkdir -p /tmp/norbuild && cp ltram-backend/nor_eci_fulltest.c /tmp/norbuild/
+echo 'obj-m := nor_eci_fulltest.o' > /tmp/norbuild/Makefile
+ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- make -C linux O=$PWD/out-ltram M=/tmp/norbuild modules
+```
 
 ## STATE AS OF 2026-08-20 09:00 — z08 NEEDS HANDS
 
