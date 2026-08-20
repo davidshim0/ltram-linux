@@ -39,7 +39,7 @@ what `folio_migrate_copy()` does, and the only reason `ltram_copy_to_flash()` ex
 | 6 policy, detection | **PASS — issue 10 fixed 2026-08-20** | no application hint: `rej_writable == rearmed == 50,179` against exactly 50,176 weight pages |
 | 6 policy, end to end | **PASS 2026-08-20 (re-proven)** | digest identical on 15/15 runs with `late_free 6,779` -- sectors actually recycled |
 | 6 capacity (window full) | **NOT RUN** | earlier attempt contaminated by the leak; leak now fixed |
-| 6 writeback (demotion) | **NOT RUN** | `ltram-writeback` built and staged, never executed |
+| 6 writeback (demotion) | **PASS 2026-08-20** | 7,517/8,192 on NOR, STALE 0 WRONG 0, `demoted` +7,519 -- one per resident page |
 | 6 steady-state cost | **partial** | 4.87x measured once, but on the run whose sectors were never reused |
 | 7 measurement | not started | unblocked |
 
