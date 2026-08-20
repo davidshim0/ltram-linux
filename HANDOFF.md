@@ -37,7 +37,7 @@ what `folio_migrate_copy()` does, and the only reason `ltram_copy_to_flash()` ex
 | 4 backend, positive | **PASS** | page programmed; FPGA `beats +64, pages +16, erases +1`; data confirmed by a later boot's self-test checksum changing `099708ea` &rarr; `00663ddc` |
 | 5 migration hook | **mechanism proven, negative test NOT RUN** | 379 pages migrated with FPGA counters exact |
 | 6 policy, detection | **PASS — issue 10 fixed 2026-08-20** | no application hint: `rej_writable == rearmed == 50,179` against exactly 50,176 weight pages |
-| 6 policy, end to end | **PASS 2026-08-20 (re-proven)** | digest identical on 15/15 runs with `late_free 6,779` -- sectors actually recycled |
+| 6 policy, end to end | **PASS 2026-08-20 (re-proven)** | digest identical on 15/15 runs after the cache-invalidate fix; no sector was reused in either run |
 | 6 capacity (window full) | **NOT RUN** | earlier attempt contaminated by the leak; leak now fixed |
 | 6 writeback (demotion) | **PASS 2026-08-20** | 7,517/8,192 on NOR, STALE 0 WRONG 0, `demoted` +7,519 -- one per resident page |
 | 6 steady-state cost | **partial** | 4.87x measured once, but on the run whose sectors were never reused |
