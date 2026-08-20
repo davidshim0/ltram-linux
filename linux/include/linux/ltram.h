@@ -23,6 +23,9 @@
 #define _LINUX_LTRAM_H
 
 #include <linux/types.h>
+
+struct page;
+struct folio;
 #include <linux/init.h>
 #include <linux/errno.h>
 
