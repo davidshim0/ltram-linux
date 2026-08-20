@@ -1,0 +1,25 @@
+===== 08:42:57 attempt 1 =====
+mux_client_request_session: read from master failed: Broken pipe
+kex_exchange_identification: Connection closed by remote host
+Connection closed by UNKNOWN port 65535
+rc=255
+===== 08:46:04 attempt 2 =====
+kex_exchange_identification: Connection closed by remote host
+Connection closed by UNKNOWN port 65535
+rc=255
+===== 08:48:04 attempt 3 =====
+kex_exchange_identification: Connection closed by remote host
+Connection closed by UNKNOWN port 65535
+rc=255
+===== 08:50:05 attempt 4 =====
+kex_exchange_identification: Connection closed by remote host
+Connection closed by UNKNOWN port 65535
+rc=255
+===== 08:52:06 attempt 5 =====
+kex_exchange_identification: Connection closed by remote host
+Connection closed by UNKNOWN port 65535
+rc=255
+===== 08:54:06 attempt 6 =====
+kex_exchange_identification: Connection closed by remote host
+Connection closed by UNKNOWN port 65535
+rc=255
