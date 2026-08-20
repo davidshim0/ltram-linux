@@ -37,8 +37,10 @@ what `folio_migrate_copy()` does, and the only reason `ltram_copy_to_flash()` ex
 | 4 backend, positive | **PASS** | page programmed; FPGA `beats +64, pages +16, erases +1`; data confirmed by a later boot's self-test checksum changing `099708ea` &rarr; `00663ddc` |
 | 5 migration hook | **mechanism proven, negative test NOT RUN** | 379 pages migrated with FPGA counters exact |
 | 6 policy, detection | **PASS — issue 10 fixed 2026-08-20** | no application hint: `rej_writable == rearmed == 50,179` against exactly 50,176 weight pages |
-| 6 policy, end to end | **NOT RUN** | backend deliberately unloaded, so `promoted 0` by construction |
-| 7 measurement | not started | unblocked; needs a backend-loaded run first |
+| 6 policy, end to end | **PASS 2026-08-20** | 16,384/16,384 weight pages resident on NOR, digest matched on all 15 runs, 4.87x DRAM |
+| 6 capacity (window full) | **CONTAMINATED — re-run** | a page leak had eaten a quarter of the window first |
+| 6 writeback (demotion) | **NOT RUN** | `ltram-writeback` built and staged, never executed |
+| 7 measurement | not started | unblocked |
 
 ## ISSUE 10 IS FIXED — 2026-08-20
 
@@ -157,6 +159,57 @@ echo 1 > /sys/module/nor_eci_fulltest/parameters/fail_writes   # inject -EIO
 
 It waits on the FPGA's **erase counter**, not a fixed sleep — a dropped trigger is invisible
 to a sleep and has bitten this project before.
+
+## STATE AS OF 2026-08-20 09:00 — z08 NEEDS HANDS
+
+**Station 4 passed.** 100% of the 16,384 weight pages went onto NOR, zero promotion failures
+once the backend was live, digest re-checked between all 15 runs. Steady state **31.3 s vs a
+6.432 s DRAM control = 4.87x**. Full evidence: `baselines/260820_step6_flash/RESULT.md`.
+
+**Then a real bug surfaced and took the box's root filesystem with it.**
+
+`free_pages_prepare()` reported 16,502 stray LtRAM pages — a quarter of the window. The
+`f558a316f` guard hooks `__folio_put_small()`, which sees only single-page puts;
+`release_pages()` and `free_unref_page_list()` — **the batch path process exit and munmap
+take** — bypass it. Fixed in `e6f915089` by returning the page at the backstop itself, since
+`free_pages_prepare()` is the one funnel every free path passes through.
+
+The cascade: one `pr_info` per leaked page → 16,502 lines → journald wrote them into a root
+filesystem already at **14 MB free** → `sshd` could no longer fork a session and started
+closing connections before key exchange (`kex_exchange_identification: Connection closed by
+remote host`).
+
+**The kernel never died.** The `dmesg -w` stream started before the run held its connection
+with 30 s keepalives long after new logins stopped. Streaming the kernel log off-box is the
+only reason this was diagnosable — keep doing it.
+
+### To recover, in this order
+
+```bash
+kinit                                     # on the gateway -- it has expired
+# z08 will not accept ssh; power-cycle it via the BMC/gateway
+# then, once it boots, BEFORE anything else:
+ssh zuestoll08 'sudo journalctl --vacuum-size=32M; df -h /'
+```
+
+The kernel to deploy is already built and clean:
+`260819_step4_backend-11-g8bab31e3a`, Image sha `5915794f1b7c9a9f0f2755bda8e07430b0325b63672b5981578fe4a44d3bfcd8`.
+
+```bash
+scp out-ltram/arch/arm64/boot/Image \
+    hushim@enzian-gateway.inf.ethz.ch:/srv/tftp/userkernels/hushim/vmlinuz
+```
+
+Station 4's raw output is on `/scratch/hushim/station4-0820-0610/` (NFS — it survives the
+reset). Rerun capacity and writeback on the fixed kernel; both are staged as
+`~/station4.sh`, `~/station5.sh`, `~/ltram-writeback`.
+
+### Two rules this cost a night to learn
+
+- **Write run output to `/scratch`, never `$HOME`.** z08's root is 4.4 GB and cannot absorb
+  even a modest log. `/scratch` is NFS with 507 GB and survives a board reset.
+- **Never print per-page in a hot kernel path.** Count it. A rate-limited `pr_info` still
+  emitted 16,502 lines and that was enough to end the filesystem.
 
 ## STILL OPEN
 
