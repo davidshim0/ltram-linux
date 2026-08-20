@@ -1,0 +1,41 @@
+=============== STATION 6: WRITEBACK VERDICT ===============
+region 32 MiB = 8192 pages   promote_batch 32   exit 0
+
+-- peak residency before the write --
+  7517 / 8192 pages on NOR (91%)
+data           8192 pages       7517 LtRAM ( 91.8%)        675 DRAM        0 not present
+
+-- the write --
+go seen after 399.9 s; writing pattern B over 8192 pages
+write took 0.316 s (101.2 MiB/s)
+STALE  0 words  (still pattern A -- the write was DISCARDED)
+WRONG  0 words  (neither A nor B -- corruption)
+WRITEBACK: PASS -- every page took the write and read back correctly
+
+-- residency after (want ~0) --
+  (process already exited)
+
+-- demotions --
+  demoted 13 -> 7532  (delta 7519, expect ~= pages that were on flash)
+
+-- counters --
+policy            clean-run                 clean-run
+target_pid        0   0
+scanned           52736                     84957
+promoted          9568                      17094
+promote_failed    0   0
+demoted           13  7532
+pages_in_use      0   3
+pages_total       65536                     65536
+rej_writable      194 8405
+rej_runs_short    42632                     59048
+stale_dirty       52542                     76552
+sel_isolated      9568                      17094
+sel_isolate_fail  342 410
+rearmed           194 8405
+late_free         9561                      9568
+rej_not_anon      1950                      3506
+
+VERDICT: PASS -- every page took the write and read back correctly,
+         with 7517 of 8192 pages resident on NOR when the write was released.
+===========================================================

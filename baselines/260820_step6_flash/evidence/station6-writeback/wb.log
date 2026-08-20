@@ -1,0 +1,9 @@
+writeback pid=4376  region 32 MiB  8192 pages
+RANGE data 0xee5e8a400000 0xee5e8c400000 33554432
+filled with pattern A; now READ-ONLY from here until the go file appears
+go seen after 399.9 s; writing pattern B over 8192 pages
+write took 0.316 s (101.2 MiB/s)
+STALE  0 words  (still pattern A -- the write was DISCARDED)
+WRONG  0 words  (neither A nor B -- corruption)
+sink 8267133070977531904
+WRITEBACK: PASS -- every page took the write and read back correctly

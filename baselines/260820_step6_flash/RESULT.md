@@ -145,3 +145,57 @@ reset of the board. z08's root cannot absorb even a modest log.
   crashing, but nothing has yet written to a flash-resident page and verified the data came
   back. `ltram-writeback` is built and staged for exactly this and has never run.
 - `sel_isolate_fail` still drops 18-22% of selections, unexplained.
+
+---
+
+# Station 6 — the fault path back to DRAM — PASS, 2026-08-20
+
+**The hazard this closes.** A store to the NOR read window is silently discarded by the
+hardware: no fault, no error, no signal. If a flash-backed page is ever left writable, the
+write evaporates and nothing notices. Every test before this one only ever *read*, and
+`--protect-weights` turned a stray write into a `SIGSEGV`, so this path had never run against
+real data.
+
+`ltram-writeback` fills 32 MiB with pattern A, stops writing, gets promoted **by only reading
+it**, then writes pattern B over every page and verifies. The pattern is position-dependent
+(`idx * 0x9E3779B97F4A7C15 ^ epoch`), so a page restored from the *wrong* sector fails too,
+not merely one that never took the write.
+
+| | |
+|---|---|
+| resident on NOR when the write was released | **7,517 / 8,192 (91.8%)** |
+| `STALE` — words still pattern A | **0** — no write was discarded |
+| `WRONG` — words neither A nor B | **0** — no corruption, no misplaced page |
+| `demoted` | 13 → 7,532, **delta 7,519 against 7,517 resident** |
+| write | 8,192 pages in 0.316 s (101.2 MiB/s), including 7,517 faults and copies out of NOR |
+| `promote_failed` | 0 |
+
+**`demoted` delta ≈ resident pages is the load-bearing number.** One demotion per
+flash-resident page means `do_wp_page()` refused to reuse every one of them and fell through to
+`wp_page_copy()`, which is the demotion. Had the guard in `f558a316f` been wrong for even a
+handful, those pages would have been reused in place, their stores swallowed, and `STALE` would
+be non-zero.
+
+## Two things this run also shows, for free
+
+**Transparent detection, independently, on a program that is not matmul.**
+`rej_writable` and `rearmed` both move by **8,211** — equal, against 8,192 pages. Pass 1
+rejects every writable page and arms it exactly once; the program then only reads; later passes
+find them clean and promote. The region is **`rw` for the entire run** — no `mprotect`, no
+hints, and it *has* to be, because the test writes to it at the end.
+
+**The two free paths are genuinely distinct.** `late_free` moved by only **7** across this
+whole run, against 7,519 demotions. Demotion frees its flash page through
+`folio_put()` → `__folio_put_small()`, which the early hook catches; the backstop in
+`free_pages_prepare()` sees almost none of it. The batch path that dominated station 4
+(`late_free` ≈ `promoted` at process exit) and the single-page path exercised here are
+different routes, and both are now covered.
+
+## Method note
+
+The scanner is detached two seconds *before* the write is released. Otherwise it could
+re-promote pages mid-write, and a genuine writeback failure would be indistinguishable from a
+page moved back under the writer.
+
+**n = 1**, one region, one size. Not yet run: a write to a page that is *concurrently* being
+promoted, which is the race this ordering deliberately avoids rather than tests.

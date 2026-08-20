@@ -1,0 +1,5 @@
+[  795.766922] ltram: flash backend registered by nor_eci_fulltest
+[  795.766932] fulltest: LtRAM write backend REGISTERED -- no worker started, this module now only serves mm/ltram.c
+[  801.217007] ltram: target pid 2334
+[ 1168.143074] ltram: target pid 0
+[ 1168.421822] ltram: target pid 0
