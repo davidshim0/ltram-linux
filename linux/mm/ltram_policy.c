@@ -49,14 +49,15 @@ static unsigned long *ltram_free_bitmap;	/* 1 = free */
 static unsigned long ltram_nr_pages;
 static DEFINE_SPINLOCK(ltram_alloc_lock);
 static atomic64_t stat_demoted;
+static atomic64_t stat_late_free;
 static atomic64_t ltram_pages_in_use;
 
 static struct page *ltram_alloc_page(void)
 {
-	unsigned long idx;
+	unsigned long idx, flags;
 	struct page *p = NULL;
 
-	spin_lock(&ltram_alloc_lock);
+	spin_lock_irqsave(&ltram_alloc_lock, flags);
 	if (ltram_free_bitmap) {
 		idx = find_first_bit(ltram_free_bitmap, ltram_nr_pages);
 		if (idx < ltram_nr_pages) {
@@ -65,7 +66,7 @@ static struct page *ltram_alloc_page(void)
 			atomic64_inc(&ltram_pages_in_use);
 		}
 	}
-	spin_unlock(&ltram_alloc_lock);
+	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 
 	if (p) {
 		/*
@@ -81,13 +82,16 @@ static struct page *ltram_alloc_page(void)
 static void ltram_free_page_back(struct page *p)
 {
 	unsigned long idx = page_to_pfn(p) - ltram_start_pfn;
+	unsigned long flags;
 
-	spin_lock(&ltram_alloc_lock);
+	/* free_pages_prepare() can reach here from softirq and with interrupts
+	 * already off, so this lock cannot be the plain variety. */
+	spin_lock_irqsave(&ltram_alloc_lock, flags);
 	if (ltram_free_bitmap && idx < ltram_nr_pages && !test_bit(idx, ltram_free_bitmap)) {
 		__set_bit(idx, ltram_free_bitmap);
 		atomic64_dec(&ltram_pages_in_use);
 	}
-	spin_unlock(&ltram_alloc_lock);
+	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 }
 
 /* migrate_pages() callbacks */
@@ -123,6 +127,21 @@ static void ltram_put_new_folio(struct folio *dst, unsigned long private)
 void ltram_free_folio(struct folio *folio)
 {
 	ltram_free_page_back(&folio->page);
+}
+
+/*
+ * The catch-all. __folio_put_small() sees only single-page puts; release_pages()
+ * and free_unref_page_list() -- the batch path that process exit and munmap take
+ * -- bypass it entirely. Before this existed those pages hit the backstop in
+ * free_pages_prepare(), were correctly kept out of buddy, and then leaked,
+ * because nothing gave them back to the bitmap. 16,502 of them went missing in
+ * one evening. free_pages_prepare() is the single funnel every free path passes
+ * through, so hooking it here covers all of them by construction.
+ */
+void ltram_free_page(struct page *page)
+{
+	atomic64_inc(&stat_late_free);
+	ltram_free_page_back(page);
 }
 
 void ltram_note_demotion(void)
@@ -448,14 +467,16 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		"stale_dirty       %lld\n"
 		"sel_isolated      %lld\n"
 		"sel_isolate_fail  %lld\n"
-		"rearmed           %lld\n",
+		"rearmed           %lld\n"
+		"late_free         %lld\n",
 		policy->name, target_pid,
 		atomic64_read(&stat_scanned), atomic64_read(&stat_promoted),
 		atomic64_read(&stat_promote_failed), atomic64_read(&stat_demoted),
 		atomic64_read(&ltram_pages_in_use), ltram_nr_pages,
 		atomic64_read(&rej_writable), atomic64_read(&rej_runs_short),
 		atomic64_read(&stale_dirty), atomic64_read(&sel_isolated),
-		atomic64_read(&sel_isolate_fail), atomic64_read(&rearmed));
+		atomic64_read(&sel_isolate_fail), atomic64_read(&rearmed),
+		atomic64_read(&stat_late_free));
 }
 
 static struct kobj_attribute target_pid_attr = __ATTR_RW(target_pid);

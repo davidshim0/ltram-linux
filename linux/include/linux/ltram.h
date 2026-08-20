@@ -96,6 +96,9 @@ void ltram_note_stray_alloc(unsigned long pfn, const char *where);
  * were never given to buddy (managed stays 0), so the ordinary free path would
  * corrupt buddy's accounting with a page it never owned. */
 void ltram_free_folio(struct folio *folio);
+/* Return a single flash page to the bitmap. Called from free_pages_prepare(),
+ * which is the one funnel every free path in the kernel passes through. */
+void ltram_free_page(struct page *page);
 /* A write forced a flash page back to DRAM. */
 void ltram_note_demotion(void);
 
@@ -108,6 +111,7 @@ static inline bool ltram_have_flash_ops(void) { return false; }
 static inline int ltram_write_page(unsigned long p, const void *s) { return -ENODEV; }
 static inline bool folio_is_ltram(const struct folio *f) { return false; }
 static inline void ltram_free_folio(struct folio *f) { }
+static inline void ltram_free_page(struct page *p) { }
 static inline void ltram_note_demotion(void) { }
 static inline int ltram_copy_to_flash(struct folio *d, struct folio *s) { return -ENODEV; }
 

@@ -1100,7 +1100,7 @@ static __always_inline bool free_pages_prepare(struct page *page,
 	 * instead of going undetected.
 	 */
 	if (unlikely(pfn_is_ltram(page_to_pfn(page)))) {
-		ltram_note_stray_alloc(page_to_pfn(page), "free_pages_prepare");
+		ltram_free_page(page);
 		return false;
 	}
 #endif
