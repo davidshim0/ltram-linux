@@ -212,6 +212,7 @@ static atomic64_t stat_scanned, stat_promoted, stat_promote_failed;
  *   sel_isolate_fail chosen but folio_isolate_lru() refused. Invisible before.
  *   rearmed          the write-protect actually executed.
  */
+static atomic64_t rej_not_anon;
 static atomic64_t rej_writable, rej_runs_short,
 		  sel_isolated, sel_isolate_fail, rearmed, stale_dirty;
 
@@ -252,6 +253,33 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 		 * hold its physical address. */
 		if (folio_maybe_dma_pinned(folio))
 			continue;
+		/*
+		 * Anonymous private memory only.
+		 *
+		 * A page-cache folio belongs to the filesystem, not to this mm.
+		 * It is shared with every other process mapping that file, the
+		 * block layer can DMA into the buffer heads hanging off it, and
+		 * moving it goes through __buffer_migrate_folio() rather than the
+		 * anon path. None of that is safe against a backing store whose
+		 * reads cross a coherent interconnect to an FPGA.
+		 *
+		 * This was not a rare edge case. The scanner PREFERRED these:
+		 * read-only file text is the most read-mostly memory a process
+		 * has, and it sits at the low addresses the batch fills from
+		 * first. On 2026-08-20 a file-backed folio with buffer heads was
+		 * migrated onto flash and the machine took an uncorrectable
+		 * SError out of the coherent fabric moments later -- L2C LFB
+		 * entry timeout and global sync CCPI timeout, i.e. a request to
+		 * the window that never completed.
+		 *
+		 * KSM folios are excluded for the same reason: they are shared
+		 * between unrelated mms and this policy has no right to relocate
+		 * them on everyone else's behalf.
+		 */
+		if (!folio_test_anon(folio) || folio_test_ksm(folio)) {
+			atomic64_inc(&rej_not_anon);
+			continue;
+		}
 		if (!folio_try_get(folio))
 			continue;
 
@@ -468,7 +496,8 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		"sel_isolated      %lld\n"
 		"sel_isolate_fail  %lld\n"
 		"rearmed           %lld\n"
-		"late_free         %lld\n",
+		"late_free         %lld\n"
+		"rej_not_anon      %lld\n",
 		policy->name, target_pid,
 		atomic64_read(&stat_scanned), atomic64_read(&stat_promoted),
 		atomic64_read(&stat_promote_failed), atomic64_read(&stat_demoted),
@@ -476,7 +505,7 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		atomic64_read(&rej_writable), atomic64_read(&rej_runs_short),
 		atomic64_read(&stale_dirty), atomic64_read(&sel_isolated),
 		atomic64_read(&sel_isolate_fail), atomic64_read(&rearmed),
-		atomic64_read(&stat_late_free));
+		atomic64_read(&stat_late_free), atomic64_read(&rej_not_anon));
 }
 
 static struct kobj_attribute target_pid_attr = __ATTR_RW(target_pid);
