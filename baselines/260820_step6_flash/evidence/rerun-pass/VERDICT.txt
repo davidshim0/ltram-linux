@@ -1,0 +1,76 @@
+================ STATION 4 VERDICT ================
+kernel 6.8.0-ltram   N=4096 iters=60 runs=15 promote_batch=32
+
+-- per-run timings: migration should read as a STEP, not a slope --
+control:
+  run  1/3     6.434 s
+  run  2/3     6.435 s
+  run  3/3     6.435 s
+flash:
+  run  1/15     9.659 s
+  run  2/15    12.303 s
+  run  3/15    10.909 s
+  run  4/15    11.281 s
+  run  5/15    11.419 s
+  run  6/15    12.797 s
+  run  7/15    12.312 s
+  run  8/15    13.219 s
+  run  9/15    14.549 s
+  run 10/15    14.673 s
+  run 11/15    15.043 s
+  run 12/15    16.341 s
+  run 13/15    16.582 s
+  run 14/15    16.999 s
+  run 15/15    18.406 s
+
+-- did any page physically move (matmul's own pfn census) --
+PHYS        weights  DRAM->LtRAM 123   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 224   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 194   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 30
+PHYS        weights  DRAM->LtRAM 192   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 30   vanished 0
+PHYS        weights  DRAM->LtRAM 224   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 256   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 224   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 256   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 288   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 288   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 285   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 320   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 320   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 320   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 352   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 0   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 32
+PHYS verdict weights  pfnsum changed at 16 of 17 reports (first 2, last 17) -- cumulative DRAM->LtRAM 3866, LtRAM->DRAM 0
+PHYS verdict input    pfnsum constant across 17 reports -- no page of this region moved
+PHYS verdict result   pfnsum constant across 17 reports -- no page of this region moved
+
+-- flash residency at steady state --
+  (not captured)
+
+-- flash write counters --
+writes_ok 9568   writes_failed 0
+
+-- policy counters, before -> after --
+policy            clean-run                     clean-run
+target_pid        0     2334
+scanned           35995 52736
+promoted          2784  9568
+promote_failed    0     0
+demoted           6     13
+pages_in_use      0     1
+pages_total       65536 65536
+rej_writable      137   194
+rej_runs_short    32940 42632
+stale_dirty       35858 52542
+sel_isolated      2784  9568
+sel_isolate_fail  134   342
+rearmed           137   194
+late_free         2781  9560
+rej_not_anon      1102  1950
+
+control  digest 8873ba56c40ff27a3bc077dd36c2fce7aedb72c7c06a30ec15cd22488dc23302   mean 6.435 s   exit 0
+flash    digest 8873ba56c40ff27a3bc077dd36c2fce7aedb72c7c06a30ec15cd22488dc23302   mean 13.766 s   exit 0
+
+VERDICT: PASS -- identical digest with pages resident on NOR.
+         Every run after promotion re-read the weights from flash and got the same answer.
+===================================================

@@ -1,0 +1,32 @@
+matmul  N=4096  iters=60  runs=3  seed=20260818
+  weights      64.0 MiB  mprotect PROT_READ ok
+  result       16.0 KiB
+RANGES pid=2293
+RANGE weights 0xf4a364400000 0xf4a368400000 67108864
+RANGE result  0xf4a36876b000 0xf4a36876f000 16384
+PHYS window  ltram pfn 0x14000000 .. 0x14010000  (65536 pages, 256 MiB)
+PHYS start  weights  pages    16384  present    16384  first pfn 0x00012aa3b  phys 0x00012aa3b000  LtRAM 0 (0.0%)  huge 0/32  pfnsum 0xb69eb5db7a6e72a5  [base]
+PHYS start  input    pages        4  present        4  first pfn 0x000132fe9  phys 0x000132fe9000  LtRAM 0 (0.0%)  pfnsum 0x68db785a7ca9f55a  [base]
+PHYS start  result   pages        4  present        4  first pfn 0x000132fed  phys 0x000132fed000  LtRAM 0 (0.0%)  pfnsum 0x8b8f005a9055837a  [base]
+  run  1/3     6.434 s
+PHYS run1   weights  pages    16384  present    16384  first pfn 0x00012aa3b  phys 0x00012aa3b000  LtRAM 0 (0.0%)  huge 0/32  pfnsum 0xb69eb5db7a6e72a5  [same]
+PHYS run1   input    pages        4  present        4  first pfn 0x000132fe9  phys 0x000132fe9000  LtRAM 0 (0.0%)  pfnsum 0x68db785a7ca9f55a  [same]
+PHYS run1   result   pages        4  present        4  first pfn 0x000132fed  phys 0x000132fed000  LtRAM 0 (0.0%)  pfnsum 0x8b8f005a9055837a  [same]
+  run  2/3     6.435 s
+PHYS run2   weights  pages    16384  present    16384  first pfn 0x00012aa3b  phys 0x00012aa3b000  LtRAM 0 (0.0%)  huge 0/32  pfnsum 0xb69eb5db7a6e72a5  [same]
+PHYS run2   input    pages        4  present        4  first pfn 0x000132fe9  phys 0x000132fe9000  LtRAM 0 (0.0%)  pfnsum 0x68db785a7ca9f55a  [same]
+PHYS run2   result   pages        4  present        4  first pfn 0x000132fed  phys 0x000132fed000  LtRAM 0 (0.0%)  pfnsum 0x8b8f005a9055837a  [same]
+  run  3/3     6.435 s
+PHYS run3   weights  pages    16384  present    16384  first pfn 0x00012aa3b  phys 0x00012aa3b000  LtRAM 0 (0.0%)  huge 0/32  pfnsum 0xb69eb5db7a6e72a5  [same]
+PHYS run3   input    pages        4  present        4  first pfn 0x000132fe9  phys 0x000132fe9000  LtRAM 0 (0.0%)  pfnsum 0x68db785a7ca9f55a  [same]
+PHYS run3   result   pages        4  present        4  first pfn 0x000132fed  phys 0x000132fed000  LtRAM 0 (0.0%)  pfnsum 0x8b8f005a9055837a  [same]
+RESULT mean 6.435 s   sd 0.001 s   (0.01%)
+DIGEST 8873ba56c40ff27a3bc077dd36c2fce7aedb72c7c06a30ec15cd22488dc23302
+PHYS end    weights  pages    16384  present    16384  first pfn 0x00012aa3b  phys 0x00012aa3b000  LtRAM 0 (0.0%)  huge 0/32  pfnsum 0xb69eb5db7a6e72a5  [same]
+PHYS end    input    pages        4  present        4  first pfn 0x000132fe9  phys 0x000132fe9000  LtRAM 0 (0.0%)  pfnsum 0x68db785a7ca9f55a  [same]
+PHYS end    result   pages        4  present        4  first pfn 0x000132fed  phys 0x000132fed000  LtRAM 0 (0.0%)  pfnsum 0x8b8f005a9055837a  [same]
+PHYS verdict weights  pfnsum constant across 5 reports -- no page of this region moved
+PHYS verdict input    pfnsum constant across 5 reports -- no page of this region moved
+PHYS verdict result   pfnsum constant across 5 reports -- no page of this region moved
+PHYS overhead 0.665 s over 5 reports -- EXCLUDED from every run time and from RESULT
+GATE PASS: variance <= 2% -- usable as a control

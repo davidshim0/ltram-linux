@@ -49,6 +49,39 @@ different machines. The steady state is runs 9-15, and that is what 31.299 s ref
 The digest is re-checked **between every run** (matmul exits 44 on mismatch), so runs 6-15 are
 each an independent readback test of pages living on flash. All passed.
 
+## IMPORTANT — how to read the run above
+
+That run was **correct, but for the wrong reason.** It passed because a page leak meant no
+flash sector was ever reused, so every promotion landed on a virgin sector. A second bug
+(stale CPU cache lines on sector reuse, `529197685`) was latent underneath it and could not
+fire. Do not cite the 15/15 digest match from that run as evidence the write path is sound;
+cite the re-run below.
+
+## The re-run that actually proves it — 2026-08-20 16:24, kernel #5
+
+Same workload, `promote_batch=32` (the validated default this time), with the leak fixed, the
+anon-only filter in, and `inval_sector()` on the write path.
+
+| | |
+|---|---|
+| digest | **`8873ba56…c23302` — identical to the DRAM control, 15/15 runs** |
+| `promoted` / `writes_ok` | 6,784 / 6,784 — exactly one flash write per page |
+| `promote_failed` / `writes_failed` | **0 / 0** |
+| `late_free` | 6,779 — **sectors recycled at scale, which is what makes this run meaningful** |
+| `pages_in_use` after exit | 1 — the leak is gone |
+| `rej_not_anon` | 848 file-backed folios correctly refused |
+| `sel_isolate_fail` | 208 of 6,992 (3.0%) |
+| `demoted` | 7 |
+
+`late_free` ≈ `promoted` is the load-bearing number. It says sectors were freed and reallocated
+continuously during the run — the precise condition that produced a wrong digest at run 12 of
+15 before `529197685`. Fifteen runs clean under it.
+
+**This run does not reach steady state.** At `promote_batch=32` only ~3,514 pages (21%) had
+migrated by run 15, so the 13.766 s mean is a ramp, not a plateau, and it is not comparable to
+the 31.299 s figure above. Timings climbed 9.659 → 18.406 s against a 6.435 s control. A
+steady-state number needs either more runs or a higher batch, and belongs to step 7.
+
 ## The bug this run found — a flash page leak
 
 `free_pages_prepare()` reported **16,502 stray LtRAM pages**, a quarter of the window.

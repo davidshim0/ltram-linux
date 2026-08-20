@@ -1,0 +1,257 @@
+matmul  N=4096  iters=60  runs=15  seed=20260818
+  weights      64.0 MiB  mprotect PROT_READ ok
+  result       16.0 KiB
+RANGES pid=2334
+RANGE weights 0xe5a2d4800000 0xe5a2d8800000 67108864
+RANGE result  0xe5a2d8bf1000 0xe5a2d8bf5000 16384
+PHYS window  ltram pfn 0x14000000 .. 0x14010000  (65536 pages, 256 MiB)
+PHYS start  weights  pages    16384  present    16384  first pfn 0x000127888  phys 0x000127888000  LtRAM 0 (0.0%)  huge 0/32  pfnsum 0x1e43d48cdcbbf1dc  [base]
+PHYS start  input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [base]
+PHYS start  result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [base]
+  run  1/15     9.659 s
+PHYS run1   weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 123 (0.8%)  huge 0/32  pfnsum 0xbc41b550b723dbe2  [MOVED was 0x1e43d48cdcbbf1dc]
+PHYS  moved weights  123 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 123   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page        0  pfn 0x000127888 -> 0x01400005e   phys 0x000127888000 -> 0x01400005e000   DRAM -> LtRAM
+PHYS        weights  page        1  pfn 0x00011fe75 -> 0x01400005d   phys 0x00011fe75000 -> 0x01400005d000   DRAM -> LtRAM
+PHYS        weights  page        2  pfn 0x00012ac7f -> 0x01400005c   phys 0x00012ac7f000 -> 0x01400005c000   DRAM -> LtRAM
+PHYS        weights  page        3  pfn 0x00012fa91 -> 0x01400005b   phys 0x00012fa91000 -> 0x01400005b000   DRAM -> LtRAM
+PHYS        weights  page        4  pfn 0x0001202b1 -> 0x01400005a   phys 0x0001202b1000 -> 0x01400005a000   DRAM -> LtRAM
+PHYS        weights  page        5  pfn 0x00013ad9f -> 0x014000059   phys 0x00013ad9f000 -> 0x014000059000   DRAM -> LtRAM
+PHYS        weights  page        6  pfn 0x000117810 -> 0x01400001f   phys 0x000117810000 -> 0x01400001f000   DRAM -> LtRAM
+PHYS        weights  page        7  pfn 0x00012d51b -> 0x014000058   phys 0x00012d51b000 -> 0x014000058000   DRAM -> LtRAM
+PHYS        weights  ... 115 further move(s) not listed
+PHYS run1   input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run1   result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run  2/15    12.303 s
+PHYS run2   weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 347 (2.1%)  huge 0/32  pfnsum 0xb24756858eba777f  [MOVED was 0xbc41b550b723dbe2]
+PHYS  moved weights  224 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 224   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page       80  pfn 0x00011fe71 -> 0x01400009f   phys 0x00011fe71000 -> 0x01400009f000   DRAM -> LtRAM
+PHYS        weights  page       81  pfn 0x00012bc87 -> 0x01400009e   phys 0x00012bc87000 -> 0x01400009e000   DRAM -> LtRAM
+PHYS        weights  page       82  pfn 0x00012bc80 -> 0x01400009d   phys 0x00012bc80000 -> 0x01400009d000   DRAM -> LtRAM
+PHYS        weights  page       83  pfn 0x00012b8fa -> 0x01400009c   phys 0x00012b8fa000 -> 0x01400009c000   DRAM -> LtRAM
+PHYS        weights  page       84  pfn 0x00012d490 -> 0x01400009b   phys 0x00012d490000 -> 0x01400009b000   DRAM -> LtRAM
+PHYS        weights  page       85  pfn 0x000123d09 -> 0x01400009a   phys 0x000123d09000 -> 0x01400009a000   DRAM -> LtRAM
+PHYS        weights  page       86  pfn 0x000130eae -> 0x014000099   phys 0x000130eae000 -> 0x014000099000   DRAM -> LtRAM
+PHYS        weights  page       87  pfn 0x000130eac -> 0x014000098   phys 0x000130eac000 -> 0x014000098000   DRAM -> LtRAM
+PHYS        weights  ... 216 further move(s) not listed
+PHYS run2   input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run2   result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run  3/15    10.909 s
+PHYS run3   weights  pages    16384  present    16354  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 541 (3.3%)  huge 0/32  pfnsum 0x17f0a9745c105a50  [MOVED was 0xb24756858eba777f]
+PHYS  moved weights  224 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 194   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 30
+PHYS        weights  page      332  pfn 0x00011d090 -> 0x01400017c   phys 0x00011d090000 -> 0x01400017c000   DRAM -> LtRAM
+PHYS        weights  page      333  pfn 0x000116116 -> 0x01400017b   phys 0x000116116000 -> 0x01400017b000   DRAM -> LtRAM
+PHYS        weights  page      334  pfn 0x000124202 -> 0x01400017a   phys 0x000124202000 -> 0x01400017a000   DRAM -> LtRAM
+PHYS        weights  page      335  pfn 0x0001241f0 -> 0x014000179   phys 0x0001241f0000 -> 0x014000179000   DRAM -> LtRAM
+PHYS        weights  page      336  pfn 0x000124abc -> 0x014000178   phys 0x000124abc000 -> 0x014000178000   DRAM -> LtRAM
+PHYS        weights  page      337  pfn 0x000123042 -> 0x014000177   phys 0x000123042000 -> 0x014000177000   DRAM -> LtRAM
+PHYS        weights  page      338  pfn 0x0001145dc -> 0x014000176   phys 0x0001145dc000 -> 0x014000176000   DRAM -> LtRAM
+PHYS        weights  page      339  pfn 0x0001241da -> 0x014000175   phys 0x0001241da000 -> 0x014000175000   DRAM -> LtRAM
+PHYS        weights  ... 216 further move(s) not listed
+PHYS run3   input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run3   result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run  4/15    11.281 s
+PHYS run4   weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 763 (4.7%)  huge 0/32  pfnsum 0x1199ea47696ec84f  [MOVED was 0x17f0a9745c105a50]
+PHYS  moved weights  222 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 192   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 30   vanished 0
+PHYS        weights  page      523  pfn 0x000000000 -> 0x01400023c   phys 0x000000000000 -> 0x01400023c000   absent -> LtRAM
+PHYS        weights  page      524  pfn 0x000000000 -> 0x01400023b   phys 0x000000000000 -> 0x01400023b000   absent -> LtRAM
+PHYS        weights  page      525  pfn 0x000000000 -> 0x01400023a   phys 0x000000000000 -> 0x01400023a000   absent -> LtRAM
+PHYS        weights  page      526  pfn 0x000000000 -> 0x014000239   phys 0x000000000000 -> 0x014000239000   absent -> LtRAM
+PHYS        weights  page      527  pfn 0x000000000 -> 0x014000238   phys 0x000000000000 -> 0x014000238000   absent -> LtRAM
+PHYS        weights  page      528  pfn 0x000000000 -> 0x014000237   phys 0x000000000000 -> 0x014000237000   absent -> LtRAM
+PHYS        weights  page      529  pfn 0x000000000 -> 0x014000236   phys 0x000000000000 -> 0x014000236000   absent -> LtRAM
+PHYS        weights  page      530  pfn 0x000000000 -> 0x014000235   phys 0x000000000000 -> 0x014000235000   absent -> LtRAM
+PHYS        weights  ... 214 further move(s) not listed
+PHYS run4   input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run4   result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run  5/15    11.419 s
+PHYS run5   weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 987 (6.0%)  huge 0/32  pfnsum 0xe94a5018257438f3  [MOVED was 0x1199ea47696ec84f]
+PHYS  moved weights  224 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 224   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page      753  pfn 0x00013ae6c -> 0x01400031c   phys 0x00013ae6c000 -> 0x01400031c000   DRAM -> LtRAM
+PHYS        weights  page      754  pfn 0x00013ae6e -> 0x01400031b   phys 0x00013ae6e000 -> 0x01400031b000   DRAM -> LtRAM
+PHYS        weights  page      755  pfn 0x00013ae73 -> 0x01400031a   phys 0x00013ae73000 -> 0x01400031a000   DRAM -> LtRAM
+PHYS        weights  page      756  pfn 0x00013ae75 -> 0x014000319   phys 0x00013ae75000 -> 0x014000319000   DRAM -> LtRAM
+PHYS        weights  page      757  pfn 0x00013ae77 -> 0x014000318   phys 0x00013ae77000 -> 0x014000318000   DRAM -> LtRAM
+PHYS        weights  page      758  pfn 0x00013ae79 -> 0x014000317   phys 0x00013ae79000 -> 0x014000317000   DRAM -> LtRAM
+PHYS        weights  page      759  pfn 0x00013ae7b -> 0x014000316   phys 0x00013ae7b000 -> 0x014000316000   DRAM -> LtRAM
+PHYS        weights  page      760  pfn 0x00013ae7d -> 0x014000315   phys 0x00013ae7d000 -> 0x014000315000   DRAM -> LtRAM
+PHYS        weights  ... 216 further move(s) not listed
+PHYS run5   input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run5   result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run  6/15    12.797 s
+PHYS run6   weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 1243 (7.6%)  huge 0/32  pfnsum 0xeae1b75fcd3cb585  [MOVED was 0xe94a5018257438f3]
+PHYS  moved weights  256 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 256   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page      955  pfn 0x0007fe12a -> 0x0140003fc   phys 0x0007fe12a000 -> 0x0140003fc000   DRAM -> LtRAM
+PHYS        weights  page      956  pfn 0x0007fe12b -> 0x0140003fb   phys 0x0007fe12b000 -> 0x0140003fb000   DRAM -> LtRAM
+PHYS        weights  page      957  pfn 0x00011ffb8 -> 0x0140003fa   phys 0x00011ffb8000 -> 0x0140003fa000   DRAM -> LtRAM
+PHYS        weights  page      958  pfn 0x00011ffb9 -> 0x0140003f9   phys 0x00011ffb9000 -> 0x0140003f9000   DRAM -> LtRAM
+PHYS        weights  page      959  pfn 0x000124ba4 -> 0x0140003f8   phys 0x000124ba4000 -> 0x0140003f8000   DRAM -> LtRAM
+PHYS        weights  page      960  pfn 0x000124ba5 -> 0x0140003f7   phys 0x000124ba5000 -> 0x0140003f7000   DRAM -> LtRAM
+PHYS        weights  page      961  pfn 0x000122122 -> 0x0140003f6   phys 0x000122122000 -> 0x0140003f6000   DRAM -> LtRAM
+PHYS        weights  page      962  pfn 0x000122123 -> 0x0140003f5   phys 0x000122123000 -> 0x0140003f5000   DRAM -> LtRAM
+PHYS        weights  ... 248 further move(s) not listed
+PHYS run6   input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run6   result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run  7/15    12.312 s
+PHYS run7   weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 1467 (9.0%)  huge 0/32  pfnsum 0x564ee91a4d0842a8  [MOVED was 0xeae1b75fcd3cb585]
+PHYS  moved weights  224 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 224   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page     1201  pfn 0x00012ca6c -> 0x0140004fc   phys 0x00012ca6c000 -> 0x0140004fc000   DRAM -> LtRAM
+PHYS        weights  page     1202  pfn 0x00012ca6d -> 0x0140004fb   phys 0x00012ca6d000 -> 0x0140004fb000   DRAM -> LtRAM
+PHYS        weights  page     1203  pfn 0x00011466e -> 0x0140004fa   phys 0x00011466e000 -> 0x0140004fa000   DRAM -> LtRAM
+PHYS        weights  page     1204  pfn 0x00011466f -> 0x0140004f9   phys 0x00011466f000 -> 0x0140004f9000   DRAM -> LtRAM
+PHYS        weights  page     1205  pfn 0x000130688 -> 0x0140004f8   phys 0x000130688000 -> 0x0140004f8000   DRAM -> LtRAM
+PHYS        weights  page     1206  pfn 0x000130689 -> 0x0140004f7   phys 0x000130689000 -> 0x0140004f7000   DRAM -> LtRAM
+PHYS        weights  page     1207  pfn 0x000127c88 -> 0x0140004f6   phys 0x000127c88000 -> 0x0140004f6000   DRAM -> LtRAM
+PHYS        weights  page     1208  pfn 0x000127c89 -> 0x0140004f5   phys 0x000127c89000 -> 0x0140004f5000   DRAM -> LtRAM
+PHYS        weights  ... 216 further move(s) not listed
+PHYS run7   input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run7   result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run  8/15    13.219 s
+PHYS run8   weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 1723 (10.5%)  huge 0/32  pfnsum 0x5c320dc9a97a993b  [MOVED was 0x564ee91a4d0842a8]
+PHYS  moved weights  256 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 256   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page     1442  pfn 0x0001244d1 -> 0x0140005dc   phys 0x0001244d1000 -> 0x0140005dc000   DRAM -> LtRAM
+PHYS        weights  page     1443  pfn 0x000117e3e -> 0x0140005db   phys 0x000117e3e000 -> 0x0140005db000   DRAM -> LtRAM
+PHYS        weights  page     1444  pfn 0x000117e3f -> 0x0140005da   phys 0x000117e3f000 -> 0x0140005da000   DRAM -> LtRAM
+PHYS        weights  page     1445  pfn 0x0001244c6 -> 0x0140005d9   phys 0x0001244c6000 -> 0x0140005d9000   DRAM -> LtRAM
+PHYS        weights  page     1446  pfn 0x0001244c7 -> 0x0140005d8   phys 0x0001244c7000 -> 0x0140005d8000   DRAM -> LtRAM
+PHYS        weights  page     1447  pfn 0x00012450c -> 0x0140005d7   phys 0x00012450c000 -> 0x0140005d7000   DRAM -> LtRAM
+PHYS        weights  page     1448  pfn 0x00012450d -> 0x0140005d6   phys 0x00012450d000 -> 0x0140005d6000   DRAM -> LtRAM
+PHYS        weights  page     1449  pfn 0x001f8fdf6 -> 0x0140005d5   phys 0x001f8fdf6000 -> 0x0140005d5000   DRAM -> LtRAM
+PHYS        weights  ... 248 further move(s) not listed
+PHYS run8   input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run8   result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run  9/15    14.549 s
+PHYS run9   weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 2011 (12.3%)  huge 0/32  pfnsum 0x6ec5a6414b3b13c3  [MOVED was 0x5c320dc9a97a993b]
+PHYS  moved weights  288 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 288   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page     1685  pfn 0x00013b0fe -> 0x0140006dc   phys 0x00013b0fe000 -> 0x0140006dc000   DRAM -> LtRAM
+PHYS        weights  page     1686  pfn 0x00013b0ff -> 0x0140006db   phys 0x00013b0ff000 -> 0x0140006db000   DRAM -> LtRAM
+PHYS        weights  page     1687  pfn 0x00013b112 -> 0x0140006da   phys 0x00013b112000 -> 0x0140006da000   DRAM -> LtRAM
+PHYS        weights  page     1688  pfn 0x00013b113 -> 0x0140006d9   phys 0x00013b113000 -> 0x0140006d9000   DRAM -> LtRAM
+PHYS        weights  page     1689  pfn 0x00013b124 -> 0x0140006d8   phys 0x00013b124000 -> 0x0140006d8000   DRAM -> LtRAM
+PHYS        weights  page     1690  pfn 0x00013b125 -> 0x0140006d7   phys 0x00013b125000 -> 0x0140006d7000   DRAM -> LtRAM
+PHYS        weights  page     1691  pfn 0x00013b134 -> 0x0140006d6   phys 0x00013b134000 -> 0x0140006d6000   DRAM -> LtRAM
+PHYS        weights  page     1692  pfn 0x00013b135 -> 0x0140006d5   phys 0x00013b135000 -> 0x0140006d5000   DRAM -> LtRAM
+PHYS        weights  ... 280 further move(s) not listed
+PHYS run9   input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run9   result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run 10/15    14.673 s
+PHYS run10  weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 2299 (14.0%)  huge 0/32  pfnsum 0x1cd724abf69a5fe8  [MOVED was 0x6ec5a6414b3b13c3]
+PHYS  moved weights  288 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 288   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page     2011  pfn 0x000133b4c -> 0x0140007fc   phys 0x000133b4c000 -> 0x0140007fc000   DRAM -> LtRAM
+PHYS        weights  page     2012  pfn 0x000133b4d -> 0x0140007fb   phys 0x000133b4d000 -> 0x0140007fb000   DRAM -> LtRAM
+PHYS        weights  page     2013  pfn 0x000127b04 -> 0x01400083c   phys 0x000127b04000 -> 0x01400083c000   DRAM -> LtRAM
+PHYS        weights  page     2014  pfn 0x000127b05 -> 0x01400083b   phys 0x000127b05000 -> 0x01400083b000   DRAM -> LtRAM
+PHYS        weights  page     2015  pfn 0x000130126 -> 0x01400083a   phys 0x000130126000 -> 0x01400083a000   DRAM -> LtRAM
+PHYS        weights  page     2016  pfn 0x000130127 -> 0x014000839   phys 0x000130127000 -> 0x014000839000   DRAM -> LtRAM
+PHYS        weights  page     2017  pfn 0x0001225c8 -> 0x014000838   phys 0x0001225c8000 -> 0x014000838000   DRAM -> LtRAM
+PHYS        weights  page     2018  pfn 0x0001225c9 -> 0x014000837   phys 0x0001225c9000 -> 0x014000837000   DRAM -> LtRAM
+PHYS        weights  ... 280 further move(s) not listed
+PHYS run10  input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run10  result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run 11/15    15.043 s
+PHYS run11  weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 2584 (15.8%)  huge 0/32  pfnsum 0xa2ce007149d8837c  [MOVED was 0x1cd724abf69a5fe8]
+PHYS  moved weights  285 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 285   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page     2243  pfn 0x0001249a2 -> 0x01400091c   phys 0x0001249a2000 -> 0x01400091c000   DRAM -> LtRAM
+PHYS        weights  page     2244  pfn 0x0001249a3 -> 0x01400091b   phys 0x0001249a3000 -> 0x01400091b000   DRAM -> LtRAM
+PHYS        weights  page     2245  pfn 0x0001324b6 -> 0x01400091a   phys 0x0001324b6000 -> 0x01400091a000   DRAM -> LtRAM
+PHYS        weights  page     2246  pfn 0x0001324b7 -> 0x014000919   phys 0x0001324b7000 -> 0x014000919000   DRAM -> LtRAM
+PHYS        weights  page     2247  pfn 0x0001328a0 -> 0x014000918   phys 0x0001328a0000 -> 0x014000918000   DRAM -> LtRAM
+PHYS        weights  page     2248  pfn 0x0001328a1 -> 0x014000917   phys 0x0001328a1000 -> 0x014000917000   DRAM -> LtRAM
+PHYS        weights  page     2249  pfn 0x000129af0 -> 0x014000916   phys 0x000129af0000 -> 0x014000916000   DRAM -> LtRAM
+PHYS        weights  page     2250  pfn 0x000129af1 -> 0x014000915   phys 0x000129af1000 -> 0x014000915000   DRAM -> LtRAM
+PHYS        weights  ... 277 further move(s) not listed
+PHYS run11  input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run11  result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run 12/15    16.341 s
+PHYS run12  weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 2904 (17.7%)  huge 0/32  pfnsum 0x1ff72e8482b5d6fc  [MOVED was 0xa2ce007149d8837c]
+PHYS  moved weights  320 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 320   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page     2543  pfn 0x000135838 -> 0x014000a39   phys 0x000135838000 -> 0x014000a39000   DRAM -> LtRAM
+PHYS        weights  page     2544  pfn 0x000135839 -> 0x014000a38   phys 0x000135839000 -> 0x014000a38000   DRAM -> LtRAM
+PHYS        weights  page     2545  pfn 0x00013583a -> 0x014000a37   phys 0x00013583a000 -> 0x014000a37000   DRAM -> LtRAM
+PHYS        weights  page     2546  pfn 0x00013583b -> 0x014000a36   phys 0x00013583b000 -> 0x014000a36000   DRAM -> LtRAM
+PHYS        weights  page     2551  pfn 0x000135b04 -> 0x014000a35   phys 0x000135b04000 -> 0x014000a35000   DRAM -> LtRAM
+PHYS        weights  page     2552  pfn 0x000135b05 -> 0x014000a34   phys 0x000135b05000 -> 0x014000a34000   DRAM -> LtRAM
+PHYS        weights  page     2553  pfn 0x000135b06 -> 0x014000a33   phys 0x000135b06000 -> 0x014000a33000   DRAM -> LtRAM
+PHYS        weights  page     2554  pfn 0x000135b07 -> 0x014000a32   phys 0x000135b07000 -> 0x014000a32000   DRAM -> LtRAM
+PHYS        weights  ... 312 further move(s) not listed
+PHYS run12  input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run12  result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run 13/15    16.582 s
+PHYS run13  weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 3224 (19.7%)  huge 0/32  pfnsum 0xee56bfef62b58fac  [MOVED was 0x1ff72e8482b5d6fc]
+PHYS  moved weights  320 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 320   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page     2851  pfn 0x0001334d0 -> 0x014000b79   phys 0x0001334d0000 -> 0x014000b79000   DRAM -> LtRAM
+PHYS        weights  page     2852  pfn 0x0001334d1 -> 0x014000b78   phys 0x0001334d1000 -> 0x014000b78000   DRAM -> LtRAM
+PHYS        weights  page     2853  pfn 0x0001334d2 -> 0x014000b77   phys 0x0001334d2000 -> 0x014000b77000   DRAM -> LtRAM
+PHYS        weights  page     2854  pfn 0x0001334d3 -> 0x014000b76   phys 0x0001334d3000 -> 0x014000b76000   DRAM -> LtRAM
+PHYS        weights  page     2855  pfn 0x00012ab7c -> 0x014000b75   phys 0x00012ab7c000 -> 0x014000b75000   DRAM -> LtRAM
+PHYS        weights  page     2856  pfn 0x00012ab7d -> 0x014000b74   phys 0x00012ab7d000 -> 0x014000b74000   DRAM -> LtRAM
+PHYS        weights  page     2857  pfn 0x00012ab7e -> 0x014000b73   phys 0x00012ab7e000 -> 0x014000b73000   DRAM -> LtRAM
+PHYS        weights  page     2858  pfn 0x00012ab7f -> 0x014000b72   phys 0x00012ab7f000 -> 0x014000b72000   DRAM -> LtRAM
+PHYS        weights  ... 312 further move(s) not listed
+PHYS run13  input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run13  result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run 14/15    16.999 s
+PHYS run14  weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 3544 (21.6%)  huge 0/32  pfnsum 0xf77557a073ecc080  [MOVED was 0xee56bfef62b58fac]
+PHYS  moved weights  320 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 320   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page     3191  pfn 0x000130a14 -> 0x014000cb9   phys 0x000130a14000 -> 0x014000cb9000   DRAM -> LtRAM
+PHYS        weights  page     3192  pfn 0x000130a15 -> 0x014000cb8   phys 0x000130a15000 -> 0x014000cb8000   DRAM -> LtRAM
+PHYS        weights  page     3193  pfn 0x000130a16 -> 0x014000cb7   phys 0x000130a16000 -> 0x014000cb7000   DRAM -> LtRAM
+PHYS        weights  page     3194  pfn 0x000130a17 -> 0x014000cb6   phys 0x000130a17000 -> 0x014000cb6000   DRAM -> LtRAM
+PHYS        weights  page     3195  pfn 0x000124380 -> 0x014000cb5   phys 0x000124380000 -> 0x014000cb5000   DRAM -> LtRAM
+PHYS        weights  page     3196  pfn 0x000124381 -> 0x014000cb4   phys 0x000124381000 -> 0x014000cb4000   DRAM -> LtRAM
+PHYS        weights  page     3197  pfn 0x000124382 -> 0x014000cb3   phys 0x000124382000 -> 0x014000cb3000   DRAM -> LtRAM
+PHYS        weights  page     3198  pfn 0x000124383 -> 0x014000cb2   phys 0x000124383000 -> 0x014000cb2000   DRAM -> LtRAM
+PHYS        weights  ... 312 further move(s) not listed
+PHYS run14  input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run14  result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+  run 15/15    18.406 s
+PHYS run15  weights  pages    16384  present    16384  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 3896 (23.8%)  huge 0/32  pfnsum 0xc252faca3330a292  [MOVED was 0xf77557a073ecc080]
+PHYS  moved weights  352 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 352   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  page     3519  pfn 0x0008005d4 -> 0x014000e19   phys 0x0008005d4000 -> 0x014000e19000   DRAM -> LtRAM
+PHYS        weights  page     3520  pfn 0x0008005d5 -> 0x014000e18   phys 0x0008005d5000 -> 0x014000e18000   DRAM -> LtRAM
+PHYS        weights  page     3521  pfn 0x0008005d6 -> 0x014000e17   phys 0x0008005d6000 -> 0x014000e17000   DRAM -> LtRAM
+PHYS        weights  page     3522  pfn 0x0008005d7 -> 0x014000e16   phys 0x0008005d7000 -> 0x014000e16000   DRAM -> LtRAM
+PHYS        weights  page     3523  pfn 0x001f90834 -> 0x014000e15   phys 0x001f90834000 -> 0x014000e15000   DRAM -> LtRAM
+PHYS        weights  page     3524  pfn 0x001f90835 -> 0x014000e14   phys 0x001f90835000 -> 0x014000e14000   DRAM -> LtRAM
+PHYS        weights  page     3525  pfn 0x001f90836 -> 0x014000e13   phys 0x001f90836000 -> 0x014000e13000   DRAM -> LtRAM
+PHYS        weights  page     3526  pfn 0x001f90837 -> 0x014000e12   phys 0x001f90837000 -> 0x014000e12000   DRAM -> LtRAM
+PHYS        weights  ... 344 further move(s) not listed
+PHYS run15  input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS run15  result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+RESULT mean 13.766 s   sd 2.561 s   (18.60%)
+DIGEST 8873ba56c40ff27a3bc077dd36c2fce7aedb72c7c06a30ec15cd22488dc23302
+PHYS end    weights  pages    16384  present    16352  first pfn 0x01400005e  phys 0x01400005e000  LtRAM 3896 (23.8%)  huge 0/32  pfnsum 0x5e348a3eba666fba  [MOVED was 0xc252faca3330a292]
+PHYS  moved weights  32 of 16384 pages changed physical address
+PHYS        weights  DRAM->LtRAM 0   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 32
+PHYS        weights  page     3896  pfn 0x0007fd7f1 -> 0x000000000   phys 0x0007fd7f1000 -> 0x000000000000   DRAM -> absent
+PHYS        weights  page     3897  pfn 0x0007fd7f2 -> 0x000000000   phys 0x0007fd7f2000 -> 0x000000000000   DRAM -> absent
+PHYS        weights  page     3898  pfn 0x0007fd7f3 -> 0x000000000   phys 0x0007fd7f3000 -> 0x000000000000   DRAM -> absent
+PHYS        weights  page     3899  pfn 0x0007fd7f4 -> 0x000000000   phys 0x0007fd7f4000 -> 0x000000000000   DRAM -> absent
+PHYS        weights  page     3900  pfn 0x0007fd7f5 -> 0x000000000   phys 0x0007fd7f5000 -> 0x000000000000   DRAM -> absent
+PHYS        weights  page     3901  pfn 0x0007fd7f6 -> 0x000000000   phys 0x0007fd7f6000 -> 0x000000000000   DRAM -> absent
+PHYS        weights  page     3902  pfn 0x0007fd7f7 -> 0x000000000   phys 0x0007fd7f7000 -> 0x000000000000   DRAM -> absent
+PHYS        weights  page     3903  pfn 0x000113a00 -> 0x000000000   phys 0x000113a00000 -> 0x000000000000   DRAM -> absent
+PHYS        weights  ... 24 further move(s) not listed
+PHYS end    input    pages        4  present        4  first pfn 0x000139159  phys 0x000139159000  LtRAM 0 (0.0%)  pfnsum 0xb6205a39a3a408da  [same]
+PHYS end    result   pages        4  present        4  first pfn 0x00013915d  phys 0x00013915d000  LtRAM 0 (0.0%)  pfnsum 0xd8d3e239b74f96fa  [same]
+PHYS verdict weights  pfnsum changed at 16 of 17 reports (first 2, last 17) -- cumulative DRAM->LtRAM 3866, LtRAM->DRAM 0
+PHYS verdict input    pfnsum constant across 17 reports -- no page of this region moved
+PHYS verdict result   pfnsum constant across 17 reports -- no page of this region moved
+PHYS overhead 2.264 s over 17 reports -- EXCLUDED from every run time and from RESULT
+GATE FAIL: variance > 2% -- too noisy to validate a later regression
+holding 150 s (pid 2334) for targeting

@@ -1,0 +1,6 @@
+[  795.765905] fulltest: ## BUILD 2026-08-10.yieldall.v65 (cond_resched in ALL 10 udelay poll loops -- test=37 Phase A erase poll was the 4th copy of this bug and soft-locked CPU#45)  (erase triggers route through trigger_erase(): evicts the er_win line first)
+[  795.765921] fulltest: STATUS WORD raw=0x00e000b800001000  bytes=4096 beats=47104 pages=0 erases=224  hw_busy=0 er_infl=0 sch=0  -> 132+ fields ALREADY non-zero
+[  795.766902] fulltest: ## MMIO INTEGRITY: cycle-counter went backwards 0/2000, constant varied 0/2000 -> CLEAN
+[  795.766913] fulltest: ## ANTI_STARVE_N left at the FPGA default, reports 0
+[  795.766922] ltram: flash backend registered by nor_eci_fulltest
+[  795.766932] fulltest: LtRAM write backend REGISTERED -- no worker started, this module now only serves mm/ltram.c
