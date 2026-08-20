@@ -67,15 +67,35 @@ anon-only filter in, and `inval_sector()` on the write path.
 | digest | **`8873ba56…c23302` — identical to the DRAM control, 15/15 runs** |
 | `promoted` / `writes_ok` | 6,784 / 6,784 — exactly one flash write per page |
 | `promote_failed` / `writes_failed` | **0 / 0** |
-| `late_free` | 6,779 — **sectors recycled at scale, which is what makes this run meaningful** |
+| `late_free` | 6,779 — flash pages returned via the batch free path at process exit |
 | `pages_in_use` after exit | 1 — the leak is gone |
 | `rej_not_anon` | 848 file-backed folios correctly refused |
 | `sel_isolate_fail` | 208 of 6,992 (3.0%) |
 | `demoted` | 7 |
 
-`late_free` ≈ `promoted` is the load-bearing number. It says sectors were freed and reallocated
-continuously during the run — the precise condition that produced a wrong digest at run 12 of
-15 before `529197685`. Fifteen runs clean under it.
+**`late_free` is not evidence of sector reuse, and an earlier version of this file said it
+was.** It counts flash pages that reached `free_pages_prepare()` -- the generic buddy funnel --
+instead of being caught by the `__folio_put_small()` hook. `release_pages()` and
+`free_unref_page_list()` bypass that hook, and process exit and `munmap` both use them, so a
+process holding thousands of mapped flash pages frees essentially all of them that way. It is
+the normal path, and `late_free` ~ `promoted` at exit is the leak fix working.
+
+**No sector was reused in either run.** `pages_in_use` rises monotonically 0 -> 6,778 and never
+drops, and `stats.after` was captured after matmul had already exited. The same is true of the
+failing run. So reuse cannot be the reason the digest broke at run 12.
+
+**What the A/B does establish:** `inval_sector()` was the only difference between the failing
+and passing runs, so stale CPU cache lines remain the mechanism. The likeliest source is not
+reuse but **hardware prefetch**: the allocator hands out sectors ascending and contiguous
+(`find_first_bit`), matmul reads the weights sequentially, so reading resident flash pages pulls
+adjacent *allocated-but-not-yet-written* sectors into cache; the FPGA then DMAs them without
+invalidating anything, and the first read after mapping is served stale. That accounts for the
+corruption appearing only once enough contiguous pages are resident. **This is a hypothesis
+consistent with the evidence, not a proven mechanism** -- the fix is validated, the explanation
+is not.
+
+**n = 1.** One clean 15-run pass against one failure at run 12 of 15 is suggestive, not
+conclusive.
 
 **This run does not reach steady state.** At `promote_batch=32` only ~3,514 pages (21%) had
 migrated by run 15, so the 13.766 s mean is a ramp, not a plateau, and it is not comparable to
