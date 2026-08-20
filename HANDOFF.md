@@ -36,43 +36,70 @@ what `folio_migrate_copy()` does, and the only reason `ltram_copy_to_flash()` ex
 | 4 backend, refusal | **PASS** | no backend &rarr; `-ENODEV` (`-19`), `writes_failed 1`, `writes_ok 0` |
 | 4 backend, positive | **PASS** | page programmed; FPGA `beats +64, pages +16, erases +1`; data confirmed by a later boot's self-test checksum changing `099708ea` &rarr; `00663ddc` |
 | 5 migration hook | **mechanism proven, negative test NOT RUN** | 379 pages migrated with FPGA counters exact |
-| 6 policy | **BLOCKED — see issue 10** | 5,184,674 scanned, **0 weights promoted** |
-| 7 measurement | not started | blocked by 6 |
+| 6 policy, detection | **PASS — issue 10 fixed 2026-08-20** | no application hint: `rej_writable == rearmed == 50,179` against exactly 50,176 weight pages |
+| 6 policy, end to end | **NOT RUN** | backend deliberately unloaded, so `promoted 0` by construction |
+| 7 measurement | not started | unblocked; needs a backend-loaded run first |
 
-## THE BLOCKER — issue 10
+## ISSUE 10 IS FIXED — 2026-08-20
 
-The policy scans millions of pages and promotes **none of the weights**:
+The policy detects read-mostly pages, **with no application hint of any kind**. Evidence:
+`baselines/260820_step6_detection/RESULT.md`. Kernel `#3`, tree `244a66761`, bitstream
+`169_phy200`.
 
-```
-scanned         5184674      promoted 0      promote_failed 0
-weights   50176 pages      0 LtRAM (0.0%)    50176 DRAM
-result        7 pages      0 LtRAM (0.0%)        7 DRAM
-```
+The scanner asked `pte_dirty(p)` — *has this page ever been written?* It now asks
+`pte_write(p)` — *is it writable right now?* — which the scanner itself can change by
+write-protecting and waiting for a fault.
 
-Zero candidates were ever selected — `promote_failed` is 0 too, so nothing was attempted.
+**The 08-19 hypothesis was directionally right and wrong about the cause.** It blamed
+`--protect-weights` for making `pte_write()` false so the re-arm never ran. In fact the
+defect was **unconditional**: `ptep_set_wrprotect()` — the re-arm itself — *sets* bit 55
+rather than clearing it, and nothing in LtRAM ever calls `pte_mkclean()`. This CPU has no
+hardware DBM (HAFDBS = 0) and arm64 has no soft-dirty at all. So the old rule could only
+ever promote a page **never written since its PTE was established**; the mprotect changed
+nothing. The proposed fix ("clear the dirty bit for read-only mappings") would have fixed
+only the mprotected case and left the transparent case just as broken.
 
-**Suspected cause, NOT yet confirmed.** `matmul --protect-weights` mprotects the weights
-`PROT_READ`, so `pte_write()` is false, so the re-arm
+What separated the guess from the truth was `a06b6973c`, one commit that did nothing but
+count. **Instrument before theorising** — it cost under an hour and would have answered
+this on the first run.
 
-```c
-if (dirty && pte_write(p)) { ptep_set_wrprotect(...); flush_tlb_page(...); }
-```
+| commit | what |
+|---|---|
+| `a06b6973c` | count WHY a scanned page was not selected |
+| `f558a316f` | a flash page may never be writable, and may never reach buddy |
+| `244a66761` | ask whether a page was written, not whether it was ever written |
 
-never runs, so the dirty bit set during the initial fill is **never cleared**.
-`should_promote()` sees a dirty page every pass and the clean-run counter never advances.
-A page that cannot be written without faulting is trivially clean; the policy treats it as
-permanently dirty.
+Measured over a 240 s attach, `matmul --n 7168 --iters 1000 --runs 1`:
 
-**Likely fix:** treat `!pte_write(p)` as clean in `should_promote()`, or clear the dirty
-bit for read-only mappings instead of trying to write-protect what is already unwritable.
+| | 08-19 broken | A: `--protect-weights` | B: **no hint** |
+|---|---|---|---|
+| `rej_dirty_ro` → `rej_writable` | 13,247,550 | 41 | 50,179 |
+| `rearmed` | 40 | 41 | **50,179** |
+| `stale_dirty` | *(n/a)* | 108,999 | 108,450 |
+| `sel_isolated` | 8,384 | 7,456 | **7,488** |
+| DIGEST | `eac22204…` | `eac22204…` | `eac22204…` |
 
-**FIRST ACTION: instrument `should_promote()` with a per-rejection-reason counter.** The
-diagnosis above is a hypothesis. A counter would have answered it immediately, and its
-absence is why it is still a hypothesis.
+Phase B reaches the same `sel_isolated` as phase A, so **the mprotect hint bought nothing** —
+it only skipped pass 1. The 379 promotions seen on 08-19 were the process's other anonymous
+pages, which is why provenance showed 0% for both named regions.
 
-The 379 promotions seen earlier were the process's **other** anonymous pages — heap, stack,
-libc — which is why provenance shows 0% for both named regions. The mechanism works end to
-end; it is aimed at the wrong pages.
+**Two ways to misread these counters, both of which cost time here:**
+
+- **A large `scanned` is the symptom of finding nothing.** `walk_page_range(mm, 0, TASK_SIZE)`
+  restarts at address 0 every pass with no cursor, and the PTE loop is gated on
+  `ctx->nr < promote_batch`, so a healthy pass short-circuits early. 13.2 M → 110,732 is the
+  fix working.
+- **`sel_isolated` measures `promote_batch`, not the predicate.** 32 pages/s, saturated on
+  every pass in both phases; 26 minutes to drain 50,176 pages. Live-writable at
+  `/sys/module/ltram_policy/parameters/promote_batch`; the default is set by the wear budget,
+  so raise it for measurement only.
+
+**Still unproven: nothing has reached flash.** The `nor_eci` backend was deliberately not
+loaded, so `promoted 0` and `promote_failed == sel_isolated` are arithmetic, not symptoms.
+`demoted 0` means the new demotion guard in `f558a316f` is **unexercised** — and a store to
+the flash read window is silently discarded by the hardware, so if that guard is wrong the
+failure mode is silent corruption or a hang. The next run loads the backend; attach a console
+first (issue 12) and do not `rmmod` while a target pid is set.
 
 ## What was fixed this session
 
@@ -133,7 +160,10 @@ to a sleep and has bitten this project before.
 
 ## STILL OPEN
 
-- **Issue 10** (above) — the blocker.
+- **Step 6 end to end has never run** — detection is proven, the flash write path and the
+  new demotion guard are not. This is the next run, and it wants a console.
+- **`sel_isolate_fail` drops 18-22% of every selection** — `folio_isolate_lru()` refusing.
+  Not new, not caused by the issue-10 fix, unexplained, and a fifth of the promotion budget.
 - **Step 5's negative test has NEVER RUN.** Two attempts failed for setup reasons: wrong
   module loaded, then no candidates to migrate. This is the test that validates hook
   placement — the positive path passes whether or not the hook precedes
@@ -178,13 +208,13 @@ to a sleep and has bitten this project before.
 | what | where |
 |---|---|
 | implementation steps + **12 issue reports** | https://claude.ai/code/artifact/2a15f6cb-b540-41cb-bad9-2e403466d4c2 |
-| **issue 10 — the blocker** | https://claude.ai/code/artifact/5a22f854-d1e9-41c8-b74f-58bedbf07a69 |
+| issue 10 — detection (**resolved**) | https://claude.ai/code/artifact/5a22f854-d1e9-41c8-b74f-58bedbf07a69 |
 | issue 1 — linear map (resolved) | https://claude.ai/code/artifact/2b0ca5ef-ca05-4d59-a2ae-2f39d3af970c |
 | issue 9 — folio refcount (resolved) | https://claude.ai/code/artifact/d4904e3e-1ba2-4104-b8a7-2da0214b48c4 |
 | issue 11 — stale status word (resolved) | https://claude.ai/code/artifact/ceef8d43-ac65-42b9-81f8-196958ff75ae |
 | issue 12 — hard reset (open) | https://claude.ai/code/artifact/f9dba960-2bbf-4d0c-b681-4196a357ab5d |
 | baseline registry | `BASELINES.md` |
-| per-gate evidence | `baselines/260819_*/RESULT.md` |
+| per-gate evidence | `baselines/260819_*/RESULT.md`, `baselines/260820_step6_detection/RESULT.md` |
 | FPGA campaign | `SNAPSHOT.md` in `~/VivadoProjects`, and github.com/davidshim0/ltram-fpga |
 
 Artifact links 404 on the university account — open them with the personal account.
