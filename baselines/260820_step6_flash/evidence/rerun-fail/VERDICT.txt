@@ -1,0 +1,65 @@
+================ STATION 4 VERDICT ================
+kernel 6.8.0-ltram   N=4096 iters=60 runs=15 promote_batch=32
+
+-- per-run timings: migration should read as a STEP, not a slope --
+control:
+  run  1/3     6.445 s
+  run  2/3     6.445 s
+  run  3/3     6.445 s
+flash:
+  run  1/15     7.995 s
+  run  2/15    11.336 s
+  run  3/15    11.977 s
+  run  4/15    11.306 s
+  run  5/15    10.735 s
+  run  6/15    12.753 s
+  run  7/15    12.244 s
+  run  8/15    12.865 s
+  run  9/15    14.269 s
+  run 10/15    14.026 s
+  run 11/15    14.817 s
+  run1 8873ba56c40ff27a3bc077dd36c2fce7aedb72c7c06a30ec15cd22488dc23302
+  run12 8d57ab9cafc64a8109040cb6f50f3a87fc127177ea5fd0da67c5516acb24eba5
+
+-- did any page physically move (matmul's own pfn census) --
+PHYS        weights  DRAM->LtRAM 59   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 192   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 224   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 224   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 192   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 256   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 228   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 28
+PHYS        weights  DRAM->LtRAM 224   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 28   vanished 0
+PHYS        weights  DRAM->LtRAM 288   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 256   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+PHYS        weights  DRAM->LtRAM 285   LtRAM->DRAM 0   DRAM->DRAM 0   LtRAM->LtRAM 0   appeared 0   vanished 0
+
+-- flash residency at steady state --
+  (not captured)
+
+-- flash write counters --
+writes_ok 2784   writes_failed 0
+
+-- policy counters, before -> after --
+policy            clean-run                     clean-run
+target_pid        0     1818
+scanned           0     35995
+promoted          0     2784
+promote_failed    0     0
+demoted           0     6
+pages_in_use      0     9
+pages_total       65536 65536
+rej_writable      0     137
+rej_runs_short    0     32940
+stale_dirty       0     35858
+sel_isolated      0     2784
+sel_isolate_fail  0     134
+rearmed           0     137
+late_free         0     2772
+rej_not_anon      0     1102
+
+control  digest 8873ba56c40ff27a3bc077dd36c2fce7aedb72c7c06a30ec15cd22488dc23302   mean 6.445 s   exit 0
+flash    digest    mean  s   exit 44
+
+VERDICT: FAIL -- digest changed BETWEEN RUNS. Flash readback is wrong.
+===================================================

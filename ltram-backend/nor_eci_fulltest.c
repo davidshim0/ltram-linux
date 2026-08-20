@@ -6734,6 +6734,31 @@ static int ft_ltram_write_page(unsigned long dst_pfn, const void *src)
     }
 
     rc = write_sector(sec);
+
+    /*
+     * DROP THE CPU'S STALE COPIES OF THIS SECTOR BEFORE ANYONE CAN READ IT.
+     *
+     * rd_win is ioremap_cache()d and node-1 NOR lines are coherently cacheable
+     * with L2 as the coherence point, but an FPGA-side erase/program does NOT
+     * invalidate them -- the same fact the verifiers in this file have always
+     * had to work around. The migration path did not, and that is a correctness
+     * bug rather than a measurement artefact: migrate_pages() publishes the new
+     * mapping the instant this returns, and the first read can be served from a
+     * line belonging to whatever occupied this sector previously.
+     *
+     * It stayed hidden while a page-table leak in mm/ltram_policy.c meant a
+     * sector was never reused -- every promotion got a virgin sector with no
+     * lines to be stale. Fixing the leak enabled reuse, and a sector recycled
+     * out from under a hot, continuously-read region reproduced it immediately:
+     * matmul's between-run digest changed at run 12 of 15 on 2026-08-20.
+     *
+     * Inside the mutex and before the unlock, so no other migration can publish
+     * a mapping to this sector in the window between the DMA and the evict.
+     * thrash_mb=0 is correct on PSHA (v6+) builds, where civac is reliable.
+     */
+    if (!rc)
+        inval_sector(sec);
+
     chase_fill = saved;
     mutex_unlock(&ltram_wp_lock);
 

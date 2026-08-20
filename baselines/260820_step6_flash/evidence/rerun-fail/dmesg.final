@@ -1,0 +1,9 @@
+[  381.338409] nor_eci_fulltest: loading out-of-tree module taints kernel.
+[  381.345677] fulltest: ## BUILD 2026-08-10.yieldall.v65 (cond_resched in ALL 10 udelay poll loops -- test=37 Phase A erase poll was the 4th copy of this bug and soft-locked CPU#45)  (erase triggers route through trigger_erase(): evicts the er_win line first)
+[  381.345689] fulltest: STATUS WORD raw=0x0000000000000000  bytes=0 beats=0 pages=0 erases=0  hw_busy=0 er_infl=0 sch=0  -> all-zero — EXPECTED at init (free-running counters start at 0 and nothing has run yet). This does NOT mean a pre-132 bitstream. The real proof is the st_wait census at end of run: it can only be non-empty if the BEAT counter actually advanced by 64 per sector.
+[  381.346649] fulltest: ## MMIO INTEGRITY: cycle-counter went backwards 0/2000, constant varied 0/2000 -> CLEAN
+[  381.346659] fulltest: ## ANTI_STARVE_N left at the FPGA default, reports 0
+[  381.346664] ltram: flash backend registered by nor_eci_fulltest
+[  381.346669] fulltest: LtRAM write backend REGISTERED -- no worker started, this module now only serves mm/ltram.c
+[  386.844865] ltram: target pid 1818
+[  540.268169] ltram: target pid 0
