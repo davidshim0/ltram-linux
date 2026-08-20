@@ -16,32 +16,38 @@ useful finding.
 |---|---|
 | weight pages resident on NOR | **16,384 / 16,384 (100%)** |
 | result buffer on NOR | **0 / 4** — correctly never promoted |
-| `writes_ok` | 17,128, climbing monotonically from 0 |
-| `promote_failed` | **14,944, unchanged** — zero failures once the backend was live |
-| `demoted` | 279 — the new guard fired and the machine kept running |
-| digest | matched the DRAM control on every one of 15 runs |
+| `promoted` | 17,249 |
+| `writes_ok` | 17,249 — exactly one flash write per promoted page |
+| `promote_failed` | **unchanged at 14,944** — every isolation succeeded, zero failures |
+| `sel_isolate_fail` | 2,628 of 19,877 selections (13.2%) refused by `folio_isolate_lru()` |
+| `demoted` | 380 — the new guard fired repeatedly and the machine kept running |
+| digest | **`8873ba56…c23302`, identical to the DRAM control** |
 
-**Steady-state cost with the whole region on flash: 31.3 s against a 6.432 s DRAM control —
-4.87×.** That is *better* than the 6.0× random / 7.8× sequential media ratio measured in
-§0.0, because the L2 still absorbs part of the stream.
+**Steady state with the whole region on flash: 31.299 s against a 6.432 s DRAM control —
+4.87x**, with 0.08% run-to-run spread. That is *better* than the 6.0x random / 7.8x sequential
+media ratio in §0.0, because L2 still absorbs part of the stream.
 
 The per-run curve separates migration cost from residency cost, which a single before/after
 number cannot:
 
 ```
-run  1   29.333 s     <- migrating
-run  2   54.394 s
-run  3   76.803 s
-run  4   96.499 s
-run  5  130.782 s     <- peak: migration and flash reads competing
-...
-run 11   31.285 s     <- promotion complete, steady state
-run 12   31.326 s
-run 13   31.345 s
+run  1   29.333 s   <- migrating          run  9   31.286 s
+run  2   54.394 s                         run 10   31.279 s
+run  3   76.803 s                         run 11   31.285 s
+run  4   96.499 s                         run 12   31.326 s
+run  5  130.782 s   <- peak: migration    run 13   31.345 s
+run  6   39.735 s   <- promotion done     run 14   31.288 s
+run  7   31.995 s                         run 15   31.283 s
+run  8   31.538 s                              control 6.432 s
 ```
 
-The digest is re-checked **between every run** (exit 44 on mismatch), so runs 11-15 are each an
-independent readback test of pages living on flash. All passed.
+**Read `RESULT mean 47.345 s sd 64.28%` and matmul's own `GATE FAIL` in `p1.log` correctly.**
+That gate exists to certify a *control* measurement, and it is right to reject this one: the
+run deliberately transitions from DRAM to flash partway through, so its mean averages two
+different machines. The steady state is runs 9-15, and that is what 31.299 s refers to.
+
+The digest is re-checked **between every run** (matmul exits 44 on mismatch), so runs 6-15 are
+each an independent readback test of pages living on flash. All passed.
 
 ## The bug this run found — a flash page leak
 
