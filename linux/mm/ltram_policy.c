@@ -33,6 +33,8 @@
 #include <linux/seq_file.h>
 #include <linux/list.h>
 #include <linux/math64.h>
+#include <linux/minmax.h>
+#include <linux/bitops.h>
 
 /* ---- tunables -------------------------------------------------------------
  * Defaults are deliberately conservative: the wear budget is 41.5 erases/s
@@ -58,13 +60,16 @@ static atomic64_t ltram_pages_in_use;
 
 
 /* ===========================================================================
- * Page-state tracking -- STEP 1a: SHADOW ONLY.
+ * Page-state tracking -- STEP 1b: the bucket lists now DRIVE allocation.
  *
- * Records what state every flash page is in, alongside the existing
- * ltram_free_bitmap, WITHOUT changing a single allocation decision. The point
- * is to prove the bookkeeping before anything depends on it: the last three
- * bugs here were each hidden by the one before, and the worst lost 16,502
- * pages because a count and the thing it counted were allowed to disagree.
+ * 1a added these structures as a shadow that changed no decision, so the
+ * bookkeeping could be proven before anything depended on it. It was, on
+ * 2026-08-25: the invariant held across 1,472 allocate/free cycles.
+ *
+ * 1b hands the decision over. ltram_alloc_page() now pops the head of the
+ * lowest non-empty bucket instead of calling find_first_bit(), so the
+ * least-worn page is chosen and pages rotate rather than piling on index 0.
+ * The old bitmap is still maintained purely as a cross-check.
  *
  * The design this builds toward is FREE / VALID / DIRTY / ERASING, with the
  * erase moved off the write path into a background worker. Today every
@@ -155,19 +160,61 @@ static void lt_to_free(unsigned long idx)
 	lt_free_count++;
 }
 
+/*
+ * Pop the least-worn free page: the head of the lowest non-empty bucket.
+ *
+ * Scanning all 101 buckets is cheaper than the find_first_bit() it replaces --
+ * 101 list_empty() loads against a 1,024-word bitmap scan -- so no cursor or
+ * hint is needed. A hint would also be wrong: erase counts only rise, but a
+ * page that sat VALID at a low count returns to a bucket BELOW wherever the
+ * hint had drifted, so the scan has to start at zero anyway.
+ *
+ * Head, not tail: FIFO within a bucket. While every page shares an erase count
+ * they all sit in bucket 0, and pop-head with return-to-tail is round-robin --
+ * which is the wear spreading the old allocator lacked.
+ *
+ * Returns ltram_nr_pages when the window is full. Caller holds ltram_alloc_lock.
+ */
+static unsigned long lt_pop_free(void)
+{
+	unsigned int b;
+
+	for (b = 0; b < LT_EC_BUCKETS; b++)
+		if (!list_empty(&lt_free_by_ec[b]))
+			return lt_free_by_ec[b].next - lt_node;
+	return ltram_nr_pages;
+}
+
 static struct page *ltram_alloc_page(void)
 {
 	unsigned long idx, flags;
 	struct page *p = NULL;
 
 	spin_lock_irqsave(&ltram_alloc_lock, flags);
-	if (ltram_free_bitmap) {
+	/*
+	 * STEP 1b: the bucket lists now DECIDE which page is handed out. The old
+	 * ltram_free_bitmap is still maintained in step, purely so the assertion
+	 * in lt_check_fast() -- derived FREE must equal it bit for bit -- keeps
+	 * cross-checking two independently updated structures. It is cheap, and
+	 * it is the strongest check this subsystem has. Retire it only once the
+	 * bucket lists have been trusted for a while.
+	 */
+	if (lt_ready) {
+		idx = lt_pop_free();
+		if (idx < ltram_nr_pages) {
+			__clear_bit(idx, ltram_free_bitmap);
+			p = pfn_to_page(ltram_start_pfn + idx);
+			atomic64_inc(&ltram_pages_in_use);
+			lt_to_valid(idx);	/* removes it from its bucket */
+		}
+	} else if (ltram_free_bitmap) {
+		/* Tracking failed to allocate at init. Fall back to the old
+		 * lowest-index allocator rather than refusing to work at all. */
 		idx = find_first_bit(ltram_free_bitmap, ltram_nr_pages);
 		if (idx < ltram_nr_pages) {
 			__clear_bit(idx, ltram_free_bitmap);
 			p = pfn_to_page(ltram_start_pfn + idx);
 			atomic64_inc(&ltram_pages_in_use);
-			lt_to_valid(idx);		/* 1a shadow */
 		}
 	}
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
@@ -676,10 +723,26 @@ static unsigned int lt_check_fast(void)
 	return err;
 }
 
+/*
+ * Report scratch. Static rather than on the stack: together these are ~1 KB,
+ * which is most of a kernel frame, and every access is already serialised by
+ * ltram_alloc_lock.
+ *
+ * LT_LG_BUCKETS is a log2 histogram -- bucket 0 is "never allocated", bucket k
+ * is 2^(k-1) .. 2^k-1. A linear histogram cannot answer the question this file
+ * exists for: at 1000-erase granularity, "65,535 pages at zero" and "32 pages
+ * at 47" look identical, and both are what the low bucket held on 2026-08-25.
+ */
+#define LT_LG_BUCKETS	33
+#define LT_TOPN		16
+static unsigned int lt_lg[LT_LG_BUCKETS];
+static unsigned int lt_blen[LT_EC_BUCKETS];
+static struct { unsigned long idx; u32 ec; } lt_top[LT_TOPN];
+
 static int lt_state_show(struct seq_file *m, void *v)
 {
 	unsigned long flags, i, counts[LT_NR_BM] = {0}, bucket_total = 0;
-	unsigned int hist[LT_EC_BUCKETS] = {0};
+	unsigned long touched = 0;
 	u32 ec_min = U32_MAX, ec_max = 0;
 	u64 ec_sum = 0;
 	unsigned int err, st, b;
@@ -702,13 +765,31 @@ static int lt_state_show(struct seq_file *m, void *v)
 	for (st = 0; st < LT_NR_BM; st++)
 		counts[st] = bitmap_weight(lt_bm[st], ltram_nr_pages);
 
+	memset(lt_lg, 0, sizeof(lt_lg));
+	memset(lt_blen, 0, sizeof(lt_blen));
+	memset(lt_top, 0, sizeof(lt_top));
+
 	for (i = 0; i < ltram_nr_pages; i++) {
 		u32 ec = lt_ec[i];
+		unsigned int lg = ec ? min_t(unsigned int, fls(ec), LT_LG_BUCKETS - 1) : 0;
+		int t;
 
-		hist[lt_bucket_of(ec)]++;
+		lt_lg[lg]++;
 		ec_sum += ec;
+		if (ec)
+			touched++;
 		if (ec < ec_min) ec_min = ec;
 		if (ec > ec_max) ec_max = ec;
+
+		/* Keep the LT_TOPN worst, sorted descending. Insertion sort over
+		 * 16 entries: the compare rejects almost everything, so this is
+		 * one branch per page in the common case. */
+		if (ec > lt_top[LT_TOPN - 1].ec) {
+			for (t = LT_TOPN - 1; t > 0 && lt_top[t - 1].ec < ec; t--)
+				lt_top[t] = lt_top[t - 1];
+			lt_top[t].idx = i;
+			lt_top[t].ec  = ec;
+		}
 	}
 
 	for (b = 0; b < LT_EC_BUCKETS; b++) {
@@ -718,6 +799,7 @@ static int lt_state_show(struct seq_file *m, void *v)
 			unsigned long idx = e - lt_node;
 
 			bucket_total++;
+			lt_blen[b]++;
 			if (idx >= ltram_nr_pages ||
 			    test_bit(idx, lt_bm[LT_VALID]) ||
 			    test_bit(idx, lt_bm[LT_DIRTY]) ||
@@ -738,16 +820,42 @@ static int lt_state_show(struct seq_file *m, void *v)
 		   lt_erasing == LT_ERASING_IDLE ? "idle" : "yes");
 	seq_printf(m, "free_walked      %lu   (independent count, must equal free)\n",
 		   bucket_total);
-	seq_printf(m, "erase_count      min %u  max %u  mean %llu  spread %u\n",
+	/*
+	 * total_allocs is the load-bearing number for judging spread: it is the
+	 * sum of every erase count, i.e. how many times ANY page was handed out.
+	 * Compare it against touched -- allocations concentrated on a handful of
+	 * pages give a large total against a tiny touched, which is exactly the
+	 * signature lowest-first allocation produces.
+	 */
+	seq_printf(m, "total_allocs     %llu   (sum of all erase counts)\n", ec_sum);
+	seq_printf(m, "touched          %lu   of %lu pages ever allocated (%lu%%)\n",
+		   touched, ltram_nr_pages,
+		   ltram_nr_pages ? touched * 100 / ltram_nr_pages : 0);
+	seq_printf(m, "erase_count      min %u  max %u  spread %u\n",
 		   ec_min == U32_MAX ? 0 : ec_min, ec_max,
-		   ltram_nr_pages ? div64_u64(ec_sum, ltram_nr_pages) : 0,
 		   ec_max - (ec_min == U32_MAX ? 0 : ec_min));
 
-	seq_puts(m, "ec_histogram     (bucket = 1000 erases)\n");
-	for (b = 0; b < LT_EC_BUCKETS; b++)
-		if (hist[b])
+	seq_puts(m, "ec_histogram     log2; bucket k is 2^(k-1)..2^k-1\n");
+	if (lt_lg[0])
+		seq_printf(m, "  %14s %u\n", "never", lt_lg[0]);
+	for (b = 1; b < LT_LG_BUCKETS; b++)
+		if (lt_lg[b])
 			seq_printf(m, "  [%6u..%6u] %u\n",
-				   b * LT_EC_GRAIN, (b + 1) * LT_EC_GRAIN - 1, hist[b]);
+				   1u << (b - 1), (1u << b) - 1, lt_lg[b]);
+
+	if (ec_max) {
+		int t;
+
+		seq_puts(m, "most_worn        page index : erase count\n");
+		for (t = 0; t < LT_TOPN && lt_top[t].ec; t++)
+			seq_printf(m, "  %10lu : %u\n", lt_top[t].idx, lt_top[t].ec);
+	}
+
+	seq_puts(m, "free_buckets     non-empty only\n");
+	for (b = 0; b < LT_EC_BUCKETS; b++)
+		if (lt_blen[b])
+			seq_printf(m, "  [%6u..%6u] %u free\n",
+				   b * LT_EC_GRAIN, (b + 1) * LT_EC_GRAIN - 1, lt_blen[b]);
 
 	seq_printf(m, "invariant        %s\n", err ? "FAIL" : "ok");
 	if (err & LT_ERR_OVERLAP)
