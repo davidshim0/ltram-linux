@@ -1,0 +1,311 @@
+<h1>LtRAM design review — deck outline</h1>
+<p><strong>Assumed slot: 45–60 min including questions → 33 slides.</strong> Cutting guide at the end.</p>
+<p><strong>Audience: the Enzian team.</strong> They built the platform. Do not explain ECI, the CRB-2S, or
+the shell. Explain what you attached to it, why, and how you know it works.</p>
+<p><strong>Spine of the talk:</strong> <em>NOR flash can be a memory tier, not a device — here is the hardware
+path I built, the kernel that drives it, and the evidence for each claim.</em></p>
+<hr>
+<h2>Part 0 — Frame (3 slides)</h2>
+<h3>1. Title</h3>
+<ul>
+<li>LtRAM: presenting octal-DDR NOR to Linux as a memory tier over ECI</li>
+<li>Your name, date, &quot;design review — implementation and verification&quot;</li>
+<li>One line: <em>64 MiB working set living on NOR, transparently, at 4.8× DRAM</em></li>
+</ul>
+<h3>2. The thesis, in one slide</h3>
+<ul>
+<li><strong>Claim:</strong> read-mostly pages can live on NOR instead of DRAM, chosen by the kernel, invisible to the application</li>
+<li><strong>Why it could work:</strong> read-mostly means the write penalty is paid once; NOR reads are ~5× DRAM, not ~1000×</li>
+<li><strong>Why it is hard, in one fact:</strong> <em>a store to the NOR read window is silently discarded — no fault, no error, no signal</em></li>
+<li>Everything in the design follows from that one sentence — say it early, refer back to it all talk</li>
+</ul>
+<h3>3. What I want from this review</h3>
+<ul>
+<li>Say it up front so they listen for the right things</li>
+<li>Hardware: the read-capture timing problem (slide 11) — I have a proposed fix, want a sanity check</li>
+<li>Kernel: whether NUMA node + custom zone is the right abstraction, or whether I should have used something else</li>
+<li>Methodology: whether my verification is actually sufficient</li>
+<li>Be explicit that this is a <em>review</em>, not a demo</li>
+</ul>
+<hr>
+<h2>Part 1 — Hardware / FPGA (12 slides)</h2>
+<h3>4. Where the NOR sits</h3>
+<ul>
+<li>Micron MT35XU02GCBA octal-DDR NOR, 256 MB, 65,536 sectors × 4096 B</li>
+<li>Attached to the VU9P, reached from the CPU over ECI</li>
+<li><strong>One page == one sector == 4096 B</strong> — this coincidence is load-bearing for the whole kernel design</li>
+<li>Diagram: CPU ↔ ECI ↔ FPGA shell ↔ NOR bus ↔ flash</li>
+</ul>
+<h3>5. The programming model I exposed: three windows</h3>
+<ul>
+<li><code>rd_win</code> — cacheable, coherent reads. The <em>only</em> thing the CPU does directly</li>
+<li><code>io_win</code> — uncached, DMA descriptors + a status word</li>
+<li><code>er_win</code> — erase trigger</li>
+<li><strong>Writes never come from the CPU.</strong> A descriptor to <code>io_win</code> makes the FPGA DMA the source page out of DRAM</li>
+<li>Design consequence: the write path is asynchronous and must be <em>waited on</em>, not assumed</li>
+</ul>
+<h3>6. Bring-up: getting the bus to answer at all (folders 34–96)</h3>
+<ul>
+<li>FMC test → PHY verify → NVCR programming → the NorMorph M1/M2/M3 sequence</li>
+<li>DDR I/O, IDDRE1 capture, SCK on an ODDR</li>
+<li>SCK phase sweep 90/180/270°, then a 2-D sweep of SCK phase × read latency</li>
+<li>Frequency ladder 20 → 200 MHz</li>
+<li><strong>Endpoint: <code>96_Mgr200</code></strong> — proven controller + HLS managers + scheduler at 200 MHz. Base of everything after</li>
+<li>One honest note: an IDELAY on the <em>output</em> SCK made the bus lie and was abandoned</li>
+</ul>
+<h3>7. Attaching ECI, and the write-path root cause (124_*)</h3>
+<ul>
+<li>Two accepted milestones before the real fix (v3 post-write, v4 realignment)</li>
+<li><code>124_8</code>: a pure seed race with <strong>identical RTL</strong> — exhausted at floor −0.099. The lite-crossbar cone simply cannot be closed by seed spray. <em>Knowing when to stop racing is a result</em></li>
+<li><strong><code>124_10</code> — the root cause: <code>axi_interleaver</code> beat drop.</strong> GOLDEN v5. Clean 0/2048 checker, 0/4096-line census</li>
+<li><code>124_11</code>: PSHA read responses, fixed <code>civac</code> → honest 13-hour-stable reads</li>
+<li>Worth stating: <code>clk_main</code> is <strong>150 MHz, not 200</strong> — every comment saying otherwise is stale and has misled more than once</li>
+</ul>
+<h3>8. Two faults that look identical from a distance</h3>
+<ul>
+<li><strong>The single most useful thing I learned.</strong> Both present as &quot;bad words in a census&quot;</li>
+<li><strong>Mode A — write side:</strong> sparse <code>b16</code> program failures. Always bit 16, always 0→1, byte lane 2, sectors 16384–20479, ~7 ppm</li>
+<li><strong>Mode B — read side:</strong> gross 1→0 corruption, every bit, every region</li>
+<li>They have different causes, different knobs, and <em>different metrics see them</em></li>
+<li>Set this up as the frame for the next three slides</li>
+</ul>
+<h3>9. Mode A: trail is a window, not a floor</h3>
+<ul>
+<li><p><code>trail</code> = (earliest SCK pad arrival) − (latest DQ pad arrival), from <code>report_datasheet</code> on a routed checkpoint. Static, non-perturbing, no build required</p>
+</li>
+<li><p>It is an <strong>output</strong> quantity — both SCK and DQ are forwarded, so it says nothing about read capture</p>
+</li>
+<li><p><strong>The table that makes the point</strong> — three bitstreams from ONE race of 179, identical RTL/frequency/seed, differing only in placement:</p>
+<table>
+<thead>
+<tr>
+<th>trial</th>
+<th>trail</th>
+<th>census</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>t57</td>
+<td>+0.209</td>
+<td>52 bad = 7 ppm, all b16, all 0→1</td>
+</tr>
+<tr>
+<td><strong>t51</strong></td>
+<td><strong>+0.433</strong></td>
+<td><strong>0 bad</strong> (twice, independent)</td>
+</tr>
+<tr>
+<td>t44</td>
+<td>+0.650</td>
+<td>464,134 bad = 66,188 ppm, all bits, 1→0</td>
+</tr>
+</tbody></table>
+</li>
+<li><p>Too little → sparse b16. Too much → the <code>clk_out1</code>/<code>clk_out2</code> skew that buys pad-eye margin has eaten the internal margin feeding the DQ ODDRs</p>
+</li>
+<li><p><strong>Target +0.433.</strong> All three bitstreams archived so the bracket can be re-run</p>
+</li>
+</ul>
+<h3>10. Mode B: the read capture path has never been timed</h3>
+<ul>
+<li><strong>Be blunt. This is the open hardware problem and this room can help</strong></li>
+<li><code>nor_controller.v</code> captures reads with the flash&#39;s own strobe: <code>IBUF → BUFG → IDDRE1(.C(rwds_clk))</code></li>
+<li>RWDS is <strong>edge-coincident</strong> with returning DQ (Xccela/HyperBus convention — edge-aligned, not centered)</li>
+<li>Used directly as the capture clock, it therefore samples DQ <strong>at its transition</strong></li>
+<li>The only thing centering the sample is incidental IBUF + BUFG + route delay: unconstrained, placement-dependent, a fixed number of ns</li>
+<li><strong>There is no input constraint anywhere in the design.</strong> <code>nor_bus_eye.xdc</code> has only <code>set_output_delay</code>; RWDS has only <code>CLOCK_DEDICATED_ROUTE FALSE</code></li>
+<li>That single fact predicts everything observed: a <em>cliff</em> at 198→199 MHz rather than a gradient, failure as the UI shrinks with frequency, and one DDR edge 15× worse than the other</li>
+<li>Proposed fix: IDELAYE3 on RWDS is the textbook centering. A PLL phase shift is <strong>not</strong> available — RWDS is idle between reads, so a PLL cannot hold lock</li>
+</ul>
+<h3>11. The rule this produced</h3>
+<ul>
+<li><strong>Never pick a build on trail alone</strong></li>
+<li>Trail bounds mode A and is <strong>blind to mode B by construction</strong></li>
+<li>The counterexamples that killed &quot;trail predicts pass/fail&quot;:<ul>
+<li><code>15199_f199</code> sits at +0.433 — same as golden — and produced 1.19 M bad words</li>
+<li><code>15178_f178</code> and <code>15189_f189</code> sit at +0.209 — the failing band — and both passed</li>
+</ul>
+</li>
+<li>Generalisable lesson: <em>a static metric that bounds one failure mode will be mistaken for a predictor of all of them</em></li>
+</ul>
+<h3>12. Making the FPGA observable from the driver</h3>
+<ul>
+<li><code>io_win</code> <strong>status word extension</strong> — free-running counters in the spare <code>[63:24]</code> bits, read as driver deltas: bytes, beats, pages, erases, hw_busy, er_infl</li>
+<li>Why it matters: the driver can wait on the <strong>erase counter</strong> rather than a fixed sleep — a dropped trigger is invisible to a sleep and had bitten this project before</li>
+<li><code>142</code>: <strong>read line reversal, found and fixed.</strong> <code>read_manager</code> ignored the ECI <code>fillo</code> (sub-line fill order) while echoing it, so concurrent reads got 128 B lines with their four 32 B chunks reversed. Fixed by <code>pos ^ fillo</code>; proven by VIO and 0 bad words at 222 MB/s</li>
+<li><code>140_n*</code>: the <code>ANTI_STARVE_N</code> sweep — <strong>verdict INERT</strong>, N=2 and N=128 identical to five digits. <em>Negative results are results</em></li>
+</ul>
+<h3>13. How I know <code>169_phy200</code> is good</h3>
+<ul>
+<li>Head-to-head against <code>179/t51</code> in the region where t51 fails. <strong>Identical harness, seed, parameters, trail. Only the bitstream differed</strong> → t51: 11 bad. 169: 0/0/0</li>
+<li>1.85 M-operation whole-device soak: 436 k writes, 1.48 M reads, <code>read-bad = 0</code> — stopped voluntarily, not by a failure</li>
+<li>Whole-device <code>test=33</code>: all 65,536 sectors, 125,465 writes, 240,071 reads, fill 0 / soak 0 / final sweep 0</li>
+<li><code>test=42</code> census: 7,012,352 words, 0 bad, 0 ppm — per-bit none, per-region none</li>
+<li><strong><code>st_wait</code> is the bitstream fingerprint:</strong> ~736–743 µs = 169_phy200, ~1329 µs = 179/t51. <em>A hardware result is meaningless without knowing which bitstream produced it</em></li>
+</ul>
+<h3>14. What is still open on the hardware</h3>
+<ul>
+<li>The DQ→IDDRE1 capture path is unconstrained (slide 10)</li>
+<li><strong>Residual on 169:</strong> single bit, DQ5 or DQ6, always word 0 of a 128 B line (first beat after the address-to-data turnaround), always 1→0, flash content provably correct, ~1 in 48,000 reads</li>
+<li>Two builds at the <em>identical</em> trail behave completely differently on it → a second build-dependent read-path factor exists and is <strong>unidentified</strong></li>
+<li>Per-pin output skew was measured and does <strong>not</strong> single out DQ5/DQ6 — useless as a build criterion</li>
+<li>Say plainly: this is a live defect I have characterised but not explained</li>
+</ul>
+<hr>
+<h2>Part 2 — Linux / kernel (13 slides)</h2>
+<h3>15. The hinge slide: what the kernel now has to believe</h3>
+<ul>
+<li>Transition from FPGA to kernel. Restate the one hardware fact</li>
+<li>The kernel must guarantee: <strong>a flash-backed page is never writable, and never reaches the buddy allocator</strong></li>
+<li>Everything in part 2 is either enforcing that or measuring it</li>
+</ul>
+<h3>16. Design choice: NUMA node 1 + <code>ZONE_LTRAM</code></h3>
+<ul>
+<li><strong>The decision I most want reviewed</strong></li>
+<li>Alternatives considered: a block device (wrong — it&#39;s byte-addressable and coherent); DAX/pmem (closer, but I want <em>migration</em>, not a filesystem); a plain NUMA node (no way to keep the allocator off it)</li>
+<li>Chosen: real node + a dedicated zone <strong>excluded from every zonelist</strong>, so nothing lands there by accident</li>
+<li>Property: <code>managed 0</code>, <code>numactl --membind=1</code> <em>refuses</em> rather than quietly handing over flash pages</li>
+<li>Cost: a private page allocator (bitmap), because these pages never belong to buddy</li>
+</ul>
+<h3>17. Seven steps, each one bootable</h3>
+<ul>
+<li>0 vanilla control → 1 workload → 2 node+zone → 3 read self-test → 4 write backend → 5 migration hook → 6 policy → 7 measurement</li>
+<li>Every step is a git tag + an archived Image + a config + a result file</li>
+<li>Method point: <strong><code>CONFIG_LTRAM=n</code> is byte-identical to vanilla</strong> apart from four initcall names. One config symbol separates the two kernels, not two trees — which is what makes an A/B mean anything</li>
+</ul>
+<h3>18. Step 2: three traps, all silent by nature</h3>
+<ul>
+<li><strong>Boot allocations land on flash by default.</strong> <code>NUMA_NO_NODE</code> + memblock&#39;s top-down search + the window being highest-PFN → per-CPU areas, swiotlb, qspinlock hash, CPU-entry page tables all on NOR, every store discarded. Also the memmap and the node&#39;s own <code>pg_data_t</code></li>
+<li><strong>A new zone overflows <code>GFP_ZONE_TABLE</code>.</strong> 2⁴×3 = 48 fits in 64 bits; 2⁵×3 = 96 does not. The compiler only says &quot;shift count &gt;= width&quot; from inside a macro</li>
+<li><strong><code>IS_ENABLED()</code> still compiles its branch</strong> — naming <code>ZONE_LTRAM</code> inside one fails to build with the option off</li>
+<li>Good slide for this audience: these are all <em>platform</em> traps, not LtRAM traps</li>
+</ul>
+<h3>19. Steps 4–5: the write backend, and where the hook goes</h3>
+<ul>
+<li><code>mm/ltram.c</code> knows nothing about the FPGA — one function pointer, <code>ltram_flash_ops::write_page</code></li>
+<li>Until something registers, <code>ltram_write_page()</code> returns <code>-ENODEV</code>. <strong>That is the safety property, not a gap</strong></li>
+<li><strong>Hook placement is the design decision:</strong> the flash write happens <em>before</em> <code>folio_migrate_mapping()</code>, while the source is already unmapped by <code>try_to_migrate()</code> and its contents are stable</li>
+<li>Why: a flash error returns with <strong>nothing published</strong>. After the mapping moves there is no way to fail safely</li>
+<li>The write path waits on the FPGA erase counter, not a sleep (callback to slide 12)</li>
+</ul>
+<h3>20. Step 6: what &quot;read-mostly&quot; means mechanically</h3>
+<ul>
+<li>The policy never looks at VMA flags, <code>madvise</code>, or any application hint</li>
+<li>It reads PTE state, write-protects, and waits to see whether a write traps</li>
+<li><code>clean_passes_required = 3</code>; <code>promote_batch = 32</code> chosen against the wear budget (65,536 sectors × 100,000 erases over 5 years = 41.5 erases/s sustained)</li>
+<li><strong>A policy that promotes faster than it can be wrong is a device-killer</strong> — the batch cap matters more than the interval</li>
+</ul>
+<h3>21. The detection problem — arm64&#39;s dirty bit is a one-way latch</h3>
+<ul>
+<li><strong>Best technical slide in part 2. Take your time here</strong></li>
+<li>The scanner originally asked <code>pte_dirty()</code>. On arm64 that is <code>pte_sw_dirty || pte_hw_dirty</code>, and <code>pte_sw_dirty</code> is bit 55</li>
+<li>Bit 55 is set on first write and <strong>nothing in this subsystem ever clears it</strong>: <code>pte_wrprotect()</code> <em>sets</em> it, <code>pte_modify()</code> preserves it across <code>mprotect</code>, <code>pte_mkclean()</code> is the only clearer and is called nowhere</li>
+<li>This CPU has <strong>no hardware DBM</strong> (<code>ID_AA64MMFR1_EL1</code> HAFDBS = 0), and arm64 has <strong>no soft-dirty at all</strong> (x86 selects <code>HAVE_ARCH_SOFT_DIRTY</code>; arm64 does not)</li>
+<li>Measured cost of asking the wrong question: <strong>13,247,550 of 13,258,954 scans rejected, zero weight pages ever promoted</strong></li>
+<li>Fix: ask <code>pte_write()</code> — <em>is it writable right now</em> — a question whose answer can change, and which the scanner itself changes</li>
+</ul>
+<h3>22. The result that matters: transparent detection</h3>
+<ul>
+<li>Phase A with <code>mprotect</code> vs phase B with <strong>no application hint of any kind</strong></li>
+<li><strong><code>rej_writable == rearmed == 50,179</code>, against exactly 50,176 weight pages</strong></li>
+<li>Pass 1 rejects every writable page and arms it exactly once; the app never writes again; pass 2 onward reads them clean</li>
+<li>Armed exactly once each, never twice — <strong>the kernel measured the property instead of being told it</strong></li>
+<li>Phase B reaches the same promotion rate as phase A → <strong>the hint bought nothing</strong>; it only skipped pass 1</li>
+<li>Reproduced independently on a second, unrelated program</li>
+</ul>
+<h3>23. Three bugs, each hiding the next</h3>
+<ul>
+<li><strong>Frame it as a methodology slide, not a confession</strong></li>
+<li>They could only be found in this order, and each fix <em>enabled</em> the next discovery</li>
+<li>Table: leak → page-cache promotion → stale cache lines</li>
+<li>The line to land: <strong>a fix that makes a system exercise a path it never exercised before is not a regression when the next thing breaks</strong></li>
+</ul>
+<h3>24. Bug 1 — the flash page leak</h3>
+<ul>
+<li><code>release_pages()</code> / <code>free_unref_page_list()</code> — the batch path <strong>process exit and munmap take</strong> — bypass the <code>__folio_put_small()</code> hook</li>
+<li>Pages hit the backstop in <code>free_pages_prepare()</code>, were correctly kept out of buddy, and were then <strong>dropped</strong>. 16,502 lost in one evening</li>
+<li>Fix: return them at <code>free_pages_prepare()</code> — the one funnel every free path passes through. Covers all of them <strong>by construction</strong> rather than by enumerating call sites</li>
+<li>Lesson: <em>hook the funnel, not the callers</em></li>
+</ul>
+<h3>25. Bug 2 — page-cache folios were being promoted</h3>
+<ul>
+<li>The scanner had no anonymity filter, and it <strong>preferred</strong> file-backed text — read-only text is the most read-mostly memory a process has, and sits at the low addresses the batch fills first</li>
+<li>Migration then took <code>__buffer_migrate_folio()</code>; the block layer can DMA into buffer heads hanging off those folios</li>
+<li>Appeared in the trace of an uncorrectable SError panic (eight L2C TADs: LFB entry timeout + global sync CCPI timeout)</li>
+<li>Honest caveat for this audience: <strong>async SError is imprecise — the reported PCs are not fault sites.</strong> Three CPUs took it at unrelated PCs. The trace named a real bug; it did not prove it was the trigger</li>
+<li>Fix: anonymous, non-KSM folios only</li>
+</ul>
+<h3>26. Bug 3 — stale cache lines after a flash write</h3>
+<ul>
+<li><code>rd_win</code> is <code>ioremap_cache</code>d; an FPGA-side erase/program does <strong>not</strong> invalidate CPU caches</li>
+<li>The harness verifiers always knew this — <code>inval_sector()</code> existed for exactly this reason. <strong>The migration path never called it</strong></li>
+<li><code>migrate_pages()</code> publishes the new mapping the instant <code>write_page()</code> returns, so the first read can be served from a line belonging to the sector&#39;s previous occupant</li>
+<li>Caught by the workload&#39;s between-run digest changing at run 12 of 15</li>
+<li><strong>The one to be careful about:</strong> the earlier run passed 15/15 and was passing <em>for the wrong reason</em> — the leak meant no sector was ever reused</li>
+</ul>
+<h3>27. How I verify — the gates</h3>
+<ul>
+<li><strong>The digest is the gate.</strong> The workload recomputes SHA-256 after every pass and aborts on the first mismatch. <em>A faster run with a different digest is corruption, not a result</em></li>
+<li><code>--protect-weights</code> proves the read-only premise instead of assuming it (exit 42 on violation) — an <strong>experiment control, not a kernel hint</strong></li>
+<li>Physical provenance read independently from <code>/proc/pid/pagemap</code> against the LtRAM range</li>
+<li>Counters per rejection reason — <strong>the commit that did nothing but count is what turned a hypothesis into a measurement and disproved it</strong></li>
+<li>Off-box kernel log streaming, because <code>pstore</code> has never worked on this machine</li>
+<li>Every baseline: git tag + Image + resolved config + result file, one commit per step</li>
+</ul>
+<hr>
+<h2>Part 3 — Results and open questions (5 slides)</h2>
+<h3>28. The measurement</h3>
+<ul>
+<li>Show the three-phase curve (the chart)</li>
+<li>One cold pass per point; cache scrub between passes, outside the timer</li>
+<li>Both runs produce an identical digest, so the curves describe the same computation</li>
+</ul>
+<h3>29. What it costs</h3>
+<ul>
+<li>DRAM 0.1075 s/pass (sd 0.09%) → migrating up to 2.971 s (27.6×) → <strong>resident on NOR 0.5139 s (sd 0.08%) = 4.78×</strong></li>
+<li><strong>The spike is not what NOR costs — it is what <em>moving</em> costs</strong>, paid once per page ever</li>
+<li>Migration is erase-bound: ~16.4 ms/sector, serialised in one scan thread → ~36 pages/s</li>
+<li>Reproduced 4.87× by an independent method the day before</li>
+<li>Honest note: the LLC scrub changes the DRAM baseline by <strong>zero</strong> — a 64 MiB sweep against a 16 MiB shared LLC already self-evicts</li>
+</ul>
+<h3>30. What is verified, and what is not</h3>
+<ul>
+<li><strong>Two columns. Do not blur them</strong></li>
+<li>Verified: detection with no hints; pages physically resident; correct readback; writes fault back to DRAM correctly (7,517 pages, 0 lost, 0 corrupted); the free path</li>
+<li>Not verified: behaviour above the 256 MB window; concurrent write racing an in-flight promotion; step 5&#39;s negative test; steady-state re-measure after the cache fix</li>
+<li>Known and unexplained: <code>folio_isolate_lru()</code> refuses 3–20% of selections; the DQ5/DQ6 read residual</li>
+</ul>
+<h3>31. Where I want your input</h3>
+<ul>
+<li>Is NUMA node + custom zone the right abstraction, or should this have been DAX/pmem with a migration policy on top?</li>
+<li>The RWDS capture constraint — does the IDELAYE3 approach hold up?</li>
+<li>Is <code>promote_batch</code> the right wear control, or should it be closed-loop on measured erase count?</li>
+<li>What would you want to see before trusting this with a real workload?</li>
+</ul>
+<h3>32. Next</h3>
+<ul>
+<li>Above-window behaviour (eviction + re-erase)</li>
+<li>The concurrent write/promotion race</li>
+<li>A DRAM-backed node-1 control to separate flash latency from NUMA distance and migration cost — <em>the on/off delta currently mixes all three and I will not attribute it to flash latency without it</em></li>
+<li>Larger, more realistic workloads</li>
+</ul>
+<h3>33. Backup slides</h3>
+<ul>
+<li>Full bitstream campaign table (folder → what was tried)</li>
+<li>The GFP_ZONE_TABLE arithmetic</li>
+<li>Counter definitions and what each rejection reason means</li>
+<li>The panic decode</li>
+<li>Wear arithmetic: 16,384 pages = 16,384 erases over 16,384 distinct sectors, each rated 100,000</li>
+</ul>
+<hr>
+<h2>Cutting to 30 minutes</h2>
+<p>Drop 6, 7, 12 (compress the campaign to one slide), 18, 24–26 (compress three bugs to one),
+33. Keep 2, 8, 9, 10, 11, 13, 16, 21, 22, 27, 29, 30, 31 — those carry the argument.</p>
+<h2>Two things to rehearse</h2>
+<ul>
+<li><strong>Slide 2&#39;s one fact</strong> (&quot;a store to the read window is silently discarded&quot;). If they remember
+one sentence, it should be this, because every design decision follows from it.</li>
+<li><strong>Slide 30.</strong> Being crisp about what you have <em>not</em> shown is what makes the rest credible to
+a room of systems people.</li>
+</ul>
+
