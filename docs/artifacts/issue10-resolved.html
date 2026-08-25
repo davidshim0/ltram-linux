@@ -1,0 +1,435 @@
+<title>Issue 10 — The Policy Never Promotes the Pages It Exists For</title>
+<style>
+/* ============================================================
+   LtRAM Field Guide — shared design system
+   ============================================================ */
+:root{
+  --ground:#EBEDF0; --surface:#FFFFFF; --surface-2:#F4F6F8; --surface-3:#ECEFF3;
+  --ink:#13161B; --ink-2:#576170; --ink-3:#8C95A3;
+  --rule:#D7DBE2; --rule-2:#E7EAEF;
+  --code-bg:#F4F6F8; --code-ink:#22262D;
+  --good:#12695A; --good-wash:#E8F3F0; --good-edge:#B4D8CF;
+  --bad:#A3232C;  --bad-wash:#FAEFEF;  --bad-edge:#E5C3C3;
+  --warn:#8A5B08; --warn-wash:#FAF3E4; --warn-edge:#E3D2AC;
+  --font-body: Charter,"Bitstream Charter","Iowan Old Style","Source Serif 4",Georgia,"Nimbus Roman No9 L","DejaVu Serif",serif;
+  --font-ui: ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --font-mono: ui-monospace,"SF Mono","JetBrains Mono","DejaVu Sans Mono",Menlo,Consolas,monospace;
+  --measure:36rem;
+  --accent:#2F5D8C; --accent-2:#20456A; --accent-wash:#EAF0F6; --accent-edge:#BFD2E4;
+}
+:root[data-part="c3"]{ --accent:#A3232C; --accent-2:#7E1A22; --accent-wash:#FAEFEF; --accent-edge:#E5C3C3; }
+:root[data-part="c6"]{ --accent:#12695A; --accent-2:#0C4C41; --accent-wash:#E8F3F0; --accent-edge:#B4D8CF; }
+
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#0D0F13; --surface:#171A20; --surface-2:#1E222A; --surface-3:#232830;
+  --ink:#E4E7EC; --ink-2:#99A2B0; --ink-3:#6E7787;
+  --rule:#2A2F39; --rule-2:#222831;
+  --code-bg:#11141A; --code-ink:#CDD3DC;
+  --good:#4CBFA6; --good-wash:#0F241F; --good-edge:#22493F;
+  --bad:#F0736F;  --bad-wash:#251618;  --bad-edge:#4A2A2C;
+  --warn:#D9A441; --warn-wash:#241D0F; --warn-edge:#4A3D22;
+  --accent:#6FA8DC; --accent-2:#9BC4EA; --accent-wash:#14202C; --accent-edge:#2C4459;
+}}
+@media (prefers-color-scheme:dark){
+  :root[data-part="c3"]:not([data-theme="light"]){ --accent:#F0736F; --accent-2:#F79A96; --accent-wash:#251618; --accent-edge:#4A2A2C; }
+  :root[data-part="c6"]:not([data-theme="light"]){ --accent:#4CBFA6; --accent-2:#79D6C1; --accent-wash:#0F241F; --accent-edge:#22493F; }
+}
+:root[data-theme="dark"]{
+  --ground:#0D0F13; --surface:#171A20; --surface-2:#1E222A; --surface-3:#232830;
+  --ink:#E4E7EC; --ink-2:#99A2B0; --ink-3:#6E7787;
+  --rule:#2A2F39; --rule-2:#222831;
+  --code-bg:#11141A; --code-ink:#CDD3DC;
+  --good:#4CBFA6; --good-wash:#0F241F; --good-edge:#22493F;
+  --bad:#F0736F;  --bad-wash:#251618;  --bad-edge:#4A2A2C;
+  --warn:#D9A441; --warn-wash:#241D0F; --warn-edge:#4A3D22;
+  --accent:#6FA8DC; --accent-2:#9BC4EA; --accent-wash:#14202C; --accent-edge:#2C4459;
+}
+:root[data-theme="dark"][data-part="c3"]{ --accent:#F0736F; --accent-2:#F79A96; --accent-wash:#251618; --accent-edge:#4A2A2C; }
+:root[data-theme="dark"][data-part="c6"]{ --accent:#4CBFA6; --accent-2:#79D6C1; --accent-wash:#0F241F; --accent-edge:#22493F; }
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto} *{animation:none!important;transition:none!important}}
+body{margin:0; background:var(--ground); color:var(--ink);
+  font-family:var(--font-body); font-size:17px; line-height:1.65; -webkit-font-smoothing:antialiased}
+
+.wrap{max-width:62rem; margin:0 auto; padding:0 1.1rem 5rem}
+.sheet{background:var(--surface); border-left:1px solid var(--rule); border-right:1px solid var(--rule)}
+@media (max-width:58rem){.sheet{border-left:0;border-right:0}}
+
+.crumbs{font-family:var(--font-mono); font-size:.72rem; letter-spacing:.06em;
+  padding:1rem 2.6rem; border-bottom:1px solid var(--rule-2); color:var(--ink-3);
+  display:flex; gap:.55rem; flex-wrap:wrap; align-items:center; background:var(--surface-2)}
+@media (max-width:46rem){.crumbs{padding:.8rem 1.15rem}}
+.crumbs a{color:var(--ink-2); text-decoration:none; border-bottom:1px solid var(--rule)}
+.crumbs a:hover{color:var(--accent); border-color:var(--accent)}
+.crumbs .now{color:var(--accent)}
+
+header.top{padding:2.6rem 2.6rem 2.2rem; border-bottom:2px solid var(--ink)}
+@media (max-width:46rem){header.top{padding:2rem 1.15rem 1.6rem}}
+.eyebrow{font-family:var(--font-mono); font-size:.71rem; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--accent); margin:0 0 .95rem;
+  display:flex; gap:.6rem; align-items:center; flex-wrap:wrap}
+h1{font-family:var(--font-ui); font-weight:640; letter-spacing:-.028em;
+  font-size:clamp(1.85rem,5vw,2.9rem); line-height:1.06; margin:0 0 .9rem; text-wrap:balance}
+.deck{font-size:1.13rem; color:var(--ink-2); margin:0; max-width:40rem; line-height:1.55}
+.deck b{color:var(--ink); font-weight:600}
+.meta{margin-top:1.6rem; display:flex; gap:1.4rem; flex-wrap:wrap;
+  font-family:var(--font-ui); font-size:.8rem; color:var(--ink-2)}
+.meta i{font-style:normal; color:var(--ink-3); font-family:var(--font-mono);
+  font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; display:block}
+
+.panel{padding:2.4rem 2.6rem 1rem}
+@media (max-width:46rem){.panel{padding:1.8rem 1.15rem 1rem}}
+
+h2{font-family:var(--font-ui); font-weight:640; letter-spacing:-.02em;
+  font-size:1.55rem; line-height:1.2; margin:2.6rem 0 1rem; text-wrap:balance}
+h2:first-of-type{margin-top:0}
+h3{font-family:var(--font-ui); font-weight:630; font-size:1.16rem; letter-spacing:-.012em;
+  margin:2.4rem 0 .7rem; text-wrap:balance;
+  padding-top:1.3rem; border-top:1px solid var(--rule-2)}
+h4{font-family:var(--font-ui); font-weight:620; font-size:1rem; margin:1.7rem 0 .5rem}
+p{margin:0 0 1.05rem; max-width:var(--measure)}
+ul,ol{margin:0 0 1.1rem; padding-left:1.35rem; max-width:var(--measure)}
+li{margin-bottom:.5rem}
+li::marker{color:var(--ink-3)}
+strong{font-weight:640}
+a{color:var(--accent); text-underline-offset:2px}
+.lead{font-size:1.08rem; color:var(--ink-2); max-width:38rem}
+code{font-family:var(--font-mono); font-size:.85em; background:var(--code-bg);
+  padding:.1em .34em; border-radius:3px; color:var(--code-ink);
+  border:1px solid var(--rule-2); white-space:nowrap}
+
+figure{margin:1.6rem 0 1.7rem; max-width:46rem}
+.cap{font-family:var(--font-mono); font-size:.69rem; letter-spacing:.11em;
+  text-transform:uppercase; color:var(--ink-3); padding:.5rem .8rem; background:var(--surface-2);
+  border:1px solid var(--rule); border-bottom:0; border-radius:4px 4px 0 0;
+  display:flex; justify-content:space-between; gap:1rem; flex-wrap:wrap}
+.cap .rt{color:var(--accent); letter-spacing:.09em}
+pre{margin:0; background:var(--code-bg); border:1px solid var(--rule);
+  border-radius:0 0 4px 4px; padding:1rem .95rem; overflow-x:auto;
+  font-family:var(--font-mono); font-size:.8rem; line-height:1.62; color:var(--code-ink); tab-size:4}
+pre code{background:none; border:0; padding:0; font-size:1em; white-space:pre}
+pre .c{color:var(--ink-3); font-style:italic}
+pre .hl{background:var(--good-wash); display:inline-block; width:100%;
+  box-shadow:inset 3px 0 0 var(--good); padding-left:.35rem; margin-left:-.35rem}
+pre .hlb{background:var(--bad-wash); display:inline-block; width:100%;
+  box-shadow:inset 3px 0 0 var(--bad); padding-left:.35rem; margin-left:-.35rem}
+pre .add{color:var(--good); font-weight:600}
+pre .del{color:var(--bad)}
+figcaption{font-family:var(--font-ui); font-size:.8rem; color:var(--ink-2);
+  margin-top:.55rem; line-height:1.5; max-width:38rem}
+
+.box{margin:1.7rem 0; padding:1.1rem 1.2rem; border-radius:4px;
+  background:var(--surface-2); border:1px solid var(--rule); max-width:46rem}
+.box > :last-child{margin-bottom:0}
+.box p,.box ul,.box ol{max-width:none}
+.box .lab{font-family:var(--font-mono); font-size:.67rem; letter-spacing:.15em;
+  text-transform:uppercase; margin:0 0 .5rem; color:var(--ink-3); display:flex; gap:.45rem; align-items:center}
+.box--key{border-left:3px solid var(--accent); background:var(--accent-wash); border-color:var(--accent-edge)}
+.box--key .lab{color:var(--accent)}
+.box--bad{background:var(--bad-wash); border-color:var(--bad-edge)}
+.box--bad .lab{color:var(--bad)}
+.box--good{background:var(--good-wash); border-color:var(--good-edge); border-left:3px solid var(--good)}
+.box--good .lab{color:var(--good)}
+.box--warn{background:var(--warn-wash); border-color:var(--warn-edge)}
+.box--warn .lab{color:var(--warn)}
+.box--plain{background:var(--surface); border-left:3px solid var(--ink)}
+.box--plain .lab{color:var(--ink)}
+
+.tw{overflow-x:auto; margin:1.5rem 0; max-width:48rem}
+table{border-collapse:collapse; width:100%; font-family:var(--font-ui); font-size:.85rem}
+th,td{text-align:left; padding:.58rem .7rem; border-bottom:1px solid var(--rule-2); vertical-align:top}
+th{font-family:var(--font-mono); font-size:.67rem; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--ink-3); border-bottom:1px solid var(--rule); white-space:nowrap}
+td code{white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+.num{font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap}
+.yes{color:var(--good); font-weight:640}
+.no{color:var(--bad); font-weight:640}
+
+.pager{display:flex; gap:.8rem; flex-wrap:wrap; justify-content:space-between;
+  padding:2rem 2.6rem 2.4rem; border-top:2px solid var(--ink); margin-top:2.5rem}
+@media (max-width:46rem){.pager{padding:1.6rem 1.15rem 2rem}}
+.pager a{display:flex; flex-direction:column; gap:.15rem; text-decoration:none;
+  border:1px solid var(--rule); border-radius:4px; padding:.7rem .95rem; min-width:13rem; flex:1}
+.pager a:hover{border-color:var(--accent); background:var(--accent-wash)}
+.pager .pl{font-family:var(--font-mono); font-size:.65rem; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--ink-3)}
+.pager .pt{font-family:var(--font-ui); font-weight:600; font-size:.93rem; color:var(--accent)}
+.pager a.nxt{text-align:right; align-items:flex-end}
+
+.statusline{display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin:0 0 1.4rem}
+.pill{font-family:var(--font-mono); font-size:.66rem; letter-spacing:.1em; text-transform:uppercase;
+  padding:.22rem .55rem; border-radius:3px; border:1px solid var(--rule)}
+.pill.open{color:var(--bad); border-color:var(--bad-edge); background:var(--bad-wash)}
+.pill.fixed{color:var(--good); border-color:var(--good-edge); background:var(--good-wash)}
+.pill.note{color:var(--warn); border-color:var(--warn-edge); background:var(--warn-wash)}
+.pill.tag{color:var(--ink-3)}
+.strike{text-decoration:line-through; color:var(--ink-3)}
+</style>
+<script>document.documentElement.dataset.part="c6";</script>
+
+<div class="wrap"><div class="sheet">
+<nav class="crumbs">
+  <a href="https://claude.ai/code/artifact/95a1422a-1e02-4564-b3a3-c6d92e338caa">Field guide</a> <span>›</span>
+  <a href="https://claude.ai/code/artifact/2a15f6cb-b540-41cb-bad9-2e403466d4c2">Implementation</a> <span>›</span>
+  <span class="now">Issue 10</span>
+</nav>
+<header class="top">
+  <p class="eyebrow">Issue 10 of 12 · Resolved 2026-08-20</p>
+  <h1>The Policy Never Promotes the Pages It Exists For</h1>
+  <p class="deck">The scanner asked <b>“has this page ever been written?”</b> — a question that,
+  on this CPU, is permanently answered <i>yes</i> for any page that has ever been touched. It now
+  asks <b>“is it writable right now?”</b>, and detects the weights with <b>no application hint of
+  any kind</b>.</p>
+  <div class="meta">
+    <span><i>issue</i>10 / 12</span>
+    <span><i>state</i>resolved</span>
+    <span><i>fixed in</i><code>244a66761</code></span>
+    <span><i>verified</i>z08, kernel #3</span>
+  </div>
+</header>
+<section class="panel">
+<div class="statusline">
+  <span class="pill fixed">RESOLVED</span>
+  <span class="pill tag">found 2026-08-19</span>
+  <span class="pill tag">fixed 2026-08-20</span>
+  <span class="pill note">end-to-end still unproven</span>
+</div>
+<p class="lead">Affects:
+<a href="https://claude.ai/code/artifact/77006bf8-1ac3-4df2-aec6-652d16a4ce7e">step 6</a>
+<a href="https://claude.ai/code/artifact/824d9c83-2967-42dc-82b8-f331503dc52d">step 7</a>
+— both unblocked.</p>
+
+<h2>What the measurement said</h2>
+<figure><div class="cap"><span>2026-08-19 — a full run with the policy attached</span></div>
+<pre><code>scanned         5184674
+promoted              0
+promote_failed        0
+
+weights   50176 pages      0 LtRAM (0.0%)    50176 DRAM</code></pre>
+<figcaption><strong>Zero and zero.</strong> Not “few candidates” — none. <code>promote_failed</code>
+was 0 too, so nothing was ever attempted.</figcaption></figure>
+
+<h2>The hypothesis, and where it was wrong</h2>
+<p>The original diagnosis blamed <code>matmul --protect-weights</code>: it
+<code>mprotect</code>s the weight region <code>PROT_READ</code>, making <code>pte_write()</code>
+false, so the write-observation re-arm never runs, so the dirty bit set during the initial fill is
+never cleared.</p>
+
+<p>That was flagged at the time as <em>not confirmed</em>, and the first action taken was to
+instrument <code>should_promote()</code> with a counter per rejection reason
+(<code>a06b6973c</code>) rather than to act on the guess. That instrumentation is what showed the
+hypothesis was <strong>directionally right but wrong about the cause</strong>.</p>
+
+<div class="box box--bad">
+  <p class="lab">The correction</p>
+  <p><code>--protect-weights</code> was <strong>not</strong> the cause. The defect was
+  unconditional. Removing the flag would not have helped, because
+  <code>ptep_set_wrprotect()</code> — the re-arm itself — <strong>sets</strong> the software dirty
+  bit rather than clearing it.</p>
+  <p>The proposed fix (“have the re-arm clear the dirty bit for read-only mappings”) would
+  therefore have fixed only the mprotected case and left the transparent case just as broken —
+  which is the case that actually matters.</p>
+</div>
+
+<h2>The actual defect</h2>
+<p>The scanner read <code>pte_dirty(pte)</code>. On arm64 that is an <code>OR</code> of two very
+different things:</p>
+
+<div class="tw"><table>
+<thead><tr><th>expression</th><th>expands to</th><th>can it return to false?</th></tr></thead>
+<tbody>
+<tr><td><code>pte_hw_dirty(pte)</code></td><td><code>pte_write() &amp;&amp; !pte_rdonly()</code></td><td class="yes">yes — write-protecting clears it</td></tr>
+<tr><td><code>pte_sw_dirty(pte)</code></td><td>bit 55, <code>PTE_DIRTY</code></td><td class="no">no</td></tr>
+<tr><td><code>pte_dirty(pte)</code></td><td><code>sw || hw</code></td><td class="no">no — the OR is poisoned by bit 55</td></tr>
+</tbody></table></div>
+
+<p>Bit 55 is set the first time a page is written, and nothing in this subsystem ever puts it
+back:</p>
+
+<ul>
+<li><code>pte_wrprotect()</code> — <strong>sets</strong> it when the PTE was hardware-dirty. The
+re-arm made the problem permanent instead of resetting it.</li>
+<li><code>pte_modify()</code>, which backs <code>mprotect</code>, explicitly preserves it.</li>
+<li><code>pte_mkclean()</code> is the only function that clears it, and it is called
+<strong>nowhere</strong> in LtRAM.</li>
+<li>Hardware dirty-bit management would clear nothing either — this CPU does not have it
+(<code>ID_AA64MMFR1_EL1</code> HAFDBS = 0).</li>
+<li>arm64 has <strong>no soft-dirty</strong> at all: x86’s Kconfig carries
+<code>select HAVE_ARCH_SOFT_DIRTY</code>, arm64’s does not, and there is no
+<code>PTE_SOFT_DIRTY</code> to borrow.</li>
+</ul>
+
+<div class="box box--key">
+  <p class="lab">What that adds up to</p>
+  <p>Under the old rule the policy could only ever promote a page that had <strong>never been
+  written since its PTE was established</strong>. Any page written even once was permanently
+  ineligible — for the lifetime of the process, with or without <code>mprotect</code>. Weights
+  are written exactly once, at fill, which is enough to disqualify them forever.</p>
+  <p>The 8,384 pages the broken scanner <em>did</em> select were the process’s never-written
+  pages — freshly faulted file and anonymous pages — not the weights.</p>
+</div>
+
+<h2>The fix</h2>
+<figure><div class="cap"><span>mm/ltram_policy.c</span><span class="rt">244a66761</span></div>
+<pre><code><span class="del">- dirty   = pte_dirty(p);        </span><span class="c">/* has it EVER been written? */</span>
+<span class="add">+ written = pte_write(p);        </span><span class="c">/* is it writable RIGHT NOW?  */</span>
+
+  <span class="c">/* Pages the OLD rule would have rejected and this one accepts. */</span>
+<span class="add">+ if (pte_dirty(p) &amp;&amp; !written)
++         atomic64_inc(&amp;stale_dirty);</span>
+  ...
+<span class="hl">rearm:
+  if (written) {
+          ptep_set_wrprotect(walk-&gt;mm, addr, pte);
+          flush_tlb_page(walk-&gt;vma, addr);
+          atomic64_inc(&amp;rearmed);
+  }</span></code></pre>
+<figcaption><code>pte_write()</code> has an answer that can change — and one the scanner itself
+changes, by write-protecting the page and waiting to see whether the program faults. That is the
+mechanism the design always intended; it was simply reading the wrong bit.</figcaption></figure>
+
+<div class="tw"><table>
+<thead><tr><th>commit</th><th>what it does</th></tr></thead>
+<tbody>
+<tr><td><code>a06b6973c</code></td><td>count <em>why</em> a scanned page was not selected — turned the hypothesis into a measurement, and disproved it</td></tr>
+<tr><td><code>f558a316f</code></td><td>a flash page may never be writable, and may never reach buddy — guards <code>do_wp_page</code>’s reuse path (forcing the copy, which <em>is</em> the demotion), <code>remove_migration_pte</code>’s <code>pte_mkwrite</code>, <code>__folio_put_small</code>’s free path, plus a <code>free_pages_prepare</code> backstop</td></tr>
+<tr><td><code>244a66761</code></td><td>ask whether a page was written, not whether it was ever written</td></tr>
+</tbody></table></div>
+
+<p><code>f558a316f</code> is what makes running <em>without</em> <code>--protect-weights</code>
+safe. A store to the flash read window is silently discarded by the hardware — no fault, no error
+— so a flash-backed page that is ever allowed to become writable loses data with no diagnostic.
+Until this commit, the only thing preventing that was the <code>mprotect</code> turning the write
+into a <code>SIGSEGV</code>.</p>
+
+<h2>The evidence</h2>
+<p>Two phases, same binary, same size, same 240 s attach window, counters sampled before and
+after and reported as deltas. <code>--protect-weights</code> is an <strong>experiment control,
+not a kernel hint</strong> — the policy reads PTE state and never looks at VMA flags.</p>
+
+<h3>Phase A — with <code>--protect-weights</code>, against the broken run</h3>
+<div class="tw"><table>
+<thead><tr><th>counter</th><th class="num">08-19 broken</th><th class="num">08-20 fixed</th></tr></thead>
+<tbody>
+<tr><td><code>scanned</code></td><td class="num">13,258,954</td><td class="num">110,732</td></tr>
+<tr><td><code>rej_dirty_ro</code> → <code>rej_writable</code></td><td class="num">13,247,550</td><td class="num yes">41</td></tr>
+<tr><td><code>stale_dirty</code></td><td class="num">(structurally 0)</td><td class="num yes">108,999</td></tr>
+<tr><td><code>rej_runs_short</code></td><td class="num">760</td><td class="num">101,154</td></tr>
+<tr><td><code>sel_isolated</code></td><td class="num">8,384</td><td class="num">7,456</td></tr>
+<tr><td><code>sel_isolate_fail</code></td><td class="num">2,220</td><td class="num">2,081</td></tr>
+<tr><td><code>rearmed</code></td><td class="num">40</td><td class="num">41</td></tr>
+</tbody></table></div>
+<p><code>41 + 101,154 + 7,456 + 2,081 = 110,732</code> — the partition closes exactly against
+<code>scanned</code>, so nothing is unaccounted for. <strong><code>stale_dirty</code> is 98.4% of
+every page scanned</strong>: that counter increments on exactly
+<code>pte_dirty(p) &amp;&amp; !pte_write(p)</code>, the pages the old rule rejected and this one
+accepts. It is the defect, measured directly.</p>
+
+<h3>Phase B — no <code>--protect-weights</code>, no hint at all</h3>
+<figure><div class="cap"><span>delta over the 240 s attach</span><span class="rt">the transparency test</span></div>
+<pre><code><span class="hl">rej_writable      50179     rearmed           50179</span>
+rej_runs_short   100360     stale_dirty      108450
+sel_isolated       7488     sel_isolate_fail   1627
+scanned          159654     demoted               0</code></pre>
+<figcaption><code>50,179 + 100,360 + 7,488 + 1,627 = 159,654</code> — closes exactly.</figcaption></figure>
+
+<div class="box box--good">
+  <p class="lab">The line that proves it</p>
+  <p><code>rej_writable == rearmed == 50,179</code>, against <strong>exactly 50,176 weight
+  pages</strong> (205,520,896 B ÷ 4096, exact — the other three are heap and data). The whole
+  mechanism is visible in that one equality:</p>
+  <ul>
+  <li><strong>Pass 1:</strong> all 50,176 weight pages are <code>rw-p</code> and writable →
+  rejected, and every one write-protected.</li>
+  <li><strong>The application never writes them again.</strong> It is read-mostly; the kernel
+  simply did not know yet.</li>
+  <li><strong>Pass 2 onward:</strong> <code>pte_write()</code> is false → they read clean → clean
+  runs accumulate → selected.</li>
+  </ul>
+  <p>Armed <strong>exactly once each, never twice</strong> — no weight page was ever re-dirtied.
+  The kernel <em>measured</em> the read-mostly property instead of being told it.</p>
+</div>
+
+<h3>The hint bought nothing, which is the point</h3>
+<div class="tw"><table>
+<thead><tr><th></th><th class="num">A: <code>--protect-weights</code></th><th class="num">B: no hint</th></tr></thead>
+<tbody>
+<tr><td><code>sel_isolated</code></td><td class="num">7,456</td><td class="num yes">7,488</td></tr>
+<tr><td><code>stale_dirty</code></td><td class="num">108,999</td><td class="num">108,450</td></tr>
+<tr><td><code>scanned</code></td><td class="num">110,732</td><td class="num">159,654</td></tr>
+<tr><td><code>rearmed</code></td><td class="num">41</td><td class="num">50,179</td></tr>
+<tr><td>DIGEST</td><td class="num"><code>eac22204…</code></td><td class="num"><code>eac22204…</code></td></tr>
+<tr><td>mean</td><td class="num">344.864 s</td><td class="num">344.867 s</td></tr>
+</tbody></table></div>
+<p>Identical promotion rate. The entire cost of transparency is the <code>scanned</code>
+difference — 159,654 − 110,732 ≈ 48,900, one extra sweep of the weights to arm them — and it is
+paid <strong>once</strong>. After that the two paths are indistinguishable.
+<code>mprotect</code> only ever skipped pass 1.</p>
+<p>The digest is identical across phase A, phase B and the 08-19 run, so nothing was corrupted,
+and 344.867 s against 345.679 s is no regression.</p>
+
+<h2>Two ways to misread these counters</h2>
+
+<div class="box box--warn">
+  <p class="lab">A large <code>scanned</code> is the symptom of finding nothing</p>
+  <p><code>ltram_scan_once()</code> calls
+  <code>walk_page_range(mm, 0, TASK_SIZE, …)</code> — it restarts at address 0 every pass with no
+  cursor — and the PTE loop is gated on <code>ctx-&gt;nr &lt; promote_batch</code>. Once 32 pages
+  are selected the rest of the pass short-circuits and stops counting. Under the old rule nothing
+  was <em>ever</em> selected, so every pass had to walk all 13.2 M pages to the end.
+  <strong>13.2 M → 110,732 is the fix working, not a regression.</strong></p>
+</div>
+
+<p>110,732 ÷ 233 passes = 475 pages per pass. <code>/proc/PID/maps</code> confirms those are the
+weights and not incidental heap: the 196 MiB anonymous region is the <em>lowest</em> mapping in
+the mmap area, with only ~39 pages of binary and heap below it.</p>
+
+<figure><div class="cap"><span>/proc/1745/maps — why the walk reaches the weights immediately</span></div>
+<pre><code>c5c2ffc00000-c5c2ffc04000 r-xp  /home/enzian/matmul
+c5c33994c000-c5c33996d000 rw-p  [heap]
+<span class="hl">ff9103a00000-ff910fe00000 rw-p          &lt;-- the weights, 50,176 pages</span>
+ff910fe80000-ff911001a000 r-xp  libc.so.6</code></pre></figure>
+
+<div class="box box--warn">
+  <p class="lab"><code>sel_isolated</code> measures the batch cap, not the predicate</p>
+  <p><code>promote_batch = 32</code> at one pass per second caps promotion at 32 pages/s. Both
+  phases saturated it on <em>every</em> pass (7,456 ≈ 32 × 233, and 7,488). The 50,176 weight
+  pages would take <strong>26 minutes</strong> to drain even with detection perfect. It is
+  live-writable at <code>/sys/module/ltram_policy/parameters/promote_batch</code>, so it is a
+  knob, not a rebuild — but the 32/s default is set by the wear budget (41.5 erases/s sustained),
+  so raise it for measurement only.</p>
+</div>
+
+<h2>What this run does not prove</h2>
+<ul>
+<li><strong>Nothing reached flash.</strong> The <code>nor_eci</code> backend was deliberately not
+loaded, so all 7,456 / 7,488 isolated pages found no write path and were put back in DRAM intact.
+<code>promoted 0</code> and <code>promote_failed == sel_isolated</code> are arithmetic, not
+symptoms. Held out for two reasons: the 08-19 comparison run also had no backend, and changing
+the predicate and the driver together would make the delta unattributable.</li>
+<li><strong><code>demoted 0</code>, so the guard in <code>f558a316f</code> is still
+unexercised.</strong> It only fires once a page is actually on flash.</li>
+<li><strong><code>sel_isolate_fail</code> is 1,627–2,081, ~18–22% of every selection</strong> —
+<code>folio_isolate_lru()</code> refusing. Not new and not caused by this fix, but it is a fifth
+of the promotion budget being dropped, and it was counted nowhere before
+<code>a06b6973c</code>.</li>
+</ul>
+
+<div class="box box--plain">
+  <p class="lab">The lesson worth keeping</p>
+  <p>The hypothesis was plausible, fit every number available, and was wrong about the cause. What
+  separated it from the truth was one commit that did nothing but count. A counter per rejection
+  reason cost less than an hour and would have answered this on the first run — its absence is why
+  the diagnosis stayed a guess for a day.</p>
+</div>
+
+</section>
+<div class="pager">
+<a href="https://claude.ai/code/artifact/d4904e3e-1ba2-4104-b8a7-2da0214b48c4"><span class="pl">Previous</span><span class="pt">Issue 9 — Every Migration Failed on a Leaked Reference</span></a>
+<a class="nxt" href="https://claude.ai/code/artifact/ceef8d43-ac65-42b9-81f8-196958ff75ae"><span class="pl">Next</span><span class="pt">Issue 11 — The Status Word Only Prints Once</span></a>
+</div>
+</div></div>
+
