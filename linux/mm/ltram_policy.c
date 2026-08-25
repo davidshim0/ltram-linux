@@ -46,9 +46,20 @@
 static unsigned int scan_interval_ms = 1000;
 static unsigned int clean_passes_required = 3;
 static unsigned int promote_batch = 32;	/* pages per pass; 32/s is under the budget */
+/*
+ * PTEs a single pass may examine before it stops and saves its place. Bounds
+ * the work per pass independently of promote_batch, so a region where nothing
+ * is eligible is swept quickly instead of being re-walked from the start.
+ *
+ * A page needs clean_passes_required consecutive CLEAN SIGHTINGS, and with a
+ * cursor it is sighted once per SWEEP rather than once per second. At 8192 a
+ * 50,176-page region sweeps in ~6 s, so a page becomes eligible in ~18 s.
+ */
+static unsigned int scan_ptes_per_pass = 8192;
 module_param(scan_interval_ms, uint, 0644);
 module_param(clean_passes_required, uint, 0644);
 module_param(promote_batch, uint, 0644);
+module_param(scan_ptes_per_pass, uint, 0644);
 
 /* ---- the flash page allocator --------------------------------------------- */
 static unsigned long *ltram_free_bitmap;	/* 1 = free */
@@ -375,8 +386,25 @@ static DEFINE_MUTEX(target_lock);
 /* ---- the scan ------------------------------------------------------------- */
 struct scan_ctx {
 	struct list_head candidates;
-	unsigned int nr;
+	unsigned int nr;		/* candidates picked this pass */
+	unsigned int examined;		/* PTEs looked at this pass */
+	unsigned long next_addr;	/* where to resume next pass */
+	bool stopped;			/* hit a limit rather than the end */
 };
+
+/*
+ * Where the next pass resumes.
+ *
+ * Before this existed the walk restarted at address 0 EVERY pass and stopped
+ * once the batch filled, so anything above that point was never examined at
+ * all -- a second large region above the first would have starved for ever,
+ * and the only reason it did not is that mmap happened to place the region we
+ * cared about lowest. It also meant the same low PTEs were re-examined every
+ * second, which is why ptes_examined reached 13.2 million over an address
+ * space holding 50,176 pages.
+ */
+static unsigned long scan_cursor;
+static atomic64_t stat_sweeps;		/* times the cursor wrapped */
 
 static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 			  struct mm_walk *walk)
@@ -389,7 +417,9 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 	if (!pte)
 		return 0;
 
-	for (; addr < end && ctx->nr < promote_batch; addr += PAGE_SIZE, pte++) {
+	for (; addr < end && ctx->nr < promote_batch &&
+	       ctx->examined < scan_ptes_per_pass; addr += PAGE_SIZE, pte++) {
+		ctx->examined++;
 		pte_t p = ptep_get(pte);
 		struct folio *folio;
 		struct ltram_obs *o;
@@ -536,6 +566,19 @@ rearm:
 	}
 	pte_unmap_unlock(start_pte, ptl);
 	cond_resched();
+
+	/*
+	 * Save the place, and stop the whole walk if a budget ran out. A
+	 * non-zero return terminates walk_page_range(), which is what keeps the
+	 * cursor meaningful: without it the walk carries on into the next PMD
+	 * with both budgets already spent, examines nothing there, and the
+	 * cursor ends up past pages it never looked at.
+	 */
+	ctx->next_addr = addr;
+	if (addr < end) {
+		ctx->stopped = true;
+		return 1;
+	}
 	return 0;
 }
 
@@ -571,9 +614,24 @@ static void ltram_scan_once(void)
 	if (policy->pass_begin)
 		policy->pass_begin();
 
+	ctx.next_addr = scan_cursor;
 	mmap_read_lock(mm);
-	walk_page_range(mm, 0, TASK_SIZE, &scan_ops, &ctx);
+	walk_page_range(mm, scan_cursor, TASK_SIZE, &scan_ops, &ctx);
 	mmap_read_unlock(mm);
+
+	/*
+	 * Stopped on a budget -> resume exactly there. Ran off the end -> the
+	 * sweep is done, wrap to 0. A pass that fills promote_batch advances the
+	 * cursor by only that many pages, which is correct: it still makes
+	 * forward progress, where the old code threw the position away and
+	 * re-walked the same pages a second later.
+	 */
+	if (ctx.stopped) {
+		scan_cursor = ctx.next_addr;
+	} else {
+		scan_cursor = 0;
+		atomic64_inc(&stat_sweeps);
+	}
 	mmput(mm);
 
 	if (policy->pass_end)
@@ -626,6 +684,9 @@ static ssize_t target_pid_store(struct kobject *k, struct kobj_attribute *a,
 
 	mutex_lock(&target_lock);
 	target_pid = pid;
+	/* A different process is a different address space; a cursor carried
+	 * over from the last one points at nothing meaningful. */
+	scan_cursor = 0;
 	mutex_unlock(&target_lock);
 	pr_info("ltram: target pid %d\n", pid);
 	return n;
@@ -649,7 +710,9 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		"sel_isolate_fail  %lld\n"
 		"rearmed           %lld\n"
 		"late_free         %lld\n"
-		"rej_not_anon      %lld\n",
+		"rej_not_anon      %lld\n"
+		"sweeps            %lld\n"
+		"scan_cursor       0x%lx\n",
 		policy->name, target_pid,
 		atomic64_read(&stat_scanned), atomic64_read(&stat_promoted),
 		atomic64_read(&stat_promote_failed), atomic64_read(&stat_demoted),
@@ -657,7 +720,8 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		atomic64_read(&rej_writable), atomic64_read(&rej_runs_short),
 		atomic64_read(&stale_dirty), atomic64_read(&sel_isolated),
 		atomic64_read(&sel_isolate_fail), atomic64_read(&rearmed),
-		atomic64_read(&stat_late_free), atomic64_read(&rej_not_anon));
+		atomic64_read(&stat_late_free), atomic64_read(&rej_not_anon),
+		atomic64_read(&stat_sweeps), scan_cursor);
 }
 
 static struct kobj_attribute target_pid_attr = __ATTR_RW(target_pid);
