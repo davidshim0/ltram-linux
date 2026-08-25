@@ -1,6 +1,12 @@
 #!/bin/bash
 # 1a validation: hammer lt_take/lt_give_back and assert the shadow survives.
 #
+# NO APPLICATION HINT. --protect-weights is deliberately absent: it mprotects
+# the region PROT_READ, so pages arrive ALREADY write-protected and are promoted
+# on first sighting, and the arm -> wait -> promote cycle -- the whole detection
+# mechanism -- never runs. Expect was_written to jump from ~3 to ~one per page in
+# the region on the first sweep, then fall away as pages go quiet.
+#
 # No backend loaded on purpose. Every migration then FAILS, so each allocation
 # is followed immediately by a free -- thousands of state transitions per
 # second, which is a far harder test of the bookkeeping than pages that get
@@ -16,7 +22,7 @@ trap cleanup EXIT INT TERM
 say "backend loaded: $(lsmod | grep -c nor_eci) (want 0)"
 say "=== BEFORE ==="; sudo -n cat $P | tee "$OUT/before"
 
-sudo -n $HOME/matmul --n 2048 --iters 200 --runs 12 --verify --protect-weights --print-ranges \
+sudo -n $HOME/matmul --n 2048 --iters 200 --runs 12 --verify --print-ranges \
      > "$OUT/mm.log" 2>&1 &
 SP2=$!
 for i in $(seq 1 60); do grep -q "^RANGE result" "$OUT/mm.log" 2>/dev/null && break; sleep 1; done
@@ -44,7 +50,7 @@ echo
 echo "================ 1a VERDICT ================"
 echo "free after run : $FREE  (want 65536)"
 echo "invariant      : $INV"
-grep -E "^moved_to_ltram|not_moved_this_pass|pages_in_use|freed_via_backstop" "$OUT/stats.after"
+grep -E "^moved_to_ltram|not_moved_this_pass|pages_in_use|freed_via_backstop|^sweeps|scan_cursor|ptes_examined|^chosen" "$OUT/stats.after"
 if [ "$FREE" = "65536" ] && [ "$INV" = "ok" ]; then
         echo "VERDICT: PASS -- every allocated page came back and all five assertions hold"
 else

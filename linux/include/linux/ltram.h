@@ -82,12 +82,37 @@ struct ltram_flash_ops {
 	 * Returns 0 on success, negative errno on failure.
 	 */
 	int (*write_page)(unsigned long dst_pfn, const void *src);
+
+	/*
+	 * Erase one PAGE_SIZE sector, WITHOUT programming it. Optional; when
+	 * absent the policy cannot recycle a sector that has held data, and
+	 * says so once rather than silently leaking capacity.
+	 *
+	 * MAY SLEEP -- ~16.4 ms, and it must not return until the erase has
+	 * actually retired. Waiting on the device's erase COUNTER rather than a
+	 * fixed sleep is the difference between noticing a dropped trigger and
+	 * corrupting the next program.
+	 */
+	int (*erase_page)(unsigned long pfn);
+
+	/*
+	 * True if the device is idle RIGHT NOW -- nothing mid-operation, the
+	 * scheduler not serving a command. Optional; absent means "assume
+	 * idle", which is correct only when nothing else touches the device.
+	 *
+	 * One sample is not enough to conclude the device is quiet: it can land
+	 * in the gap between two reads. The caller samples repeatedly.
+	 */
+	bool (*device_idle)(void);
 };
 
 int  ltram_register_flash_ops(const struct ltram_flash_ops *ops);
 void ltram_unregister_flash_ops(const struct ltram_flash_ops *ops);
 bool ltram_have_flash_ops(void);
 int  ltram_write_page(unsigned long dst_pfn, const void *src);
+int  ltram_erase_page(unsigned long pfn);
+bool ltram_device_idle(void);
+bool ltram_have_erase_op(void);
 
 bool folio_is_ltram(const struct folio *folio);
 int  ltram_copy_to_flash(struct folio *dst, struct folio *src);
@@ -115,6 +140,9 @@ static inline void ltram_declare_node(void) { }
 static inline void ltram_note_stray_alloc(unsigned long pfn, const char *w) { }
 static inline bool ltram_have_flash_ops(void) { return false; }
 static inline int ltram_write_page(unsigned long p, const void *s) { return -ENODEV; }
+static inline int ltram_erase_page(unsigned long p) { return -ENODEV; }
+static inline bool ltram_device_idle(void) { return true; }
+static inline bool ltram_have_erase_op(void) { return false; }
 static inline bool folio_is_ltram(const struct folio *f) { return false; }
 static inline void ltram_free_folio(struct folio *f) { }
 static inline void ltram_free_page(struct page *p) { }

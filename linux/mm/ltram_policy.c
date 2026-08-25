@@ -35,6 +35,8 @@
 #include <linux/math64.h>
 #include <linux/minmax.h>
 #include <linux/bitops.h>
+#include <linux/workqueue.h>
+#include <linux/delay.h>
 
 /* ---- tunables -------------------------------------------------------------
  * Defaults are deliberately conservative: the wear budget is 41.5 erases/s
@@ -57,9 +59,43 @@ static unsigned int promote_batch = 32;	/* pages per pass; 32/s is under the bud
  * above should_promote().
  */
 static unsigned int scan_ptes_per_pass = 8192;
+/*
+ * Background erase. Hysteresis, not a single threshold: erasing starts when
+ * free falls below the low mark and continues until it reaches the high one,
+ * so the engine is not started and stopped once per allocation.
+ *
+ * The high mark is really "how big a burst can be absorbed without waiting for
+ * an erase", and it is paid for up front -- at ~16.4 ms a sector, filling 8192
+ * of them takes ~2.2 minutes of erasing.
+ */
+static unsigned int erase_low_water  = 2048;
+static unsigned int erase_high_water = 8192;
+static unsigned int erase_poll_ms    = 50;
+/*
+ * Erases per worker invocation. One per poll would cap the engine at
+ * 1000/erase_poll_ms per second -- 20/s at a 50 ms poll -- when the device
+ * sustains ~61/s. Each erase blocks ~16.4 ms, so 16 of them is ~260 ms in one
+ * work item, which is why this runs on the unbound queue and re-arms with no
+ * delay while there is still a backlog.
+ */
+static unsigned int erase_batch = 16;
+/*
+ * One sample cannot tell a quiet device from the gap between two reads, so the
+ * device must look idle this many times in a row before a ~16.4 ms erase is
+ * committed. Reads never reach the driver -- they are plain loads through the
+ * cacheable window -- so the FPGA status word is the only visibility there is.
+ */
+static unsigned int idle_samples   = 3;
+static unsigned int idle_sample_us = 1000;
 module_param(scan_interval_ms, uint, 0644);
 module_param(promote_batch, uint, 0644);
 module_param(scan_ptes_per_pass, uint, 0644);
+module_param(erase_low_water, uint, 0644);
+module_param(erase_high_water, uint, 0644);
+module_param(erase_poll_ms, uint, 0644);
+module_param(erase_batch, uint, 0644);
+module_param(idle_samples, uint, 0644);
+module_param(idle_sample_us, uint, 0644);
 
 /* ---- the flash page allocator --------------------------------------------- */
 static unsigned long *ltram_free_bitmap;	/* 1 = free */
@@ -161,7 +197,7 @@ static void lt_to_valid(unsigned long idx)
 		lt_ec[idx]++;
 }
 
-/* VALID -> FREE. 1c inserts DIRTY and the erase between these two halves. */
+/* VALID -> FREE, for a sector that was never programmed. */
 static void lt_to_free(unsigned long idx)
 {
 	if (!lt_ready)
@@ -169,6 +205,42 @@ static void lt_to_free(unsigned long idx)
 	__clear_bit(idx, lt_bm[LT_VALID]);
 	list_add_tail(&lt_node[idx], &lt_free_by_ec[lt_bucket_of(lt_ec[idx])]);
 	lt_free_count++;
+}
+
+/*
+ * VALID -> DIRTY. The sector holds data we wrote, so it cannot be handed out
+ * again until it has been erased. The erase worker drains this.
+ */
+static void lt_to_dirty(unsigned long idx)
+{
+	if (!lt_ready)
+		return;
+	__clear_bit(idx, lt_bm[LT_VALID]);
+	__set_bit(idx, lt_bm[LT_DIRTY]);
+}
+
+/* DIRTY -> ERASING. At most one at a time: the device erases one sector. */
+static void lt_dirty_to_erasing(unsigned long idx)
+{
+	__clear_bit(idx, lt_bm[LT_DIRTY]);
+	lt_erasing = idx;
+}
+
+/* ERASING -> FREE. The sector is blank and allocatable again. */
+static void lt_erasing_to_free(unsigned long idx)
+{
+	lt_erasing = LT_ERASING_IDLE;
+	list_add_tail(&lt_node[idx], &lt_free_by_ec[lt_bucket_of(lt_ec[idx])]);
+	lt_free_count++;
+	__set_bit(idx, ltram_free_bitmap);
+	atomic64_dec(&ltram_pages_in_use);
+}
+
+/* ERASING -> DIRTY. The erase failed; put it back and try again later. */
+static void lt_erasing_to_dirty(unsigned long idx)
+{
+	lt_erasing = LT_ERASING_IDLE;
+	__set_bit(idx, lt_bm[LT_DIRTY]);
 }
 
 /*
@@ -241,7 +313,17 @@ static struct page *ltram_alloc_page(void)
 	return p;
 }
 
-static void ltram_free_page_back(struct page *p)
+/*
+ * @was_programmed: did this sector actually receive data?
+ *
+ * A page allocated as a migration destination whose migration then FAILED was
+ * never written, so its sector is still blank and needs no erase -- it goes
+ * straight back to FREE. Only a page that really held data goes to DIRTY. Get
+ * this wrong in the generous direction and every failed migration costs a
+ * 16.4 ms erase for nothing; get it wrong the other way and a sector is handed
+ * out still holding the last tenant's data.
+ */
+static void ltram_free_page_back(struct page *p, bool was_programmed)
 {
 	unsigned long idx = page_to_pfn(p) - ltram_start_pfn;
 	unsigned long flags;
@@ -249,12 +331,139 @@ static void ltram_free_page_back(struct page *p)
 	/* free_pages_prepare() can reach here from softirq and with interrupts
 	 * already off, so this lock cannot be the plain variety. */
 	spin_lock_irqsave(&ltram_alloc_lock, flags);
-	if (ltram_free_bitmap && idx < ltram_nr_pages && !test_bit(idx, ltram_free_bitmap)) {
+	if (!ltram_free_bitmap || idx >= ltram_nr_pages ||
+	    test_bit(idx, ltram_free_bitmap))
+		goto out;			/* not ours, or already free */
+
+	if (was_programmed && lt_ready) {
+		/* Stays out of ltram_free_bitmap: it is not allocatable until
+		 * the erase worker has blanked it. */
+		lt_to_dirty(idx);
+	} else {
 		__set_bit(idx, ltram_free_bitmap);
 		atomic64_dec(&ltram_pages_in_use);
-		lt_to_free(idx);	/* 1a shadow */
+		lt_to_free(idx);
 	}
+out:
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
+}
+
+/* ---- the background erase engine ------------------------------------------
+ *
+ * THIS IS THE POINT OF THE WHOLE STATE MACHINE. ft_ltram_write_page() erases
+ * synchronously before every program: ~16.4 ms of erase against ~1.2 ms of DMA,
+ * so 93% of a promotion's cost is the erase, paid on the critical path. Pages
+ * arriving pre-erased from a Free pool cost the DMA alone.
+ *
+ * It removes the erase from the LATENCY path, not from the THROUGHPUT budget:
+ * sustained promotion is still capped near 61 pages/s by erase time. Ours is a
+ * burst workload -- promote a working set, then it sits -- so we get the win.
+ *
+ * A workqueue, not a timer: the erase sleeps ~16.4 ms inside the backend
+ * (waiting on the device's erase counter, not on a fixed delay), and a timer
+ * callback runs in softirq where sleeping is forbidden.
+ */
+static void lt_erase_work_fn(struct work_struct *w);
+static DECLARE_DELAYED_WORK(lt_erase_work, lt_erase_work_fn);
+static atomic64_t stat_erases_done, stat_erases_failed, stat_erase_deferred;
+
+/*
+ * The device must look idle idle_samples times in a row. A single sample can
+ * land in the gap between two reads and report quiet when the workload is
+ * mid-stream -- and reads never reach the driver at all, being plain loads
+ * through the cacheable window, so the FPGA's own status word is the only
+ * visibility there is.
+ */
+static bool lt_device_quiet(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < idle_samples; i++) {
+		if (!ltram_device_idle())
+			return false;
+		if (i + 1 < idle_samples)
+			usleep_range(idle_sample_us, idle_sample_us * 2);
+	}
+	return true;
+}
+
+static void lt_erase_work_fn(struct work_struct *w)
+{
+	unsigned long flags, idx;
+	bool have_op = ltram_have_erase_op();
+	unsigned int done = 0;
+	bool backlog = false;
+	int rc;
+
+	if (!lt_ready)
+		goto again;
+
+	while (done < erase_batch) {
+		idx = ULONG_MAX;
+		rc = 0;
+
+		/*
+		 * Hysteresis: start below the low mark, keep going until the
+		 * high one. A single threshold would start and stop the engine
+		 * once per allocation at the boundary.
+		 */
+		spin_lock_irqsave(&ltram_alloc_lock, flags);
+		if (lt_erasing == LT_ERASING_IDLE &&
+		    lt_free_count < erase_high_water) {
+			unsigned long d = find_first_bit(lt_bm[LT_DIRTY],
+							 ltram_nr_pages);
+
+			if (d < ltram_nr_pages) {
+				lt_dirty_to_erasing(d);
+				idx = d;
+			}
+		}
+		spin_unlock_irqrestore(&ltram_alloc_lock, flags);
+
+		if (idx == ULONG_MAX)
+			break;			/* nothing to do, or at the high mark */
+
+		if (have_op) {
+			if (!lt_device_quiet()) {
+				/* Put it back rather than erase into a read
+				 * stream; try again on the next tick. */
+				spin_lock_irqsave(&ltram_alloc_lock, flags);
+				lt_erasing_to_dirty(idx);
+				spin_unlock_irqrestore(&ltram_alloc_lock, flags);
+				atomic64_inc(&stat_erase_deferred);
+				break;
+			}
+			rc = ltram_erase_page(ltram_start_pfn + idx);
+		}
+		/*
+		 * No erase op: the sector still has to be recycled, and that is
+		 * safe because write_page() erases inline before every program.
+		 * One wasted erase per reuse -- the price of doing this in two
+		 * steps rather than one flag day.
+		 */
+
+		spin_lock_irqsave(&ltram_alloc_lock, flags);
+		if (rc) {
+			lt_erasing_to_dirty(idx);
+			atomic64_inc(&stat_erases_failed);
+		} else {
+			lt_erasing_to_free(idx);
+			if (have_op)
+				atomic64_inc(&stat_erases_done);
+		}
+		spin_unlock_irqrestore(&ltram_alloc_lock, flags);
+
+		if (rc)
+			break;
+		done++;
+		backlog = true;
+		cond_resched();
+	}
+
+again:
+	/* Still draining -> come straight back. Idle -> tick slowly. */
+	queue_delayed_work(system_unbound_wq, &lt_erase_work,
+			   backlog ? 0 : msecs_to_jiffies(erase_poll_ms));
 }
 
 /* migrate_pages() callbacks */
@@ -275,7 +484,7 @@ static struct folio *ltram_get_new_folio(struct folio *src, unsigned long privat
 
 static void ltram_put_new_folio(struct folio *dst, unsigned long private)
 {
-	ltram_free_page_back(&dst->page);
+	ltram_free_page_back(&dst->page, false);	/* never programmed */
 }
 
 /*
@@ -289,7 +498,7 @@ static void ltram_put_new_folio(struct folio *dst, unsigned long private)
  */
 void ltram_free_folio(struct folio *folio)
 {
-	ltram_free_page_back(&folio->page);
+	ltram_free_page_back(&folio->page, true);
 }
 
 /*
@@ -304,7 +513,7 @@ void ltram_free_folio(struct folio *folio)
 void ltram_free_page(struct page *page)
 {
 	atomic64_inc(&stat_freed_via_backstop);
-	ltram_free_page_back(page);
+	ltram_free_page_back(page, true);
 }
 
 void ltram_note_demotion(void)
@@ -682,10 +891,16 @@ static ssize_t target_pid_store(struct kobject *k, struct kobj_attribute *a,
 		return -EINVAL;
 
 	mutex_lock(&target_lock);
+	/*
+	 * Reset the cursor only when a DIFFERENT target arrives -- a new process
+	 * is a new address space, so a carried-over position means nothing.
+	 * Detaching (pid 0) deliberately leaves it alone: resetting there wiped
+	 * the cursor before it could be read after a run, which made the whole
+	 * mechanism unobservable.
+	 */
+	if (pid && pid != target_pid)
+		scan_cursor = 0;
 	target_pid = pid;
-	/* A different process is a different address space; a cursor carried
-	 * over from the last one points at nothing meaningful. */
-	scan_cursor = 0;
 	mutex_unlock(&target_lock);
 	pr_info("ltram: target pid %d\n", pid);
 	return n;
@@ -710,7 +925,10 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		"freed_via_backstop   %lld\n"
 		"skipped_file_backed  %lld\n"
 		"sweeps               %lld\n"
-		"scan_cursor          0x%lx\n",
+		"scan_cursor          0x%lx\n"
+		"erases_done          %lld\n"
+		"erases_failed        %lld\n"
+		"erase_deferred       %lld\n",
 		policy->name, target_pid,
 		atomic64_read(&stat_ptes_examined), atomic64_read(&stat_moved_to_ltram),
 		atomic64_read(&stat_not_moved), atomic64_read(&stat_moved_to_dram),
@@ -719,7 +937,9 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		atomic64_read(&stat_dirty_but_readonly), atomic64_read(&stat_chosen),
 		atomic64_read(&stat_lru_refused), atomic64_read(&stat_write_protected),
 		atomic64_read(&stat_freed_via_backstop), atomic64_read(&stat_skipped_file_backed),
-		atomic64_read(&stat_sweeps), scan_cursor);
+		atomic64_read(&stat_sweeps), scan_cursor,
+		atomic64_read(&stat_erases_done), atomic64_read(&stat_erases_failed),
+		atomic64_read(&stat_erase_deferred));
 }
 
 static struct kobj_attribute target_pid_attr = __ATTR_RW(target_pid);
@@ -971,7 +1191,9 @@ static int __init lt_tracking_init(void)
 	if (ltram_debugfs_dir)
 		debugfs_create_file("pagestate", 0444, ltram_debugfs_dir,
 				    NULL, &lt_state_fops);
-	pr_info("ltram: page-state tracking armed (shadow only), %lu pages\n",
+	queue_delayed_work(system_unbound_wq, &lt_erase_work,
+			   msecs_to_jiffies(erase_poll_ms));
+	pr_info("ltram: page states armed, %lu pages, erase worker running\n",
 		ltram_nr_pages);
 	return 0;
 

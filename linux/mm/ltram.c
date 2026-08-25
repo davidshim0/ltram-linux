@@ -191,6 +191,71 @@ bool ltram_have_flash_ops(void)
  * it" for success -- which is the whole failure mode this subsystem exists to
  * eliminate.
  */
+/*
+ * Erase one sector. Same module-pinning dance as ltram_write_page(): take the
+ * pointer under the lock and pin the provider before dropping it, so the
+ * backend cannot unload between the check and the call.
+ */
+int ltram_erase_page(unsigned long pfn)
+{
+	const struct ltram_flash_ops *ops;
+	struct module *owner;
+	int rc;
+
+	if (WARN_ON_ONCE(!pfn_is_ltram(pfn)))
+		return -EINVAL;
+
+	spin_lock(&ltram_ops_lock);
+	ops = ltram_ops;
+	owner = ops ? ops->owner : NULL;
+	if (ops && owner && !try_module_get(owner))
+		ops = NULL;
+	spin_unlock(&ltram_ops_lock);
+
+	if (!ops || !ops->erase_page) {
+		if (owner)
+			module_put(owner);
+		return -ENODEV;
+	}
+
+	rc = ops->erase_page(pfn);
+
+	if (owner)
+		module_put(owner);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(ltram_erase_page);
+
+bool ltram_have_erase_op(void)
+{
+	bool have;
+
+	spin_lock(&ltram_ops_lock);
+	have = ltram_ops && ltram_ops->erase_page;
+	spin_unlock(&ltram_ops_lock);
+	return have;
+}
+EXPORT_SYMBOL_GPL(ltram_have_erase_op);
+
+/*
+ * A single instantaneous sample. Absent op means "assume idle" -- correct only
+ * when nothing else drives the device, which is true for our own test setups
+ * and would not be in production.
+ */
+bool ltram_device_idle(void)
+{
+	const struct ltram_flash_ops *ops;
+	bool idle = true;
+
+	spin_lock(&ltram_ops_lock);
+	ops = ltram_ops;
+	if (ops && ops->device_idle)
+		idle = ops->device_idle();
+	spin_unlock(&ltram_ops_lock);
+	return idle;
+}
+EXPORT_SYMBOL_GPL(ltram_device_idle);
+
 int ltram_write_page(unsigned long dst_pfn, const void *src)
 {
 	const struct ltram_flash_ops *ops;
