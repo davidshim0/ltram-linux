@@ -63,49 +63,60 @@ static atomic64_t ltram_pages_in_use;
  * Records what state every flash page is in, alongside the existing
  * ltram_free_bitmap, WITHOUT changing a single allocation decision. The point
  * is to prove the bookkeeping before anything depends on it: the last three
- * bugs in this subsystem were each hidden by the one before it, and the worst
- * of them lost 16,502 pages because a count and the thing it counted were
- * allowed to disagree.
+ * bugs here were each hidden by the one before, and the worst lost 16,502
+ * pages because a count and the thing it counted were allowed to disagree.
  *
- * The design this builds toward is a five-state machine --
- * FREE / VALID / DIRTY / ERASING / RETIRED -- with the erase moved off the
- * write path into a background worker. Today every promotion pays ~16.4 ms of
- * sector erase before a ~1.2 ms DMA; with pages arriving pre-erased the erase
- * leaves the latency path entirely. In 1a only FREE and VALID are ever
- * occupied, because a freed page still goes straight back to FREE exactly as
- * it does now.
+ * The design this builds toward is FREE / VALID / DIRTY / ERASING, with the
+ * erase moved off the write path into a background worker. Today every
+ * promotion pays ~16.4 ms of sector erase before a ~1.2 ms DMA; with pages
+ * arriving pre-erased the erase leaves the latency path entirely. In 1a only
+ * FREE and VALID are ever occupied, because a freed page still goes straight
+ * back to FREE exactly as it does now.
  *
- * BITMAPS, not a per-page state byte, deliberately:
- *   - bitmap_weight() DERIVES a count from the data, so a count cannot drift
- *     away from the thing it describes. A separate counter that is allowed to
- *     disagree with the array is the exact bug class that produced the leak.
- *   - disjointness is a bitwise AND, cheap enough to assert continuously.
- *   - 4 x 8 KiB against 64 KiB for a u8[], and a full scan touches 64 cache
- *     lines rather than 512.
+ * HOW EACH STATE IS REPRESENTED, and why they differ:
  *
- * The free list is bucketed by erase count at 1000 granularity with FIFO
- * within each bucket. FIFO is not a compromise here: while every page has the
- * same erase count they all sit in bucket 0, and pop-from-head /
- * return-to-tail IS round-robin, which is the wear spreading we want. Exact
- * per-erase-count buckets would behave identically at that point and cost
- * 100,000 list heads instead of 101.
+ *   VALID    bitmap.  No ordering needed, and bitmap_weight() DERIVES the
+ *   DIRTY    bitmap.  count from the data so it cannot drift away from it.
+ *                     Disjointness is one bitwise AND. 8 KiB each.
+ *
+ *   ERASING  a single u32 index. The hardware erases one sector at a time --
+ *            serialised under the backend's mutex -- so a queue would be a
+ *            container that never holds more than one thing.
+ *
+ *   FREE     the bucket lists, and NOTHING ELSE. There is deliberately no
+ *            free bitmap: free is exactly ~(VALID | DIRTY) minus whatever is
+ *            being erased, so it is DERIVED on demand. A maintained free
+ *            bitmap would be a third description of a set already described
+ *            twice, i.e. one more thing that can disagree.
+ *
+ * The free list is bucketed by erase count at 1000 granularity, FIFO within a
+ * bucket. FIFO is not a compromise: while every page shares an erase count
+ * they all sit in bucket 0, and pop-head / return-tail IS round-robin, which
+ * is the wear spreading we want. Exact per-erase-count buckets behave
+ * identically there and cost 100,000 list heads instead of 101.
+ *
+ * RETIRED is deliberately absent. It only becomes meaningful with the parking
+ * policy -- park a permanently read-only page in a nearly-worn sector so it is
+ * never erased again -- which is a later experiment. Adding the state now would
+ * mean a bitmap that is always empty and a line in the report for a feature
+ * that does not exist.
  * ===========================================================================
  */
 #define LT_EC_GRAIN	1000u
 #define LT_EC_BUCKETS	101u			/* 0 .. 100,000 erases */
 #define LT_ERASING_IDLE	0xFFFFFFFFu
 
-enum lt_state { LT_FREE = 0, LT_VALID, LT_DIRTY, LT_RETIRED, LT_NR_STATES };
-static const char * const lt_state_name[LT_NR_STATES] = {
-	"free", "valid", "dirty", "retired"
-};
+enum lt_bmstate { LT_VALID = 0, LT_DIRTY, LT_NR_BM };
+static const char * const lt_bm_name[LT_NR_BM] = { "valid", "dirty" };
 
-static unsigned long	*lt_bm[LT_NR_STATES];	/* one bitmap per state */
+static unsigned long	*lt_bm[LT_NR_BM];	/* VALID and DIRTY only */
+static unsigned long	*lt_scratch;		/* derivations and ANDs */
 static u32		*lt_ec;			/* erase count, per page */
 static struct list_head	*lt_node;		/* per-page link into a bucket */
 static struct list_head	 lt_free_by_ec[LT_EC_BUCKETS];
+static unsigned long	 lt_free_count;		/* O(1) for the watermark */
 static u32		 lt_erasing = LT_ERASING_IDLE;
-static bool		 lt_ready;		/* structures allocated */
+static bool		 lt_ready;
 
 static inline unsigned int lt_bucket_of(u32 ec)
 {
@@ -115,43 +126,33 @@ static inline unsigned int lt_bucket_of(u32 ec)
 }
 
 /*
- * The ONLY way a page changes state. Doing both halves here means "in two
- * states at once" is not merely detectable, it is unrepresentable outside this
- * function -- the disjointness assertion below is then a backstop against a bug
- * in this one, rather than the only line of defence.
+ * FREE -> VALID. The erase count is incremented HERE, which is an upper bound:
+ * in the current design every allocated page is erased by ft_ltram_write_page()
+ * before it is programmed, so allocation and erase are one-to-one -- except
+ * when a migration fails after allocating, which over-counts by one. Wrong in
+ * the conservative direction, and replaced by an erase-completion hook in 1c.
  *
  * Caller holds ltram_alloc_lock.
  */
-static void lt_set_state(unsigned long idx, enum lt_state from, enum lt_state to)
+static void lt_take(unsigned long idx)
 {
 	if (!lt_ready)
 		return;
-	if (WARN_ON_ONCE(!test_bit(idx, lt_bm[from]))) {
-		/* Not where we thought it was. Record the truth rather than
-		 * compounding the error: clear every state, then set the new one. */
-		int st;
-
-		for (st = 0; st < LT_NR_STATES; st++)
-			__clear_bit(idx, lt_bm[st]);
-	} else {
-		__clear_bit(idx, lt_bm[from]);
-	}
-	__set_bit(idx, lt_bm[to]);
+	list_del_init(&lt_node[idx]);		/* off its free bucket */
+	lt_free_count--;
+	__set_bit(idx, lt_bm[LT_VALID]);
+	if (lt_ec[idx] < U32_MAX)
+		lt_ec[idx]++;
 }
 
-/* FIFO within a bucket: insert at the tail, pop from the head. */
-static void lt_free_insert(unsigned long idx)
+/* VALID -> FREE. 1c inserts DIRTY and the erase between these two halves. */
+static void lt_give_back(unsigned long idx)
 {
 	if (!lt_ready)
 		return;
+	__clear_bit(idx, lt_bm[LT_VALID]);
 	list_add_tail(&lt_node[idx], &lt_free_by_ec[lt_bucket_of(lt_ec[idx])]);
-}
-
-static void lt_free_remove(unsigned long idx)
-{
-	if (!lt_ready)
-		return;
-	list_del_init(&lt_node[idx]);
+	lt_free_count++;
 }
 
 static struct page *ltram_alloc_page(void)
@@ -166,18 +167,7 @@ static struct page *ltram_alloc_page(void)
 			__clear_bit(idx, ltram_free_bitmap);
 			p = pfn_to_page(ltram_start_pfn + idx);
 			atomic64_inc(&ltram_pages_in_use);
-			/* 1a shadow. The erase count is incremented HERE, which
-			 * is an upper bound: in the current design every
-			 * allocated page is erased by ft_ltram_write_page()
-			 * before it is programmed, so allocation and erase are
-			 * one-to-one -- except when a migration fails after
-			 * allocating, which over-counts by one. Wrong in the
-			 * conservative direction, and replaced by an
-			 * erase-completion hook in 1c. */
-			lt_free_remove(idx);
-			lt_set_state(idx, LT_FREE, LT_VALID);
-			if (lt_ready && lt_ec[idx] < U32_MAX)
-				lt_ec[idx]++;
+			lt_take(idx);		/* 1a shadow */
 		}
 	}
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
@@ -204,10 +194,7 @@ static void ltram_free_page_back(struct page *p)
 	if (ltram_free_bitmap && idx < ltram_nr_pages && !test_bit(idx, ltram_free_bitmap)) {
 		__set_bit(idx, ltram_free_bitmap);
 		atomic64_dec(&ltram_pages_in_use);
-		/* 1a shadow: straight back to FREE, no DIRTY state yet, so this
-		 * mirrors the old bitmap exactly. 1c inserts DIRTY here. */
-		lt_set_state(idx, LT_VALID, LT_FREE);
-		lt_free_insert(idx);
+		lt_give_back(idx);	/* 1a shadow */
 	}
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 }
@@ -637,61 +624,62 @@ static struct kobject *ltram_kobj;
 
 /* ---- invariant checking and the debugfs view ------------------------------
  *
- * Two levels. lt_check_fast() is pure bitwise work over the four bitmaps --
- * O(n/64) with popcount, a few microseconds -- and is what a hot path could
- * afford to call. The debugfs file additionally walks every page and every
- * bucket, which is O(n) and is a human-frequency operation.
- *
- * The redundancy is the point. The free bitmap and the bucket lists are two
- * independently maintained descriptions of the same set; asserting they agree
- * turns a silent loss into a loud one, which is exactly what was missing when
- * 16,502 pages went astray.
+ * The redundancy is the point. lt_free_count and the bucket lists are two
+ * independently maintained descriptions of the same set, and the derived free
+ * set is a third that cannot drift because it is computed, not stored.
+ * Asserting they agree turns a silent page loss into a loud one -- which is
+ * exactly what was missing when 16,502 pages went astray.
  */
-static unsigned long *lt_scratch;		/* for disjointness ANDs */
-
 #define LT_ERR_OVERLAP		(1u << 0)
 #define LT_ERR_COUNT		(1u << 1)
 #define LT_ERR_FREE_MISMATCH	(1u << 2)
 #define LT_ERR_BUCKET_COUNT	(1u << 3)
 #define LT_ERR_BUCKET_MEMBER	(1u << 4)
 
-/* Caller holds ltram_alloc_lock. */
+/*
+ * Bitwise only: O(n/64) with popcount, a few microseconds. This is the subset
+ * a hot path could afford. Caller holds ltram_alloc_lock.
+ */
 static unsigned int lt_check_fast(void)
 {
-	unsigned int err = 0, a, b;
-	unsigned long total = 0;
+	unsigned long total;
+	unsigned int err = 0;
 
 	if (!lt_ready)
 		return 0;
 
-	for (a = 0; a < LT_NR_STATES; a++) {
-		total += bitmap_weight(lt_bm[a], ltram_nr_pages);
-		for (b = a + 1; b < LT_NR_STATES; b++) {
-			bitmap_and(lt_scratch, lt_bm[a], lt_bm[b], ltram_nr_pages);
-			if (!bitmap_empty(lt_scratch, ltram_nr_pages))
-				err |= LT_ERR_OVERLAP;
-		}
-	}
-	if (lt_erasing != LT_ERASING_IDLE)
-		total++;
+	bitmap_and(lt_scratch, lt_bm[LT_VALID], lt_bm[LT_DIRTY], ltram_nr_pages);
+	if (!bitmap_empty(lt_scratch, ltram_nr_pages))
+		err |= LT_ERR_OVERLAP;
+
+	total = bitmap_weight(lt_bm[LT_VALID], ltram_nr_pages) +
+		bitmap_weight(lt_bm[LT_DIRTY], ltram_nr_pages) +
+		lt_free_count +
+		(lt_erasing != LT_ERASING_IDLE ? 1 : 0);
 	if (total != ltram_nr_pages)
 		err |= LT_ERR_COUNT;
 
-	/* 1a only: nothing is ever DIRTY or ERASING yet, so the shadow FREE set
-	 * must be bit-for-bit the old allocator's bitmap. When 1c introduces
-	 * DIRTY this check is replaced by (free | dirty | erasing) == old free. */
-	if (ltram_free_bitmap &&
-	    !bitmap_equal(lt_bm[LT_FREE], ltram_free_bitmap, ltram_nr_pages))
-		err |= LT_ERR_FREE_MISMATCH;
-
+	/*
+	 * Derive FREE rather than store it: ~(VALID | DIRTY), less whatever is
+	 * being erased. In 1a nothing is ever DIRTY or ERASING, so this must be
+	 * bit-for-bit the live allocator's bitmap -- which is the whole point of
+	 * the shadow step.
+	 */
+	if (ltram_free_bitmap) {
+		bitmap_or(lt_scratch, lt_bm[LT_VALID], lt_bm[LT_DIRTY], ltram_nr_pages);
+		bitmap_complement(lt_scratch, lt_scratch, ltram_nr_pages);
+		if (lt_erasing != LT_ERASING_IDLE)
+			__clear_bit(lt_erasing, lt_scratch);
+		if (!bitmap_equal(lt_scratch, ltram_free_bitmap, ltram_nr_pages))
+			err |= LT_ERR_FREE_MISMATCH;
+	}
 	return err;
 }
 
 static int lt_state_show(struct seq_file *m, void *v)
 {
-	unsigned long flags, i, counts[LT_NR_STATES] = {0};
+	unsigned long flags, i, counts[LT_NR_BM] = {0}, bucket_total = 0;
 	unsigned int hist[LT_EC_BUCKETS] = {0};
-	unsigned long bucket_total = 0;
 	u32 ec_min = U32_MAX, ec_max = 0;
 	u64 ec_sum = 0;
 	unsigned int err, st, b;
@@ -702,16 +690,16 @@ static int lt_state_show(struct seq_file *m, void *v)
 	}
 
 	/*
-	 * The whole check runs under the allocator lock with interrupts off.
-	 * That is ~65,536 iterations, a few hundred microseconds -- too long for
-	 * a hot path, fine for a file somebody reads. It is held throughout
-	 * because a bucket list walked while another CPU is splicing it is a
-	 * crash, and a half-consistent answer here would be worse than useless.
+	 * The whole check runs under the allocator lock with interrupts off:
+	 * ~65,536 iterations, a few hundred microseconds. Too long for a hot
+	 * path, fine for a file a human reads. It is held throughout because a
+	 * bucket list walked while another CPU splices it is a crash, and a
+	 * half-consistent answer would be worse than useless.
 	 */
 	spin_lock_irqsave(&ltram_alloc_lock, flags);
 
 	err = lt_check_fast();
-	for (st = 0; st < LT_NR_STATES; st++)
+	for (st = 0; st < LT_NR_BM; st++)
 		counts[st] = bitmap_weight(lt_bm[st], ltram_nr_pages);
 
 	for (i = 0; i < ltram_nr_pages; i++) {
@@ -727,26 +715,29 @@ static int lt_state_show(struct seq_file *m, void *v)
 		struct list_head *e;
 
 		list_for_each(e, &lt_free_by_ec[b]) {
-			unsigned long idx = (struct list_head *)e - lt_node;
+			unsigned long idx = e - lt_node;
 
 			bucket_total++;
 			if (idx >= ltram_nr_pages ||
-			    !test_bit(idx, lt_bm[LT_FREE]) ||
+			    test_bit(idx, lt_bm[LT_VALID]) ||
+			    test_bit(idx, lt_bm[LT_DIRTY]) ||
 			    lt_bucket_of(lt_ec[idx]) != b)
 				err |= LT_ERR_BUCKET_MEMBER;
 		}
 	}
-	if (bucket_total != counts[LT_FREE])
+	if (bucket_total != lt_free_count)
 		err |= LT_ERR_BUCKET_COUNT;
 
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 
 	seq_printf(m, "pages            %lu\n", ltram_nr_pages);
-	for (st = 0; st < LT_NR_STATES; st++)
-		seq_printf(m, "%-16s %lu\n", lt_state_name[st], counts[st]);
+	seq_printf(m, "free             %lu   (bucket lists)\n", lt_free_count);
+	for (st = 0; st < LT_NR_BM; st++)
+		seq_printf(m, "%-16s %lu\n", lt_bm_name[st], counts[st]);
 	seq_printf(m, "erasing          %s\n",
 		   lt_erasing == LT_ERASING_IDLE ? "idle" : "yes");
-	seq_printf(m, "free_in_buckets  %lu\n", bucket_total);
+	seq_printf(m, "free_walked      %lu   (independent count, must equal free)\n",
+		   bucket_total);
 	seq_printf(m, "erase_count      min %u  max %u  mean %llu  spread %u\n",
 		   ec_min == U32_MAX ? 0 : ec_min, ec_max,
 		   ltram_nr_pages ? div64_u64(ec_sum, ltram_nr_pages) : 0,
@@ -760,27 +751,26 @@ static int lt_state_show(struct seq_file *m, void *v)
 
 	seq_printf(m, "invariant        %s\n", err ? "FAIL" : "ok");
 	if (err & LT_ERR_OVERLAP)
-		seq_puts(m, "  FAIL: a page is in two states at once\n");
+		seq_puts(m, "  FAIL: a page is both VALID and DIRTY\n");
 	if (err & LT_ERR_COUNT)
-		seq_puts(m, "  FAIL: state counts do not sum to the page count\n");
+		seq_puts(m, "  FAIL: valid + dirty + free + erasing != page count\n");
 	if (err & LT_ERR_FREE_MISMATCH)
-		seq_puts(m, "  FAIL: shadow FREE disagrees with the live allocator bitmap\n");
+		seq_puts(m, "  FAIL: derived FREE disagrees with the live allocator bitmap\n");
 	if (err & LT_ERR_BUCKET_COUNT)
-		seq_puts(m, "  FAIL: bucket lengths do not sum to the FREE count\n");
+		seq_puts(m, "  FAIL: bucket lengths do not sum to lt_free_count\n");
 	if (err & LT_ERR_BUCKET_MEMBER)
-		seq_puts(m, "  FAIL: a page on a bucket is not FREE, or is in the wrong bucket\n");
+		seq_puts(m, "  FAIL: a bucketed page is VALID/DIRTY, or is in the wrong bucket\n");
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(lt_state);
 
-/* Returns 0 on success. Everything here is sized by the window, so it is
- * allocated once at init and never resized. ~1.3 MB for a 256 MiB window. */
+/* Sized by the window, allocated once, never resized. ~1.3 MB for 256 MiB. */
 static int __init lt_tracking_init(void)
 {
 	unsigned long i;
 	unsigned int st, b;
 
-	for (st = 0; st < LT_NR_STATES; st++) {
+	for (st = 0; st < LT_NR_BM; st++) {
 		lt_bm[st] = bitmap_zalloc(ltram_nr_pages, GFP_KERNEL);
 		if (!lt_bm[st])
 			goto nomem;
@@ -794,15 +784,18 @@ static int __init lt_tracking_init(void)
 	for (b = 0; b < LT_EC_BUCKETS; b++)
 		INIT_LIST_HEAD(&lt_free_by_ec[b]);
 
-	/* Every page starts FREE, matching bitmap_fill() on the live allocator.
-	 * Erase counts start at 0 -- which is NOT the device's true history, and
-	 * is not meant to be: this device has already taken heavy unknown wear
-	 * during FPGA bring-up. Read these as "erases since counting began". */
-	bitmap_fill(lt_bm[LT_FREE], ltram_nr_pages);
+	/*
+	 * Every page starts FREE -- on bucket 0, since every erase count starts
+	 * at 0 -- matching bitmap_fill() on the live allocator. Those counts are
+	 * NOT the device's history and are not meant to be: this chip took heavy
+	 * unknown wear during FPGA bring-up. Read them as "erases since counting
+	 * began".
+	 */
 	for (i = 0; i < ltram_nr_pages; i++) {
 		INIT_LIST_HEAD(&lt_node[i]);
 		list_add_tail(&lt_node[i], &lt_free_by_ec[0]);
 	}
+	lt_free_count = ltram_nr_pages;
 	lt_ready = true;
 
 	if (ltram_debugfs_dir)
@@ -813,7 +806,7 @@ static int __init lt_tracking_init(void)
 	return 0;
 
 nomem:
-	for (st = 0; st < LT_NR_STATES; st++) {
+	for (st = 0; st < LT_NR_BM; st++) {
 		bitmap_free(lt_bm[st]);
 		lt_bm[st] = NULL;
 	}
