@@ -6,8 +6,8 @@
 #   A  with it     -- apples-to-apples against the 2026-08-19 diagnostic run
 #   B  without it  -- the transparency test. No application hint of any kind.
 #
-# The backend is deliberately NOT loaded. Nothing reaches flash, so promoted
-# stays 0 by construction and promote_failed == sel_isolated. That is the point:
+# The backend is deliberately NOT loaded. Nothing reaches flash, so moved_to_ltram
+# stays 0 by construction and not_moved_this_pass == chosen. That is the point:
 # this run isolates DETECTION from the flash write path, and it keeps the
 # never-yet-exercised demotion path out of a run with no console attached.
 set -u

@@ -65,8 +65,8 @@ module_param(scan_ptes_per_pass, uint, 0644);
 static unsigned long *ltram_free_bitmap;	/* 1 = free */
 static unsigned long ltram_nr_pages;
 static DEFINE_SPINLOCK(ltram_alloc_lock);
-static atomic64_t stat_demoted;
-static atomic64_t stat_late_free;
+static atomic64_t stat_moved_to_dram;
+static atomic64_t stat_freed_via_backstop;
 static atomic64_t ltram_pages_in_use;
 
 
@@ -303,13 +303,13 @@ void ltram_free_folio(struct folio *folio)
  */
 void ltram_free_page(struct page *page)
 {
-	atomic64_inc(&stat_late_free);
+	atomic64_inc(&stat_freed_via_backstop);
 	ltram_free_page_back(page);
 }
 
 void ltram_note_demotion(void)
 {
-	atomic64_inc(&stat_demoted);
+	atomic64_inc(&stat_moved_to_dram);
 }
 
 /* ---- per-page observation -------------------------------------------------
@@ -352,7 +352,7 @@ static const struct ltram_policy policy_clean_run = {
 static const struct ltram_policy *policy = &policy_clean_run;
 
 /* ---- counters ------------------------------------------------------------- */
-static atomic64_t stat_scanned, stat_promoted, stat_promote_failed;
+static atomic64_t stat_ptes_examined, stat_moved_to_ltram, stat_not_moved;
 
 /* ---- why a scanned page was NOT selected ----------------------------------
  * "scanned 5184674, promoted 0, promote_failed 0" says a page was looked at and
@@ -366,18 +366,18 @@ static atomic64_t stat_scanned, stat_promoted, stat_promote_failed;
  *   rej_dirty_ro     dirty, NOT writable -- the mprotect(PROT_READ) weights.
  *                    Confirms the issue-10 hypothesis if this dominates.
  *   rej_dirty_rw     dirty AND writable -- a page the re-arm should be able to
- *                    clean. If this stays high while rearmed also climbs, the
+ *                    clean. If this stays high while stat_write_protected also climbs, the
  *                    re-arm is firing and not clearing anything, which is a
  *                    DIFFERENT bug from the hypothesis and is not fixed by it.
- *   rej_runs_short   seen clean, but clean_runs < clean_passes_required. The
+ *   stat_clean_streak_short   seen clean, but clean_runs < clean_passes_required. The
  *                    policy is working and just needs more passes.
- *   sel_isolated     chosen and isolated -- became a candidate.
- *   sel_isolate_fail chosen but folio_isolate_lru() refused. Invisible before.
- *   rearmed          the write-protect actually executed.
+ *   stat_chosen     chosen and isolated -- became a candidate.
+ *   stat_lru_refused chosen but folio_isolate_lru() refused. Invisible before.
+ *   stat_write_protected          the write-protect actually executed.
  */
-static atomic64_t rej_not_anon;
-static atomic64_t rej_writable, rej_runs_short,
-		  sel_isolated, sel_isolate_fail, rearmed, stale_dirty;
+static atomic64_t stat_skipped_file_backed;
+static atomic64_t stat_was_written, stat_clean_streak_short,
+		  stat_chosen, stat_lru_refused, stat_write_protected, stat_dirty_but_readonly;
 
 /* ---- targeting ------------------------------------------------------------ */
 static pid_t target_pid;
@@ -459,13 +459,13 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 		 * them on everyone else's behalf.
 		 */
 		if (!folio_test_anon(folio) || folio_test_ksm(folio)) {
-			atomic64_inc(&rej_not_anon);
+			atomic64_inc(&stat_skipped_file_backed);
 			continue;
 		}
 		if (!folio_try_get(folio))
 			continue;
 
-		atomic64_inc(&stat_scanned);
+		atomic64_inc(&stat_ptes_examined);
 
 		/*
 		 * "Has this page been written since I last armed it?"
@@ -500,7 +500,7 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 		 * the same run rather than across two boots.
 		 */
 		if (pte_dirty(p) && !written)
-			atomic64_inc(&stale_dirty);
+			atomic64_inc(&stat_dirty_but_readonly);
 
 		o = xa_load(&ltram_obs, folio_pfn(folio));
 		if (!o) {
@@ -513,10 +513,10 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 
 		if (policy->should_promote(folio, o, written)) {
 			if (!folio_isolate_lru(folio)) {
-				atomic64_inc(&sel_isolate_fail);
+				atomic64_inc(&stat_lru_refused);
 				goto rearm;
 			}
-			atomic64_inc(&sel_isolated);
+			atomic64_inc(&stat_chosen);
 			list_add(&folio->lru, &ctx->candidates);
 			ctx->nr++;
 			/*
@@ -536,9 +536,9 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 		}
 
 		if (written)
-			atomic64_inc(&rej_writable);
+			atomic64_inc(&stat_was_written);
 		else
-			atomic64_inc(&rej_runs_short);
+			atomic64_inc(&stat_clean_streak_short);
 rearm:
 		/*
 		 * Re-arm write observation. There is NO hardware dirty-bit
@@ -560,7 +560,7 @@ rearm:
 		if (written) {
 			ptep_set_wrprotect(walk->mm, addr, pte);
 			flush_tlb_page(walk->vma, addr);
-			atomic64_inc(&rearmed);
+			atomic64_inc(&stat_write_protected);
 		}
 		folio_put(folio);
 	}
@@ -652,8 +652,8 @@ static void ltram_scan_once(void)
 	 * subsystem exists to make impossible. */
 	migrate_pages(&ctx.candidates, ltram_get_new_folio, ltram_put_new_folio,
 		      0, MIGRATE_SYNC, MR_NUMA_MISPLACED, &moved);
-	atomic64_add(moved, &stat_promoted);
-	atomic64_add(ctx.nr - moved, &stat_promote_failed);
+	atomic64_add(moved, &stat_moved_to_ltram);
+	atomic64_add(ctx.nr - moved, &stat_not_moved);
 	putback_movable_pages(&ctx.candidates);
 }
 
@@ -695,32 +695,32 @@ static ssize_t target_pid_store(struct kobject *k, struct kobj_attribute *a,
 static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf)
 {
 	return sysfs_emit(buf,
-		"policy            %s\n"
-		"target_pid        %d\n"
-		"scanned           %lld\n"
-		"promoted          %lld\n"
-		"promote_failed    %lld\n"
-		"demoted           %lld\n"
-		"pages_in_use      %lld\n"
-		"pages_total       %lu\n"
-		"rej_writable      %lld\n"
-		"rej_runs_short    %lld\n"
-		"stale_dirty       %lld\n"
-		"sel_isolated      %lld\n"
-		"sel_isolate_fail  %lld\n"
-		"rearmed           %lld\n"
-		"late_free         %lld\n"
-		"rej_not_anon      %lld\n"
-		"sweeps            %lld\n"
-		"scan_cursor       0x%lx\n",
+		"policy               %s\n"
+		"target_pid           %d\n"
+		"ptes_examined        %lld\n"
+		"moved_to_ltram       %lld\n"
+		"not_moved_this_pass  %lld\n"
+		"moved_to_dram        %lld\n"
+		"pages_in_use         %lld\n"
+		"pages_total          %lu\n"
+		"was_written          %lld\n"
+		"clean_streak_short   %lld\n"
+		"dirty_but_readonly   %lld\n"
+		"chosen               %lld\n"
+		"lru_refused          %lld\n"
+		"write_protected      %lld\n"
+		"freed_via_backstop   %lld\n"
+		"skipped_file_backed  %lld\n"
+		"sweeps               %lld\n"
+		"scan_cursor          0x%lx\n",
 		policy->name, target_pid,
-		atomic64_read(&stat_scanned), atomic64_read(&stat_promoted),
-		atomic64_read(&stat_promote_failed), atomic64_read(&stat_demoted),
+		atomic64_read(&stat_ptes_examined), atomic64_read(&stat_moved_to_ltram),
+		atomic64_read(&stat_not_moved), atomic64_read(&stat_moved_to_dram),
 		atomic64_read(&ltram_pages_in_use), ltram_nr_pages,
-		atomic64_read(&rej_writable), atomic64_read(&rej_runs_short),
-		atomic64_read(&stale_dirty), atomic64_read(&sel_isolated),
-		atomic64_read(&sel_isolate_fail), atomic64_read(&rearmed),
-		atomic64_read(&stat_late_free), atomic64_read(&rej_not_anon),
+		atomic64_read(&stat_was_written), atomic64_read(&stat_clean_streak_short),
+		atomic64_read(&stat_dirty_but_readonly), atomic64_read(&stat_chosen),
+		atomic64_read(&stat_lru_refused), atomic64_read(&stat_write_protected),
+		atomic64_read(&stat_freed_via_backstop), atomic64_read(&stat_skipped_file_backed),
 		atomic64_read(&stat_sweeps), scan_cursor);
 }
 
@@ -876,13 +876,13 @@ static int lt_state_show(struct seq_file *m, void *v)
 
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 
-	seq_printf(m, "pages            %lu\n", ltram_nr_pages);
-	seq_printf(m, "free             %lu   (bucket lists)\n", lt_free_count);
+	seq_printf(m, "pages                %lu\n", ltram_nr_pages);
+	seq_printf(m, "free                 %lu   (bucket lists)\n", lt_free_count);
 	for (st = 0; st < LT_NR_BM; st++)
-		seq_printf(m, "%-16s %lu\n", lt_bm_name[st], counts[st]);
-	seq_printf(m, "erasing          %s\n",
+		seq_printf(m, "%-20s %lu\n", lt_bm_name[st], counts[st]);
+	seq_printf(m, "erasing              %s\n",
 		   lt_erasing == LT_ERASING_IDLE ? "idle" : "yes");
-	seq_printf(m, "free_walked      %lu   (independent count, must equal free)\n",
+	seq_printf(m, "free_from_bucketlist %lu   (recount, must equal free)\n",
 		   bucket_total);
 	/*
 	 * total_allocs is the load-bearing number for judging spread: it is the
@@ -891,15 +891,15 @@ static int lt_state_show(struct seq_file *m, void *v)
 	 * pages give a large total against a tiny touched, which is exactly the
 	 * signature lowest-first allocation produces.
 	 */
-	seq_printf(m, "total_allocs     %llu   (sum of all erase counts)\n", ec_sum);
-	seq_printf(m, "touched          %lu   of %lu pages ever allocated (%lu%%)\n",
+	seq_printf(m, "total_allocs         %llu   (sum of all erase counts)\n", ec_sum);
+	seq_printf(m, "pages_ever_used      %lu   of %lu, ever allocated (%lu%%)\n",
 		   touched, ltram_nr_pages,
 		   ltram_nr_pages ? touched * 100 / ltram_nr_pages : 0);
-	seq_printf(m, "erase_count      min %u  max %u  spread %u\n",
+	seq_printf(m, "erase_count          min %u  max %u  spread %u\n",
 		   ec_min == U32_MAX ? 0 : ec_min, ec_max,
 		   ec_max - (ec_min == U32_MAX ? 0 : ec_min));
 
-	seq_puts(m, "ec_histogram     log2; bucket k is 2^(k-1)..2^k-1\n");
+	seq_puts(m, "ec_histogram         log2; bucket k is 2^(k-1)..2^k-1\n");
 	if (lt_lg[0])
 		seq_printf(m, "  %14s %u\n", "never", lt_lg[0]);
 	for (b = 1; b < LT_LG_BUCKETS; b++)
@@ -910,18 +910,18 @@ static int lt_state_show(struct seq_file *m, void *v)
 	if (ec_max) {
 		int t;
 
-		seq_puts(m, "most_worn        page index : erase count\n");
+		seq_puts(m, "most_worn            page index : erase count\n");
 		for (t = 0; t < LT_TOPN && lt_top[t].ec; t++)
 			seq_printf(m, "  %10lu : %u\n", lt_top[t].idx, lt_top[t].ec);
 	}
 
-	seq_puts(m, "free_buckets     non-empty only\n");
+	seq_puts(m, "free_buckets         non-empty only\n");
 	for (b = 0; b < LT_EC_BUCKETS; b++)
 		if (lt_blen[b])
 			seq_printf(m, "  [%6u..%6u] %u free\n",
 				   b * LT_EC_GRAIN, (b + 1) * LT_EC_GRAIN - 1, lt_blen[b]);
 
-	seq_printf(m, "invariant        %s\n", err ? "FAIL" : "ok");
+	seq_printf(m, "invariant            %s\n", err ? "FAIL" : "ok");
 	if (err & LT_ERR_OVERLAP)
 		seq_puts(m, "  FAIL: a page is both VALID and DIRTY\n");
 	if (err & LT_ERR_COUNT)

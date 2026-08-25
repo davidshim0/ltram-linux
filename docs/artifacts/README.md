@@ -28,6 +28,36 @@ has been lost is not reproducible.
 | `station7.sh` | the cost measurement, DRAM control vs migrating vs resident (T6) |
 | `check1a.sh` | page-state shadow validation — hammers the transitions and asserts the invariant |
 
+## Counter names changed on 2026-08-26
+
+The old names were borrowed jargon or actively misleading -- `scanned` counted PTE
+*visits* not pages, `late_free` meant "caught at the last funnel" not "freed late", and
+`promote_failed` described a candidate that gets retried next pass.
+
+| old | new | what it measures |
+|---|---|---|
+| `scanned` | `ptes_examined` | PTE examinations, double-counted across passes |
+| `promoted` | `moved_to_ltram` | pages successfully migrated onto flash |
+| `promote_failed` | `not_moved_this_pass` | isolated but did not move; retried next pass |
+| `demoted` | `moved_to_dram` | write faults on flash pages, each forcing a copy back |
+| `rej_writable` | `was_written` | the trap sprang -- written since we protected it |
+| `rearmed` | `write_protected` | the trap was set. Should equal `was_written` |
+| `rej_runs_short` | `clean_streak_short` | clean, but fewer than 3 consecutive clean sightings |
+| `sel_isolated` | `chosen` | picked and taken off the LRU |
+| `sel_isolate_fail` | `lru_refused` | picked, but `folio_isolate_lru()` said no |
+| `stale_dirty` | `dirty_but_readonly` | dirty bit set yet not writable |
+| `rej_not_anon` | `skipped_file_backed` | page-cache or KSM folio |
+| `late_free` | `freed_via_backstop` | returned via the buddy funnel, not the single-page hook |
+| `free_walked` | `free_from_bucketlist` | free count recounted by walking the lists |
+| `touched` | `pages_ever_used` | distinct pages ever allocated |
+
+Also new: `sweeps` (times the scan cursor wrapped) and `scan_cursor` (its current address).
+
+**The scripts under `baselines/` deliberately still use the OLD names.** They are pinned to
+the kernels that produced those results, and a kernel that never emitted `moved_to_ltram`
+cannot be re-run with a script that greps for it. The copies here in `docs/artifacts/` are
+the live, runnable ones and use the new names. That divergence is intentional, not drift.
+
 ## Numbers to trust, in one place
 
 | claim | value | confidence |

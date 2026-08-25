@@ -69,13 +69,13 @@ say "pid $PID   range: $R"
 echo $PID | sudo -n tee $TP >/dev/null
 say "attached; waiting for promotion"
 
-echo "# t on_flash in_use demoted wr_ok" > "$OUT/promote.curve"
+echo "# t on_flash in_use moved_to_dram wr_ok" > "$OUT/promote.curve"
 NEED=$((PAGES*TARGET_PCT/100)); BEST=0
 for t in $(seq 1 120); do
         [ -d /proc/$PID ] || { say "!! workload exited early"; break; }
         LT=$(sudo -n $INSPECT $PID $R 2>/dev/null | awk '/^data/{print $4}')
         LT=${LT:-0}; SS=$(st)
-        echo "$((t*10)) $LT $(awk '/pages_in_use/{print $2}'<<<"$SS") $(awk '/^demoted/{print $2}'<<<"$SS") $(wok)" >> "$OUT/promote.curve"
+        echo "$((t*10)) $LT $(awk '/pages_in_use/{print $2}'<<<"$SS") $(awk '/^moved_to_dram/{print $2}'<<<"$SS") $(wok)" >> "$OUT/promote.curve"
         [ "$LT" -gt "$BEST" ] && BEST=$LT
         [ $((t % 3)) -eq 0 ] && say "  t+$((t*10))s  on flash $LT / $PAGES"
         [ "$LT" -ge "$NEED" ] && { say "  $LT / $PAGES resident (>= ${TARGET_PCT}%) -- releasing the write"; break; }
@@ -85,7 +85,7 @@ done
 say "=== residency immediately BEFORE the write ==="
 sudo -n $INSPECT $PID $R 2>&1 | tee "$OUT/provenance.before"
 st > "$OUT/stats.atwrite"
-BEFORE_DEM=$(awk '/^demoted/{print $2}' "$OUT/stats.atwrite")
+BEFORE_DEM=$(awk '/^moved_to_dram/{print $2}' "$OUT/stats.atwrite")
 
 say "=== releasing the write ==="
 touch $GO
@@ -94,12 +94,12 @@ sleep 2; echo 0 | sudo -n tee $TP >/dev/null; say "scanner detached before the w
 
 for i in $(seq 1 90); do grep -qE "WRITEBACK:|TIMEOUT" "$OUT/wb.log" 2>/dev/null && break; sleep 5; done
 if [ -d /proc/$PID ]; then
-        say "=== residency AFTER the write (want ~0 -- everything demoted) ==="
+        say "=== residency AFTER the write (want ~0 -- everything moved_to_dram) ==="
         sudo -n $INSPECT $PID $R 2>&1 | tee "$OUT/provenance.after"
 fi
 wait $SUDOPID; RC=$?
 st > "$OUT/stats.after"; sudo -n dmesg > "$OUT/dmesg.final"
-AFTER_DEM=$(awk '/^demoted/{print $2}' "$OUT/stats.after")
+AFTER_DEM=$(awk '/^moved_to_dram/{print $2}' "$OUT/stats.after")
 
 {
 echo "=============== STATION 6: WRITEBACK VERDICT ==============="
@@ -116,13 +116,13 @@ echo "-- residency after (want ~0) --"
 grep "^data" "$OUT/provenance.after" 2>/dev/null || echo "  (process already exited)"
 echo
 echo "-- demotions --"
-echo "  demoted ${BEFORE_DEM:-?} -> ${AFTER_DEM:-?}  (delta $(( ${AFTER_DEM:-0} - ${BEFORE_DEM:-0} )), expect ~= pages that were on flash)"
+echo "  moved_to_dram ${BEFORE_DEM:-?} -> ${AFTER_DEM:-?}  (delta $(( ${AFTER_DEM:-0} - ${BEFORE_DEM:-0} )), expect ~= pages that were on flash)"
 echo
 echo "-- counters --"
 paste <(cat "$OUT/stats.before") <(awk '{print $2}' "$OUT/stats.after") | expand -t 22
 echo
 if   [ $RC -eq 44 ]; then echo "VERDICT: FAIL -- writes to flash-resident pages were LOST or corrupted."
-elif [ $RC -eq 3 ];  then echo "VERDICT: INCONCLUSIVE -- never promoted, so the write proved nothing."
+elif [ $RC -eq 3 ];  then echo "VERDICT: INCONCLUSIVE -- never moved_to_ltram, so the write proved nothing."
 elif [ "$BEST" -lt $((PAGES/10)) ]; then echo "VERDICT: INCONCLUSIVE -- only $BEST pages ever reached flash."
 elif [ $RC -ne 0 ];  then echo "VERDICT: FAIL -- exit $RC."
 else echo "VERDICT: PASS -- every page took the write and read back correctly,"

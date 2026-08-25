@@ -44,7 +44,7 @@ echo
 echo "================ 1a VERDICT ================"
 echo "free after run : $FREE  (want 65536)"
 echo "invariant      : $INV"
-grep -E "^promoted|promote_failed|pages_in_use|late_free" "$OUT/stats.after"
+grep -E "^moved_to_ltram|not_moved_this_pass|pages_in_use|freed_via_backstop" "$OUT/stats.after"
 if [ "$FREE" = "65536" ] && [ "$INV" = "ok" ]; then
         echo "VERDICT: PASS -- every allocated page came back and all five assertions hold"
 else

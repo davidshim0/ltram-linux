@@ -1,5 +1,5 @@
 #!/bin/bash
-# station4.sh -- does a promoted page actually LIVE on NOR, and read back correctly?
+# station4.sh -- does a moved_to_ltram page actually LIVE on NOR, and read back correctly?
 #
 # Stations 1 and 2 (detect, isolate) were proven 2026-08-20 with the backend
 # unloaded. This run staffs stations 3 and 4: the flash write, and repointing the
@@ -10,7 +10,7 @@
 # therefore an independent readback test of pages now living on flash. Exit 42
 # means a write reached a protected weight page. Either is loud and unambiguous.
 #
-# WEAR: one promoted page == one 4096-byte sector == one erase (PAGE_SIZE ==
+# WEAR: one moved_to_ltram page == one 4096-byte sector == one erase (PAGE_SIZE ==
 # SECT_SZ, asserted in the backend). N=4096 gives 64 MiB of weights = 16,384
 # pages = 16,384 erases over 16,384 DISTINCT sectors, each rated 100,000 cycles.
 # This run costs each of those sectors 0.001% of its life.
@@ -83,15 +83,15 @@ sudo -n cat $S > "$OUT/stats.before"
 echo $PID | sudo -n tee $TP >/dev/null
 say "attached pid $PID"
 
-echo "# t_s pages_in_use promoted promote_failed demoted writes_ok writes_failed" > "$OUT/promotion.curve"
+echo "# t_s pages_in_use moved_to_ltram not_moved_this_pass moved_to_dram writes_ok writes_failed" > "$OUT/promotion.curve"
 LAST=-1; FLAT=0
 for t in $(seq 1 $((MAXWAIT/10))); do
         [ -d /proc/$PID ] || { say "matmul exited during polling"; break; }
         ST=$(sudo -n cat $S)
-        INUSE=$(awk '/pages_in_use/{print $2}' <<<"$ST"); PROM=$(awk '/^promoted/{print $2}' <<<"$ST")
-        FAIL=$(awk '/promote_failed/{print $2}' <<<"$ST"); DEM=$(awk '/^demoted/{print $2}' <<<"$ST")
+        INUSE=$(awk '/pages_in_use/{print $2}' <<<"$ST"); PROM=$(awk '/^moved_to_ltram/{print $2}' <<<"$ST")
+        FAIL=$(awk '/not_moved_this_pass/{print $2}' <<<"$ST"); DEM=$(awk '/^moved_to_dram/{print $2}' <<<"$ST")
         echo "$((t*10)) $INUSE $PROM $FAIL $DEM $(wok) $(wfa)" >> "$OUT/promotion.curve"
-        [ $((t % 3)) -eq 0 ] && say "t+$((t*10))s  in_use $INUSE  promoted $PROM  failed $FAIL  demoted $DEM  wr_ok $(wok)"
+        [ $((t % 3)) -eq 0 ] && say "t+$((t*10))s  in_use $INUSE  moved_to_ltram $PROM  failed $FAIL  moved_to_dram $DEM  wr_ok $(wok)"
         if [ "$INUSE" = "$LAST" ]; then FLAT=$((FLAT+1)); else FLAT=0; LAST=$INUSE; fi
         if [ $FLAT -ge 6 ] && [ "${INUSE:-0}" -gt 0 ]; then
                 say "flash page count flat at $INUSE for 60 s -- promotion converged"; break

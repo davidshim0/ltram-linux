@@ -3,7 +3,7 @@
 #
 # THE SHAPE WE EXPECT, and why each part happens:
 #   1. FAST      everything in DRAM
-#   2. SLOW      migration in flight. Every promoted page costs a ~16.4 ms sector
+#   2. SLOW      migration in flight. Every moved_to_ltram page costs a ~16.4 ms sector
 #                ERASE plus the DMA, serialised in the scan thread, while the
 #                workload competes for the same bus.
 #   3. MIDDLE    all pages resident, no more writes. Pure NOR read cost.
@@ -64,11 +64,11 @@ echo $PID | sudo -n tee $TP >/dev/null
 say "attached pid $PID; sampling residency alongside the timings"
 
 # Sampler: absolute epoch so it lines up with matmul's TSTART with no guesswork.
-echo "# epoch on_flash pages_in_use promoted demoted writes_ok" > "$OUT/residency.curve"
+echo "# epoch on_flash pages_in_use moved_to_ltram moved_to_dram writes_ok" > "$OUT/residency.curve"
 ( while [ -d /proc/$PID ]; do
         LT=$(sudo -n $INSPECT $PID $R 2>/dev/null | awk '/^weights/{print $4}')
         SS=$(sudo -n cat $S 2>/dev/null)
-        echo "$(date +%s.%N) ${LT:-0} $(awk '/pages_in_use/{print $2}'<<<"$SS") $(awk '/^promoted/{print $2}'<<<"$SS") $(awk '/^demoted/{print $2}'<<<"$SS") $(sudo -n cat $DBG/writes_ok 2>/dev/null)" >> "$OUT/residency.curve"
+        echo "$(date +%s.%N) ${LT:-0} $(awk '/pages_in_use/{print $2}'<<<"$SS") $(awk '/^moved_to_ltram/{print $2}'<<<"$SS") $(awk '/^moved_to_dram/{print $2}'<<<"$SS") $(sudo -n cat $DBG/writes_ok 2>/dev/null)" >> "$OUT/residency.curve"
         sleep 3
   done ) &
 SAMPLER=$!
