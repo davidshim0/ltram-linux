@@ -44,20 +44,20 @@
  * interval.
  */
 static unsigned int scan_interval_ms = 1000;
-static unsigned int clean_passes_required = 3;
 static unsigned int promote_batch = 32;	/* pages per pass; 32/s is under the budget */
 /*
  * PTEs a single pass may examine before it stops and saves its place. Bounds
  * the work per pass independently of promote_batch, so a region where nothing
  * is eligible is swept quickly instead of being re-walked from the start.
  *
- * A page needs clean_passes_required consecutive CLEAN SIGHTINGS, and with a
- * cursor it is sighted once per SWEEP rather than once per second. At 8192 a
- * 50,176-page region sweeps in ~6 s, so a page becomes eligible in ~18 s.
+ * This, with scan_interval_ms, is what sets how long a page must sit
+ * write-protected before it is judged read-mostly: a page is sighted once per
+ * SWEEP, so the sweep time IS the observation window. At 8192 a 50,176-page
+ * region sweeps in ~6 s. There is no separate streak counter -- see the note
+ * above should_promote().
  */
 static unsigned int scan_ptes_per_pass = 8192;
 module_param(scan_interval_ms, uint, 0644);
-module_param(clean_passes_required, uint, 0644);
 module_param(promote_batch, uint, 0644);
 module_param(scan_ptes_per_pass, uint, 0644);
 
@@ -316,8 +316,24 @@ void ltram_note_demotion(void)
  * Keyed by pfn. Small and sparse: only pages of the target that have been seen
  * clean at least once appear here.
  */
-struct ltram_obs { u32 clean_runs; };
-static DEFINE_XARRAY(ltram_obs);
+/*
+ * NO PER-PAGE OBSERVATION STATE.
+ *
+ * A page used to need N consecutive clean sightings, which meant a counter per
+ * pfn in an xarray. That counter was never erased -- one kzalloc per distinct
+ * pfn ever scanned, retained for the life of the kernel and growing with every
+ * process targeted -- and it cost an xa_load on every PTE of every pass.
+ *
+ * It is not needed. "Not writable when we looked" is the whole test. How much
+ * confidence that carries is a function of how long the page had been
+ * write-protected before we looked, and that is already controlled by
+ * scan_interval_ms and scan_ptes_per_pass, which together set how long a sweep
+ * takes to come back around. One knob instead of two, and no metadata.
+ *
+ * Note the minimum is still TWO sightings: the first finds the page writable
+ * and arms it, the second confirms nothing trapped. That is inherent -- a page
+ * cannot be known read-only until it has been protected and left alone.
+ */
 
 /* ---- the policy interface -------------------------------------------------
  * A vtable, not BPF. The policy call is ~30 ns against a 16.4 ms erase, so the
@@ -329,19 +345,13 @@ static DEFINE_XARRAY(ltram_obs);
 struct ltram_policy {
 	const char *name;
 	void (*pass_begin)(void);
-	bool (*should_promote)(struct folio *f, struct ltram_obs *o, bool written);
+	bool (*should_promote)(struct folio *f, bool written);
 	void (*pass_end)(void);
 };
 
-static bool clean_run_should_promote(struct folio *f, struct ltram_obs *o, bool written)
+static bool clean_run_should_promote(struct folio *f, bool written)
 {
-	if (written) {
-		o->clean_runs = 0;
-		return false;
-	}
-	if (o->clean_runs < U32_MAX)
-		o->clean_runs++;
-	return o->clean_runs >= clean_passes_required;
+	return !written;
 }
 
 static const struct ltram_policy policy_clean_run = {
@@ -369,14 +379,14 @@ static atomic64_t stat_ptes_examined, stat_moved_to_ltram, stat_not_moved;
  *                    clean. If this stays high while stat_write_protected also climbs, the
  *                    re-arm is firing and not clearing anything, which is a
  *                    DIFFERENT bug from the hypothesis and is not fixed by it.
- *   stat_clean_streak_short   seen clean, but clean_runs < clean_passes_required. The
+ *   (there is no clean-streak counter: one clean sighting is the test)  The
  *                    policy is working and just needs more passes.
  *   stat_chosen     chosen and isolated -- became a candidate.
  *   stat_lru_refused chosen but folio_isolate_lru() refused. Invisible before.
  *   stat_write_protected          the write-protect actually executed.
  */
 static atomic64_t stat_skipped_file_backed;
-static atomic64_t stat_was_written, stat_clean_streak_short,
+static atomic64_t stat_was_written,
 		  stat_chosen, stat_lru_refused, stat_write_protected, stat_dirty_but_readonly;
 
 /* ---- targeting ------------------------------------------------------------ */
@@ -422,7 +432,6 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 		ctx->examined++;
 		pte_t p = ptep_get(pte);
 		struct folio *folio;
-		struct ltram_obs *o;
 		bool written;
 
 		if (!pte_present(p))
@@ -502,16 +511,7 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 		if (pte_dirty(p) && !written)
 			atomic64_inc(&stat_dirty_but_readonly);
 
-		o = xa_load(&ltram_obs, folio_pfn(folio));
-		if (!o) {
-			o = kzalloc(sizeof(*o), GFP_ATOMIC);
-			if (!o) { folio_put(folio); continue; }
-			if (xa_err(xa_store(&ltram_obs, folio_pfn(folio), o, GFP_ATOMIC))) {
-				kfree(o); folio_put(folio); continue;
-			}
-		}
-
-		if (policy->should_promote(folio, o, written)) {
+		if (policy->should_promote(folio, written)) {
 			if (!folio_isolate_lru(folio)) {
 				atomic64_inc(&stat_lru_refused);
 				goto rearm;
@@ -537,8 +537,7 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 
 		if (written)
 			atomic64_inc(&stat_was_written);
-		else
-			atomic64_inc(&stat_clean_streak_short);
+
 rearm:
 		/*
 		 * Re-arm write observation. There is NO hardware dirty-bit
@@ -704,7 +703,6 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		"pages_in_use         %lld\n"
 		"pages_total          %lu\n"
 		"was_written          %lld\n"
-		"clean_streak_short   %lld\n"
 		"dirty_but_readonly   %lld\n"
 		"chosen               %lld\n"
 		"lru_refused          %lld\n"
@@ -717,7 +715,7 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		atomic64_read(&stat_ptes_examined), atomic64_read(&stat_moved_to_ltram),
 		atomic64_read(&stat_not_moved), atomic64_read(&stat_moved_to_dram),
 		atomic64_read(&ltram_pages_in_use), ltram_nr_pages,
-		atomic64_read(&stat_was_written), atomic64_read(&stat_clean_streak_short),
+		atomic64_read(&stat_was_written),
 		atomic64_read(&stat_dirty_but_readonly), atomic64_read(&stat_chosen),
 		atomic64_read(&stat_lru_refused), atomic64_read(&stat_write_protected),
 		atomic64_read(&stat_freed_via_backstop), atomic64_read(&stat_skipped_file_backed),
