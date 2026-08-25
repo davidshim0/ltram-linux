@@ -1,0 +1,34 @@
+matmul  N=2048  iters=200  runs=12  seed=20260818
+  weights      16.0 MiB  mprotect PROT_READ ok
+  result        8.0 KiB
+RANGES pid=1686
+RANGE weights 0xfcb4de800000 0xfcb4df800000 16777216
+RANGE result  0xfcb4dfc0d000 0xfcb4dfc0f000 8192
+TSTART 1787696504.792
+  run  1/12     3.985 s
+POINT 1 3.985183 3.985
+  run  2/12     3.943 s
+POINT 2 3.943326 7.929
+  run  3/12     3.939 s
+POINT 3 3.939359 11.869
+  run  4/12     3.944 s
+POINT 4 3.944041 15.813
+  run  5/12     3.975 s
+POINT 5 3.974865 19.788
+  run  6/12     3.953 s
+POINT 6 3.953383 23.742
+  run  7/12     3.942 s
+POINT 7 3.941721 27.684
+  run  8/12     3.953 s
+POINT 8 3.952578 31.636
+  run  9/12     3.938 s
+POINT 9 3.938279 35.575
+  run 10/12     3.938 s
+POINT 10 3.938028 39.513
+  run 11/12     3.940 s
+POINT 11 3.939552 43.453
+  run 12/12     3.954 s
+POINT 12 3.954326 47.408
+RESULT mean 3.950 s   sd 0.015 s   (0.38%)
+DIGEST ebaf85608e376e92d8689e2a8acf3c19d57b507817bc45331a74d1be5be912a9
+GATE PASS: variance <= 2% -- usable as a control

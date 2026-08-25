@@ -1,0 +1,14 @@
+pages            65536
+free             65536   (bucket lists)
+valid            0
+dirty            0
+erasing          idle
+free_walked      65536   (independent count, must equal free)
+total_allocs     0   (sum of all erase counts)
+touched          0   of 65536 pages ever allocated (0%)
+erase_count      min 0  max 0  spread 0
+ec_histogram     log2; bucket k is 2^(k-1)..2^k-1
+           never 65536
+free_buckets     non-empty only
+  [     0..   999] 65536 free
+invariant        ok

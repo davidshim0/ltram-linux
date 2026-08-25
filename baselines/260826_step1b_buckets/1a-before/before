@@ -1,0 +1,10 @@
+pages            65536
+free             65536   (bucket lists)
+valid            0
+dirty            0
+erasing          idle
+free_walked      65536   (independent count, must equal free)
+erase_count      min 0  max 0  mean 0  spread 0
+ec_histogram     (bucket = 1000 erases)
+  [     0..   999] 65536
+invariant        ok
