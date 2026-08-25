@@ -134,7 +134,7 @@ static inline unsigned int lt_bucket_of(u32 ec)
  *
  * Caller holds ltram_alloc_lock.
  */
-static void lt_take(unsigned long idx)
+static void lt_to_valid(unsigned long idx)
 {
 	if (!lt_ready)
 		return;
@@ -146,7 +146,7 @@ static void lt_take(unsigned long idx)
 }
 
 /* VALID -> FREE. 1c inserts DIRTY and the erase between these two halves. */
-static void lt_give_back(unsigned long idx)
+static void lt_to_free(unsigned long idx)
 {
 	if (!lt_ready)
 		return;
@@ -167,7 +167,7 @@ static struct page *ltram_alloc_page(void)
 			__clear_bit(idx, ltram_free_bitmap);
 			p = pfn_to_page(ltram_start_pfn + idx);
 			atomic64_inc(&ltram_pages_in_use);
-			lt_take(idx);		/* 1a shadow */
+			lt_to_valid(idx);		/* 1a shadow */
 		}
 	}
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
@@ -194,7 +194,7 @@ static void ltram_free_page_back(struct page *p)
 	if (ltram_free_bitmap && idx < ltram_nr_pages && !test_bit(idx, ltram_free_bitmap)) {
 		__set_bit(idx, ltram_free_bitmap);
 		atomic64_dec(&ltram_pages_in_use);
-		lt_give_back(idx);	/* 1a shadow */
+		lt_to_free(idx);	/* 1a shadow */
 	}
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 }
