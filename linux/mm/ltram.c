@@ -411,6 +411,11 @@ static const struct file_operations ltram_write_test_fops = {
 	.llseek = noop_llseek,
 };
 
+/* Shared with mm/ltram_policy.c, which hangs the page-state file off it.
+ * ltram.o links before ltram_policy.o and both are late_initcall, so this is
+ * populated before the policy's initcall runs. */
+struct dentry *ltram_debugfs_dir;
+
 static int __init ltram_debugfs_init(void)
 {
 	struct dentry *d;
@@ -419,6 +424,7 @@ static int __init ltram_debugfs_init(void)
 		return 0;
 
 	d = debugfs_create_dir("ltram", NULL);
+	ltram_debugfs_dir = d;
 	debugfs_create_u64("stray_allocs", 0444, d,
 			   (u64 *)&ltram_stray_allocs.counter);
 	debugfs_create_ulong("start_pfn", 0444, d, &ltram_start_pfn);

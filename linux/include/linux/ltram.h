@@ -105,6 +105,9 @@ void ltram_free_page(struct page *page);
 /* A write forced a flash page back to DRAM. */
 void ltram_note_demotion(void);
 
+struct dentry;
+extern struct dentry *ltram_debugfs_dir;
+
 #else  /* !CONFIG_LTRAM */
 
 static inline bool pfn_is_ltram(unsigned long pfn) { return false; }
