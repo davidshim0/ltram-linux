@@ -86,6 +86,15 @@ ssh -q zuestoll08 "set -e
     echo \"  removing staged initrd \$k (republish with push-initrd.sh)\"
     sudo rm -f \"\$i\"
   done
+  # configs for kernels whose module trees are long gone
+  for c in /boot/config-*; do
+    k=\${c#/boot/config-}
+    case \"\$k\" in *-generic) continue;; esac
+    [ -d \"/lib/modules/\$k\" ] || {
+      echo \"  removing orphan config-\$k\"
+      sudo rm -f \"\$c\"
+    }
+  done
   sudo journalctl --vacuum-size=20M >/dev/null 2>&1 || true
   df -h / | tail -1"
 
@@ -93,6 +102,17 @@ echo "--- 2/3 modules -> z08:/tmp/modules-$KREL.tar.gz ---"
 tar -C "$OUT/modroot/lib/modules" -czf "/tmp/modules-$KREL.tar.gz" "$KREL"
 echo "    $(du -h /tmp/modules-$KREL.tar.gz | cut -f1) compressed"
 scp -q "/tmp/modules-$KREL.tar.gz" zuestoll08:/tmp/
+
+# The kernel config, as /boot/config-$KREL. Not cosmetic: mkinitramfs reads it to check
+# the kernel can decompress the compressor initramfs.conf asks for. Without it you get
+#   W: Kernel configuration /boot/config-$KREL is missing, cannot check for zstd ...
+# and -- this is the part that matters -- it does NOT fall back to something safe. It
+# proceeds with the configured compressor unverified. COMPRESS=zstd against a kernel
+# without CONFIG_RD_ZSTD is an unbootable initramfs, and the warning is the only notice
+# you get. 212 KB to turn a skipped check into a real one.
+echo "--- 2.5/3 kernel config -> z08:/boot/config-$KREL ---"
+scp -q "$OUT/.config" "zuestoll08:/tmp/config-$KREL"
+ssh -q zuestoll08 "sudo install -m 0644 /tmp/config-$KREL /boot/config-$KREL && rm -f /tmp/config-$KREL && ls -la /boot/config-$KREL"
 ssh -q zuestoll08 "ls -la /tmp/modules-$KREL.tar.gz; df -h / | tail -1"
 
 echo "--- 3/3 remaining steps are yours (they modify the running system) ---"
