@@ -1136,6 +1136,39 @@ static int lt_state_show(struct seq_file *m, void *v)
 			seq_printf(m, "  %10lu : %u\n", lt_top[t].idx, lt_top[t].ec);
 	}
 
+	/*
+	 * When only a handful of pages are VALID, dump them. Twice now a story
+	 * about why they are stuck has been constructed from counter arithmetic
+	 * alone, and twice it has been wrong -- refcount 2 -> 1 across a COW is
+	 * ordinary, because LRU membership holds one of them. The state of the
+	 * folio itself is the only thing that settles it:
+	 *
+	 *   refs 1, map 0, lru        -- unmapped and waiting for reclaim that
+	 *                                never runs on an idle 125 GB machine
+	 *   map > 0                   -- something still maps it; not stuck at all
+	 *   refs > 1, map 0, no lru   -- a reference taken and never dropped
+	 *
+	 * Capped, so a mid-run read with thousands VALID does not print a novel.
+	 */
+	if (counts[LT_VALID] > 0 && counts[LT_VALID] <= 64) {
+		unsigned long b;
+
+		seq_puts(m, "valid_detail         pfn : state (nothing should be VALID with no owner)\n");
+		for (b = find_first_bit(lt_bm[LT_VALID], ltram_nr_pages);
+		     b < ltram_nr_pages;
+		     b = find_next_bit(lt_bm[LT_VALID], ltram_nr_pages, b + 1)) {
+			struct folio *f = page_folio(pfn_to_page(ltram_start_pfn + b));
+
+			seq_printf(m, "  %10lu : refs %d  map %d  %s%s%s%s\n",
+				   ltram_start_pfn + b,
+				   folio_ref_count(f), folio_mapcount(f),
+				   folio_test_lru(f)         ? "lru "        : "",
+				   folio_test_anon(f)        ? "anon "       : "",
+				   folio_test_swapbacked(f)  ? "swapbacked " : "",
+				   folio_test_locked(f)      ? "locked "     : "");
+		}
+	}
+
 	seq_puts(m, "free_buckets         non-empty only\n");
 	for (b = 0; b < LT_EC_BUCKETS; b++)
 		if (lt_blen[b])
