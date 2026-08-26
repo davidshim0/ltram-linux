@@ -73,12 +73,17 @@ ssh -q zuestoll08 "set -e
     echo \"  removing stale module tree \$k\"
     sudo rm -rf \"\$d\"
   done
-  # initrds for kernels we are not running: they are already on the gateway
+  # z08 NETBOOTS: the initrd it is running came from the gateway over tftp, not from
+  # /boot. Everything in /boot/initrd.img-* is a staging artifact that push-initrd.sh
+  # has already published, so removing one cannot affect the running system and costs
+  # only an update-initramfs to rebuild. That deliberately includes the RUNNING
+  # kernel's -- which is the point, because the kernel being redeployed is usually the
+  # running one, and its 70 MB is exactly the room update-initramfs needs for the new
+  # one. The distro kernel's is still left alone: it is the documented way back.
   for i in /boot/initrd.img-*; do
     k=\${i#/boot/initrd.img-}
-    [ \"\$k\" = \"\$(uname -r)\" ] && continue
     case \"\$k\" in *-generic) continue;; esac
-    echo \"  removing stale initrd \$k\"
+    echo \"  removing staged initrd \$k (republish with push-initrd.sh)\"
     sudo rm -f \"\$i\"
   done
   sudo journalctl --vacuum-size=20M >/dev/null 2>&1 || true
@@ -93,9 +98,11 @@ ssh -q zuestoll08 "ls -la /tmp/modules-$KREL.tar.gz; df -h / | tail -1"
 echo "--- 3/3 remaining steps are yours (they modify the running system) ---"
 cat <<RUN
 
-  RUN ON z08:
-    sudo tar -C /lib/modules -xzf /tmp/modules-$KREL.tar.gz
+  RUN ON z08 (the rm matters: / has ~470 MB of slack against a ~340 MB cycle, so the
+  tarball has to go before update-initramfs runs, not after):
+    sudo tar -C /lib/modules -xzf /tmp/modules-$KREL.tar.gz && rm -f /tmp/modules-$KREL.tar.gz
     sudo depmod -a $KREL
+    df -h /                          # want >300M free before the next line
     sudo update-initramfs -c -k $KREL
     ls -la /boot/initrd.img-$KREL
     df -h /
