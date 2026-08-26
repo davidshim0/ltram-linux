@@ -380,6 +380,14 @@ out:
  */
 static void lt_erase_work_fn(struct work_struct *w);
 static DECLARE_DELAYED_WORK(lt_erase_work, lt_erase_work_fn);
+
+/*
+ * Hysteresis state. Latched, not recomputed from a single threshold: the
+ * engine turns on below the low mark and stays on until free reaches the
+ * high one. Between the two marks it keeps whatever state it had.
+ * Guarded by ltram_alloc_lock.
+ */
+static bool lt_erase_engine_on;
 static atomic64_t stat_erases_done, stat_erases_failed, stat_erase_deferred;
 
 /*
@@ -417,14 +425,21 @@ static void lt_erase_work_fn(struct work_struct *w)
 		idx = ULONG_MAX;
 		rc = 0;
 
+		spin_lock_irqsave(&ltram_alloc_lock, flags);
+
 		/*
 		 * Hysteresis: start below the low mark, keep going until the
 		 * high one. A single threshold would start and stop the engine
-		 * once per allocation at the boundary.
+		 * once per allocation at the boundary. Checking "off" first
+		 * means a nonsensical low > high degrades to that single
+		 * threshold rather than latching on forever.
 		 */
-		spin_lock_irqsave(&ltram_alloc_lock, flags);
-		if (lt_erasing == LT_ERASING_IDLE &&
-		    lt_free_count < erase_high_water) {
+		if (lt_free_count >= erase_high_water)
+			lt_erase_engine_on = false;
+		else if (lt_free_count < erase_low_water)
+			lt_erase_engine_on = true;
+
+		if (lt_erase_engine_on && lt_erasing == LT_ERASING_IDLE) {
 			unsigned long d = find_first_bit(lt_bm[LT_DIRTY],
 							 ltram_nr_pages);
 
@@ -436,7 +451,7 @@ static void lt_erase_work_fn(struct work_struct *w)
 		spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 
 		if (idx == ULONG_MAX)
-			break;			/* nothing to do, or at the high mark */
+			break;			/* nothing dirty, or engine off */
 
 		if (have_op) {
 			if (!lt_device_quiet()) {
@@ -1048,6 +1063,8 @@ static struct { unsigned long idx; u32 ec; } lt_top[LT_TOPN];
 static int lt_state_show(struct seq_file *m, void *v)
 {
 	unsigned long flags, i, counts[LT_NR_BM] = {0}, bucket_total = 0;
+	u32 erasing_snap;
+	bool engine_on;
 	unsigned long touched = 0;
 	u32 ec_min = U32_MAX, ec_max = 0;
 	u64 ec_sum = 0;
@@ -1116,6 +1133,9 @@ static int lt_state_show(struct seq_file *m, void *v)
 	if (bucket_total != lt_free_count)
 		err |= LT_ERR_BUCKET_COUNT;
 
+	erasing_snap = lt_erasing;
+	engine_on    = lt_erase_engine_on;
+
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 
 	seq_printf(m, "pages                %lu\n", ltram_nr_pages);
@@ -1123,7 +1143,14 @@ static int lt_state_show(struct seq_file *m, void *v)
 	for (st = 0; st < LT_NR_BM; st++)
 		seq_printf(m, "%-20s %lu\n", lt_bm_name[st], counts[st]);
 	seq_printf(m, "erasing              %s\n",
-		   lt_erasing == LT_ERASING_IDLE ? "idle" : "yes");
+		   erasing_snap == LT_ERASING_IDLE ? "idle" : "yes");
+	/*
+	 * The engine is off whenever free is above the high mark -- so
+	 * "erases_done 0" after a small workload is the design working, not a
+	 * stalled worker. This line is the difference between the two.
+	 */
+	seq_printf(m, "erase_engine         %s   (on below %u free, off at %u)\n",
+		   engine_on ? "ON" : "off", erase_low_water, erase_high_water);
 	seq_printf(m, "free_from_bucketlist %lu   (recount, must equal free)\n",
 		   bucket_total);
 	/*
