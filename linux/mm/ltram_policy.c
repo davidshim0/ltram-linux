@@ -30,6 +30,7 @@
 #include <asm/tlbflush.h>
 #include <linux/slab.h>
 #include <linux/debugfs.h>
+#include <linux/ktime.h>
 #include <linux/seq_file.h>
 #include <linux/list.h>
 #include <linux/math64.h>
@@ -1238,11 +1239,84 @@ static int lt_state_show(struct seq_file *m, void *v)
 }
 DEFINE_SHOW_ATTRIBUTE(lt_state);
 
+/*
+ * Read the array and sort it into FREE and DIRTY, rather than assuming either.
+ *
+ * The page state lives in RAM, so a reboot loses it while the flash keeps every
+ * bit. Seeding "all FREE" therefore told a lie that grew teeth the moment
+ * inline_erase=0 became possible: FREE means "write_page() may program this
+ * without erasing first", and NOR programs by clearing bits, so promising that
+ * about a sector still holding last boot's data yields the AND of old and new,
+ * silently and with no error anywhere.
+ *
+ * Seeding "all DIRTY" is safe but expensive in the one currency that does not
+ * come back: 65,536 erases and ~18 minutes to blank an array that is usually
+ * mostly blank already. Reading it costs 256 MB through the window at the
+ * ~124 MB/s this device gives, so about two seconds -- and it reports the truth
+ * instead of either assumption.
+ *
+ * A sector counts as blank only if EVERY byte is 0xFF. Sampling the first few
+ * words is how you conclude a partially-programmed sector is erased.
+ *
+ * Returns the number of blank sectors, or -1 if the scan could not run.
+ */
+static unsigned int scan_pool = 1;
+module_param(scan_pool, uint, 0444);
+
+static long __init lt_scan_pool(void)
+{
+	unsigned long i, blank = 0;
+	u64 t0;
+
+	if (!scan_pool)
+		return -1;
+
+	/*
+	 * Read through page_address(), NOT a private memremap(). The window is
+	 * reserved-but-still-memory, so map_mem() gave it a linear mapping, and
+	 * that is the mapping migration writes destinations through. Scanning a
+	 * second mapping of the same physical sectors would be answering a
+	 * slightly different question than the one that matters.
+	 *
+	 * Late enough for the same reason the step-3 self-test is: reading
+	 * before the FPGA is programmed and the ECI link is up is an external
+	 * abort with nothing after it on the console.
+	 */
+	t0 = ktime_get_ns();
+	for (i = 0; i < ltram_nr_pages; i++) {
+		const u64 *p = page_address(pfn_to_page(ltram_start_pfn + i));
+		unsigned int w;
+
+		for (w = 0; w < PAGE_SIZE / sizeof(u64); w++)
+			if (READ_ONCE(p[w]) != ~0ULL)
+				break;
+
+		if (w == PAGE_SIZE / sizeof(u64)) {
+			list_add_tail(&lt_node[i], &lt_free_by_ec[0]);
+			lt_free_count++;
+			blank++;
+		} else {
+			/* Holds something. Not allocatable until erased. */
+			set_bit(i, lt_bm[LT_DIRTY]);
+		}
+
+		/* 256 MB of reads in an initcall: do not hold the CPU for all of it. */
+		if (!(i & 0xFFF))
+			cond_resched();
+	}
+
+	pr_info("ltram: pool scan %lu blank, %lu dirty, of %lu sectors in %llu ms\n",
+		blank, ltram_nr_pages - blank, ltram_nr_pages,
+		(ktime_get_ns() - t0) / NSEC_PER_MSEC);
+	return blank;
+}
+
 /* Sized by the window, allocated once, never resized. ~1.3 MB for 256 MiB. */
 static int __init lt_tracking_init(void)
 {
 	unsigned long i;
 	unsigned int st, b;
+	long blank;
 
 	for (st = 0; st < LT_NR_BM; st++) {
 		lt_bm[st] = bitmap_zalloc(ltram_nr_pages, GFP_KERNEL);
@@ -1259,17 +1333,28 @@ static int __init lt_tracking_init(void)
 		INIT_LIST_HEAD(&lt_free_by_ec[b]);
 
 	/*
-	 * Every page starts FREE -- on bucket 0, since every erase count starts
-	 * at 0 -- matching bitmap_fill() on the live allocator. Those counts are
-	 * NOT the device's history and are not meant to be: this chip took heavy
-	 * unknown wear during FPGA bring-up. Read them as "erases since counting
-	 * began".
+	 * Erase counts all start at 0. They are NOT the device's history and are
+	 * not meant to be: this chip took heavy unknown wear during FPGA
+	 * bring-up. Read them as "erases since counting began".
 	 */
-	for (i = 0; i < ltram_nr_pages; i++) {
+	for (i = 0; i < ltram_nr_pages; i++)
 		INIT_LIST_HEAD(&lt_node[i]);
-		list_add_tail(&lt_node[i], &lt_free_by_ec[0]);
+
+	lt_free_count = 0;
+	blank = lt_scan_pool();
+	if (blank < 0) {
+		/*
+		 * No scan (unmappable window, or scan_pool=0). Then nothing is
+		 * KNOWN blank, and the only safe assumption is that nothing is:
+		 * a page declared FREE is a promise to write_page() that it may
+		 * program without erasing, and a wrong promise there is silent
+		 * data loss. Everything starts DIRTY and the erase worker earns
+		 * the pool back.
+		 */
+		bitmap_fill(lt_bm[LT_DIRTY], ltram_nr_pages);
+		pr_warn("ltram: pool not scanned -- assuming all %lu sectors dirty\n",
+			ltram_nr_pages);
 	}
-	lt_free_count = ltram_nr_pages;
 	lt_ready = true;
 
 	if (ltram_debugfs_dir)
