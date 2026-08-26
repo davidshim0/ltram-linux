@@ -48,7 +48,7 @@ h1{font-family:var(--font-ui);font-weight:640;letter-spacing:-.028em;
 .deck{font-size:1.1rem;color:var(--ink-2);margin:0;max-width:42rem;line-height:1.55}
 .deck b{color:var(--ink);font-weight:640}
 nav.toc{padding:1rem 2.6rem;background:var(--surface-2);border-bottom:1px solid var(--rule);
-  font-family:var(--font-mono);font-size:.72rem;letter-spacing:.05em;display:flex;gap:1.2rem;flex-wrap:wrap}
+  font-family:var(--font-mono);font-size:.72rem;letter-spacing:.05em;display:flex;gap:1.1rem;flex-wrap:wrap}
 @media (max-width:46rem){nav.toc{padding:.8rem 1.1rem;gap:.8rem}}
 nav.toc a{color:var(--ink-2);text-decoration:none;border-bottom:1px solid var(--rule)}
 nav.toc a:hover{color:var(--accent);border-color:var(--accent)}
@@ -119,26 +119,24 @@ footer.end{padding:1.5rem 2.6rem 2.2rem;border-top:1px solid var(--rule-2);
 
 <div class="wrap"><div class="sheet">
 <header class="top">
-  <p class="eyebrow">LtRAM &middot; kernel side &middot; state as of 20 August 2026</p>
+  <p class="eyebrow">LtRAM &middot; kernel side &middot; current as of 26 August 2026</p>
   <h1>Implementation and Method</h1>
-  <p class="deck">Every kernel change made, with file and line, so it can be checked against a
-  specification. Then every test, with <b>exactly what is inside the timer and what is not</b>,
-  so the numbers can be checked against the method that produced them.</p>
+  <p class="deck">Every kernel change, with file and line, so it can be checked against a
+  specification. Then every measurement, with <b>exactly what is inside the timer and what is
+  not</b>. Every number carries its provenance and its confidence, and &sect;5 lists what would
+  falsify each one.</p>
 </header>
 <nav class="toc">
   <a href="#impl">1 &middot; Implementation</a>
-  <a href="#addr">1.3 &middot; Address map &amp; zones</a>
-  <a href="#buddy">1.3.3 &middot; Why not buddy</a>
-  <a href="#alloc">1.3.4 &middot; The allocator</a>
-  <a href="#pagestate">1.3.4b &middot; Page states</a>
-  <a href="#hook">1.4 &middot; &ldquo;Hook&rdquo;?</a>
-  <a href="#invariant">1.5 &middot; The four guards</a>
-  <a href="#policy">1.6 &middot; The policy</a>
+  <a href="#states">1.4 &middot; Page states</a>
+  <a href="#erase">1.5 &middot; Erase engine</a>
+  <a href="#invariant">1.6 &middot; The guards</a>
+  <a href="#policy">1.7 &middot; The policy</a>
+  <a href="#counters">1.8 &middot; Counters</a>
   <a href="#method">2 &middot; Method</a>
-  <a href="#boundary">2.1 &middot; The measurement boundary</a>
-  <a href="#tests">2.7 &middot; Tests run</a>
-  <a href="#numbers">3 &middot; Numbers &amp; confidence</a>
-  <a href="#doubt">4 &middot; What would falsify these</a>
+  <a href="#tests">3 &middot; The test</a>
+  <a href="#numbers">4 &middot; Numbers</a>
+  <a href="#doubt">5 &middot; What would falsify these</a>
 </nav>
 <section class="panel">
 
@@ -147,1065 +145,491 @@ footer.end{padding:1.5rem 2.6rem 2.2rem;border-top:1px solid var(--rule-2);
   <div class="tw"><table>
   <thead><tr><th>question</th><th>where</th></tr></thead>
   <tbody>
-  <tr><td>Why is the window at <code>0x14000000000</code> and not <code>0x10000000000</code>?</td><td><a href="#addr">&sect;1.3.1</a></td></tr>
-  <tr><td>Does node 1 have zones other than <code>ZONE_LTRAM</code>, or is node 1 &equiv; the zone?</td><td><a href="#addr">&sect;1.3.2</a></td></tr>
-  <tr><td>Does the buddy allocator ever allocate flash pages? What did we give up by not using it?</td><td><a href="#buddy">&sect;1.3.3</a></td></tr>
-  <tr><td>Does <code>find_first_bit</code> always pick the lowest sector? Should it be round-robin?</td><td><a href="#lsb">&sect;1.3.4</a></td></tr>
-  <tr><td>What flash-management state machine is being built, and what is committed so far?</td><td><a href="#pagestate">&sect;1.3.4b</a></td></tr>
-  <tr><td>What is the spinlock arbitrating? Is Linux running as 48 instances?</td><td><a href="#spinlock">&sect;1.3.4</a></td></tr>
-  <tr><td>What is a &ldquo;migration hook&rdquo;? Is that a real kernel term?</td><td><a href="#hook">&sect;1.4</a></td></tr>
-  <tr><td>What is <code>mode != MIGRATE_SYNC_NO_COPY</code> guarding? What are the migrate modes?</td><td><a href="#modes">&sect;1.4</a></td></tr>
-  <tr><td>Does <code>ltram_copy_to_flash()</code> drive the FPGA DMA engine over MMIO?</td><td><a href="#dma">&sect;1.4</a></td></tr>
+  <tr><td>Why is the window at <code>0x14000000000</code> and not <code>0x10000000000</code>?</td><td><a href="#addr">&sect;1.3</a></td></tr>
+  <tr><td>Does node 1 have zones other than <code>ZONE_LTRAM</code>?</td><td><a href="#addr">&sect;1.3</a></td></tr>
+  <tr><td>Does the buddy allocator ever allocate flash pages?</td><td><a href="#buddy">&sect;1.3</a></td></tr>
+  <tr><td>What are the four page states, and when does a page enter each?</td><td><a href="#states">&sect;1.4</a></td></tr>
+  <tr><td>Why is there a background erase engine at all?</td><td><a href="#erase">&sect;1.5</a></td></tr>
+  <tr><td>What is the spinlock arbitrating? Is Linux running as 48 instances?</td><td><a href="#lock">&sect;1.4</a></td></tr>
+  <tr><td>What does each counter actually measure?</td><td><a href="#counters">&sect;1.8</a></td></tr>
   <tr><td>What is inside the timer and what is excluded?</td><td><a href="#boundary">&sect;2.1</a></td></tr>
-  <tr><td>When exactly do we flush the cache, and does it change anything?</td><td><a href="#boundary">&sect;2.2</a></td></tr>
-  <tr><td>Which numbers should I trust, and which should I not?</td><td><a href="#numbers">&sect;3</a>, <a href="#doubt">&sect;4</a></td></tr>
+  <tr><td>When do we flush the cache, and does it change anything?</td><td><a href="#scrub">&sect;2.2</a></td></tr>
+  <tr><td>Which numbers should I trust, and which not?</td><td><a href="#numbers">&sect;4</a>, <a href="#doubt">&sect;5</a></td></tr>
   </tbody></table></div>
 </div>
 
+<h2 id="impl">1 &middot; What the kernel contains</h2>
+<p>Base is mainline <strong>v6.8</strong> (<code>e8f897f4af</code>), imported as a tree. Two new
+files, plus changes at fourteen existing sites. Nothing upstream is modified except where listed.</p>
 
-<h2 id="impl">1 &middot; What the kernel actually contains</h2>
-
-<p>Base is mainline <strong>v6.8</strong> (<code>e8f897f4af</code>), imported as a tree. Every
-change below is ours; nothing upstream was modified except at the sites listed. Total:
-<strong>1,392 insertions, 10 deletions, across 16 files.</strong></p>
-
-<h3>1.1 Commits, in order</h3>
+<h3>1.1 The steps, in order</h3>
 <div class="tw"><table>
-<thead><tr><th>commit</th><th>step</th><th>what it adds</th></tr></thead>
+<thead><tr><th>step</th><th>what it added</th><th>state</th></tr></thead>
 <tbody>
-<tr><td><code>055662779</code></td><td>2</td><td>declare the NOR window as a NUMA node and <code>ZONE_LTRAM</code> (arm64)</td></tr>
-<tr><td><code>a99d9b20c</code></td><td>2 fix</td><td>memblock: skip the LtRAM range instead of rewriting the request to node 0</td></tr>
-<tr><td><code>42e4a611b</code></td><td>2 fix</td><td>memblock: never allocate from the window, not even for node 1</td></tr>
-<tr><td><code>b8b4ed2a7</code></td><td>2 fix</td><td>arch_numa: give <code>ZONE_LTRAM</code> a range, register node 1 with NUMA</td></tr>
-<tr><td><code>49c272ebe</code></td><td>2 fix</td><td><strong>reserve</strong> the window instead of filtering it, and declare it before <code>paging_init</code></td></tr>
-<tr><td><code>9009afc5f</code></td><td>3</td><td>boot-time read self-test</td></tr>
-<tr><td><code>2891fcbba</code></td><td>4</td><td>a registerable flash write backend</td></tr>
-<tr><td><code>d22513d14</code></td><td>5</td><td>route migration into LtRAM through the driver, not <code>memcpy</code></td></tr>
-<tr><td><code>d894c9224</code></td><td>6</td><td>placement policy, page allocator, scanner, pid targeting</td></tr>
-<tr><td><code>5e047d57c</code></td><td>&mdash;</td><td>correct the hardware claim: the CPU <em>can</em> write to this device</td></tr>
-<tr><td><code>0d0aaef27</code></td><td>6 fix</td><td>drop our folio reference after isolating it</td></tr>
-<tr><td><code>a06b6973c</code></td><td>6</td><td>count <strong>why</strong> a scanned page was not selected</td></tr>
-<tr><td><code>f558a316f</code></td><td>6 fix</td><td>a flash page may never be writable, and may never reach buddy</td></tr>
-<tr><td><code>244a66761</code></td><td>6 fix</td><td>ask whether a page <em>was</em> written, not whether it was <em>ever</em> written</td></tr>
-<tr><td><code>e6f915089</code></td><td>6 fix</td><td>give flash pages back at the one funnel every free path uses</td></tr>
-<tr><td><code>5e23f2695</code></td><td>&mdash;</td><td>forward-declare <code>struct page</code>/<code>folio</code> in the header</td></tr>
-<tr><td><code>53fc3a101</code></td><td>6 fix</td><td>promote anonymous private memory only</td></tr>
+<tr><td>2</td><td>node 1 + <code>ZONE_LTRAM</code>, excluded from every zonelist</td><td class="yes">on hardware</td></tr>
+<tr><td>3</td><td>boot-time read self-test</td><td class="yes">on hardware</td></tr>
+<tr><td>4</td><td>registerable flash write backend</td><td class="yes">on hardware</td></tr>
+<tr><td>5</td><td>migration routed through the driver, not <code>memcpy</code></td><td class="mid">positive path only &mdash; negative test never run</td></tr>
+<tr><td>6</td><td>policy, scanner, private allocator, pid targeting</td><td class="yes">on hardware</td></tr>
+<tr><td>1a</td><td>page-state tracking, shadow only</td><td class="yes">invariant held over 1,472 transitions</td></tr>
+<tr><td>1b</td><td>allocation moves to erase-count buckets</td><td class="yes">peak wear per sector 1,518 &rarr; 1</td></tr>
+<tr><td>1c</td><td>DIRTY state + background erase engine</td><td class="yes">state machine on hardware</td></tr>
+<tr><td>1c-b</td><td><code>erase_page</code>/<code>device_idle</code> in the backend; inline erase becomes optional</td><td class="mid">built, first run in progress</td></tr>
 </tbody></table></div>
 
-<h3>1.2 Files touched, and why each one</h3>
+<h3 id="addr">1.2 The address map, and why the base is not a round number</h3>
+<p><strong>The base is three address bits, each meaning something.</strong> The high bits are
+decoded by the FPGA, so the address itself is part of the protocol.</p>
 <div class="tw"><table>
-<thead><tr><th>file</th><th class="num">&plusmn;</th><th>why it had to change</th></tr></thead>
+<thead><tr><th>bit</th><th class="num">value</th><th>selects</th></tr></thead>
 <tbody>
-<tr><td><code>mm/ltram_policy.c</code></td><td class="num">+544</td><td>new. Scanner, private page allocator, policy vtable, sysfs</td></tr>
-<tr><td><code>mm/ltram.c</code></td><td class="num">+431</td><td>new. Zone/node declaration, backend registration, write path, self-test</td></tr>
-<tr><td><code>include/linux/ltram.h</code></td><td class="num">+122</td><td>new. The whole external surface, with <code>!CONFIG_LTRAM</code> stubs</td></tr>
-<tr><td><code>arch/arm64/mm/init.c</code></td><td class="num">+53</td><td>declare the window before <code>paging_init</code></td></tr>
-<tr><td><code>mm/page_alloc.c</code></td><td class="num">+49</td><td>keep flash pages out of buddy; return them at the free funnel</td></tr>
-<tr><td><code>drivers/base/arch_numa.c</code></td><td class="num">+35</td><td>register node 1; force its <code>pg_data_t</code> to node 0 memory</td></tr>
-<tr><td><code>mm/migrate.c</code></td><td class="num">+33</td><td>route the copy through the driver; never restore a writable PTE</td></tr>
-<tr><td><code>mm/mm_init.c</code></td><td class="num">+22</td><td>zone sizing</td></tr>
-<tr><td><code>include/linux/gfp.h</code></td><td class="num">+20</td><td>exclude <code>ZONE_LTRAM</code> from <code>GFP_ZONE_TABLE</code></td></tr>
-<tr><td><code>mm/memblock.c</code></td><td class="num">+19</td><td>never hand boot allocations out of the window</td></tr>
-<tr><td><code>mm/memory.c</code></td><td class="num">+18</td><td><code>do_wp_page</code>: never reuse a flash folio in place</td></tr>
-<tr><td><code>mm/Kconfig</code></td><td class="num">+18</td><td><code>CONFIG_LTRAM</code></td></tr>
-<tr><td><code>mm/sparse.c</code></td><td class="num">+16</td><td>force the memmap for node 1 onto node 0</td></tr>
-<tr><td><code>mm/swap.c</code></td><td class="num">+11</td><td><code>__folio_put_small</code>: redirect the single-page free</td></tr>
-<tr><td><code>include/linux/mmzone.h</code></td><td class="num">+10</td><td>the zone enum</td></tr>
-<tr><td><code>mm/Makefile</code></td><td class="num">+1</td><td>build the two new objects</td></tr>
+<tr><td><strong>40</strong></td><td class="num"><code>0x10000000000</code></td><td><strong>node</strong> &mdash; routes to node 1 (the FPGA) rather than node 0 (DRAM)</td></tr>
+<tr><td><strong>38</strong></td><td class="num"><code>0x04000000000</code></td><td><strong>marker</strong> &mdash; separates NOR traffic from DMA traffic, which share the coherent virtual channels</td></tr>
+<tr><td><strong>39</strong></td><td class="num"><code>0x08000000000</code></td><td><strong>erase</strong> &mdash; set on top of the other two</td></tr>
 </tbody></table></div>
+<figure><div class="cap"><span>one flash, decoded three ways</span></div>
+<pre><code>bit           40  39  38
+RD_BASE        1   0   1     0x14000000000   coherent read    (ioremap_cache)
+ER_BASE        1   1   1     0x1C000000000   erase trigger
+<span class="hlb">  "just node"  1   0   0     0x10000000000   reaches the FPGA, says nothing</span>
+IO_BASE                      0x900000000000  DMA descriptors + status (uncached)</code></pre></figure>
+<p><code>0x10000000000</code> would reach the FPGA with the marker clear &mdash; nothing in the
+request would say <em>which subsystem it is for</em>. DRAM tops out at <code>0x1fffffffff</code>
+(bits 0&ndash;36), so bits 38&ndash;40 are all above real memory and cannot collide.</p>
 
-<h3 id="addr">1.3 The memory model</h3>
-<ul>
-<li><code>LTRAM_PHYS_BASE = 0x14000000000</code>, <code>LTRAM_PHYS_SIZE = 256 MiB</code>,
-<code>LTRAM_NUMA_NODE = 1</code> &mdash; all in <code>include/linux/ltram.h:35-37</code></li>
-<li>Node 1 is a <strong>real NUMA node</strong> with a <strong>dedicated zone</strong>,
-<code>ZONE_LTRAM</code>, excluded from every zonelist</li>
-<li>Consequence, verified on hardware: <code>spanned/present 65536</code> but
-<strong><code>managed 0</code></strong>, and <code>numactl --membind=1</code> <strong>refuses</strong>
-with an allocation failure rather than quietly handing over flash pages</li>
-<li>These pages <strong>never belong to buddy</strong>. Allocation is a private bitmap in
-<code>mm/ltram_policy.c</code> (<code>find_first_bit</code>, so sectors are handed out ascending
-and contiguous), under a spinlock taken <code>irqsave</code></li>
-<li>Boot allocations, the <code>memmap</code> (<code>sparse.c</code>) and the node's own
-<code>pg_data_t</code> (<code>arch_numa.c</code>) are all forced to node 0</li>
-</ul>
+<h4>Node 1 is exactly one zone</h4>
+<p><code>mm/mm_init.c:1282</code> gives every zone on node 1 except <code>ZONE_LTRAM</code> a span
+of zero; <code>arch/arm64/mm/init.c:171</code> ends <code>ZONE_NORMAL</code> exactly where the
+window begins, so <code>ZONE_LTRAM</code> spans nothing on node 0. A bijection, enforced in two
+places that must agree. Verified: <code>spanned/present 65536</code>, <strong><code>managed
+0</code></strong>, and <code>numactl --membind=1</code> <em>refuses</em>.</p>
 
-<h3>1.3.1 Why the base is <code>0x14000000000</code> and not <code>0x10000000000</code></h3>
-
-<p><strong>The base is not a number someone picked &mdash; it is three address bits, and each
-one means something.</strong> On this platform the high bits of the physical address are decoded
-by the FPGA, so the address itself is part of the protocol.</p>
-
+<h3 id="buddy">1.3 Buddy never allocates a flash page &mdash; four independent reasons</h3>
 <div class="tw"><table>
-<thead><tr><th>bit</th><th class="num">value</th><th>what it selects</th></tr></thead>
+<thead><tr><th>mechanism</th><th>blocks</th></tr></thead>
 <tbody>
-<tr><td><strong>40</strong></td><td class="num"><code>0x10000000000</code></td><td><strong>the node bit</strong> &mdash; routes the request to node 1 (the FPGA) instead of node 0 (DRAM)</td></tr>
-<tr><td><strong>38</strong></td><td class="num"><code>0x04000000000</code></td><td><strong>the marker bit</strong> &mdash; separates <em>NOR</em> traffic from <em>DMA</em> traffic, which share the same coherent virtual channels</td></tr>
-<tr><td><strong>39</strong></td><td class="num"><code>0x08000000000</code></td><td><strong>the erase trigger</strong> &mdash; set on top of the other two to make an access an erase rather than a read</td></tr>
+<tr><td><code>managed_pages = 0</code></td><td>buddy was never given them; its free lists start empty</td></tr>
+<tr><td>absent from every zonelist</td><td>the allocator's search never visits the zone</td></tr>
+<tr><td>not GFP-selectable (<code>GFP_ZONES_SHIFT</code> stays 2)</td><td>no <code>gfp_t</code> can name it. There is no way to ask</td></tr>
+<tr><td><code>free_pages_prepare()</code> returns false</td><td>even a page arriving by mistake is returned to our allocator, not freed into buddy</td></tr>
 </tbody></table></div>
+<p><strong>To be in buddy is to accept arbitrary use</strong> &mdash; a page table, a kernel stack,
+a DMA buffer. Any of those on NOR means stores silently discarded. So allocation is a private
+structure, described next.</p>
 
-<figure><div class="cap"><span>the three windows are the same flash, decoded three ways</span></div>
-<pre><code>bit          40    39    38
-             |     |     |
-RD_BASE      1     0     1     0x14000000000   coherent read   (ioremap_cache)
-ER_BASE      1     1     1     0x1C000000000   erase trigger   (RD | bit39)
-
-<span class="hlb">    "just the node bit"  1  0  0     0x10000000000   node 1, but NO marker</span>
-
-IO_BASE                        0x900000000000  DMA descriptors + status (uncached)</code></pre></figure>
-
-<p><strong>So <code>0x10000000000</code> would be node 1 with the marker bit clear.</strong> The
-request would reach the FPGA, but nothing in it would say <em>which subsystem it is for</em>
-&mdash; NOR reads and DMA traffic ride the same coherent VCs, and bit 38 is what tells them
-apart. The read window is therefore <code>node | marker</code> =
-<code>0x10000000000 | 0x04000000000</code> = <code>0x14000000000</code>, and the erase window is
-the same thing with bit 39 added.</p>
-
+<h2 id="states">1.4 &middot; The four page states</h2>
+<figure><div class="cap"><span>the state machine, and what moves a page</span></div>
+<pre><code>            ltram_alloc_page()              write fault, or process exit
+                    |                                    |
+   +------> <span class="hl">FREE</span> ------------------> <span class="hl">VALID</span> ------------------> <span class="hl">DIRTY</span>
+   |     (blank, allocatable)      (holds live data)   (holds stale data,
+   |                                                    needs an erase)
+   |                                    |                     |
+   |                        migration FAILED:                 | erase worker
+   |                        never programmed,                 v
+   +------------------------ no erase needed            <span class="hl">ERASING</span>
+   |                                                          |
+   +----------------------------------------------------------+
+                          erase retired, ec++</code></pre></figure>
 <div class="box box--key">
-  <p class="lab">Why these bits are free to use</p>
-  <p>DRAM on this machine tops out at <code>0x1fffffffff</code> &mdash; 128 GiB, which occupies
-  <strong>bits 0&ndash;36</strong>. Bits 38, 39 and 40 are all above the top of DRAM, so none of
-  them can collide with a real memory address. The window sits at 1.25 TiB in a 128 GiB machine
-  precisely because that region is otherwise unreachable.</p>
-  <p>Source: <code>include/linux/ltram.h:32-35</code> and
-  <code>ltram-backend/nor_eci_fulltest.c:35-37</code>. The kernel and the driver define the same
-  constant independently and must agree &mdash; <code>ft_ltram_write_page()</code> range-checks
-  every pfn against its own copy and returns <code>-EINVAL</code> if they ever drift.</p>
+  <p class="lab">The distinction that keeps the wear model honest</p>
+  <p>A page allocated as a migration destination whose migration then <strong>failed</strong> was
+  never written, so its sector is still blank and goes <strong>straight back to FREE</strong>.
+  Only a page that really held data goes to DIRTY. Wrong in one direction costs a 16.4 ms erase
+  per failed migration for nothing; wrong in the other hands out a sector still holding the last
+  tenant's data &mdash; and the workload's digest is what catches that.</p>
 </div>
 
-<h3>1.3.2 Node 1 is exactly one zone &mdash; and that zone exists nowhere else</h3>
-
-<p><strong>Short answer: node 1 &equiv; <code>ZONE_LTRAM</code>. It is a bijection, enforced in
-two places that have to agree.</strong></p>
-
-<h4>Direction 1 &mdash; node 1 has no other zone</h4>
-<figure><div class="cap"><span>mm/mm_init.c:1282-1298</span></div>
-<pre><code>if (pgdat-&gt;node_id == LTRAM_NUMA_NODE) {
-        <span class="c">/* The LtRAM node is dedicated: one contiguous flash range,
-         * entirely ZONE_LTRAM, every other zone empty. NOR is
-         * physically contiguous so there are no absent pages. */</span>
-<span class="hl">        if (i == ZONE_LTRAM) {
-                zone_start_pfn = node_start_pfn;
-                zone_end_pfn   = node_end_pfn;
-                spanned        = node_end_pfn - node_start_pfn;
-        } else {
-                zone_start_pfn = zone_end_pfn = 0;
-                spanned        = 0;
-        }</span>
-        absent    = 0;
-        real_size = spanned;
-}</code></pre></figure>
-<p>Every zone on node 1 other than <code>ZONE_LTRAM</code> is given a span of <strong>zero</strong>.
-There is no <code>ZONE_DMA</code>, no <code>ZONE_NORMAL</code>, no <code>ZONE_MOVABLE</code> on
-node 1 &mdash; they exist as enum entries but describe nothing. And <code>absent = 0</code>
-because the flash is physically contiguous, so the zone has no holes.</p>
-
-<h4>Direction 2 &mdash; <code>ZONE_LTRAM</code> is empty on node 0</h4>
-<figure><div class="cap"><span>arch/arm64/mm/init.c:171-174</span></div>
-<pre><code>if (ltram_start_pfn) {
-        max_zone_pfns[ZONE_NORMAL] = ltram_start_pfn;   <span class="c">/* Normal ENDS where flash BEGINS */</span>
-        max_zone_pfns[ZONE_LTRAM]  = max_pfn;
-}</code></pre></figure>
-<p><code>free_area_init()</code> derives each zone from the <em>previous</em> zone's boundary, so
-<code>ZONE_NORMAL</code> is made to end exactly at <code>ltram_start_pfn</code>. Node 0's pfns all
-fall below that boundary, so <code>ZONE_LTRAM</code> spans nothing there.
-<code>ZONE_DEVICE</code> sits between the two with its <code>max_zone_pfns[]</code> entry left at
-0, which <code>free_area_init()</code> renders as empty without disturbing the boundaries.</p>
-
-<div class="box box--warn">
-  <p class="lab">The bug this comment records, because it is easy to reintroduce</p>
-  <p>Setting <strong>both</strong> entries to <code>max_pfn</code> &mdash; which this code used to
-  do, while its comment claimed otherwise &mdash; makes <code>ZONE_LTRAM</code> span
-  <code>max_pfn..max_pfn</code>, i.e. nothing, and lets <code>ZONE_NORMAL</code> swallow the
-  window:</p>
-  <pre style="border-radius:4px"><code>Normal   [mem 0x0000000100000000-0x000001400fffffff]
-LtRAM    empty</code></pre>
-  <p>That is the failure mode to check for on any boot: if <code>ZONE_NORMAL</code>'s range
-  extends past <code>0x14000000000</code>, the allocator believes flash is ordinary memory.</p>
-</div>
-
-<h4>What that buys, and how it was verified</h4>
-<ul>
-<li><code>ZONE_LTRAM</code> is <strong>absent from every zonelist</strong>
-(<code>build_zonerefs_node</code>), so no allocation can ever reach it. Pages arrive
-<strong>only by migration</strong></li>
-<li>It is <strong>not GFP-selectable</strong>. <code>include/linux/gfp.h:92-105</code> keeps
-<code>GFP_ZONES_SHIFT</code> at 2, exactly as <code>ZONE_DEVICE</code> does &mdash; counting
-either zone overflows <code>GFP_ZONE_TABLE</code> (2<sup>4</sup>&times;3 = 48 fits in 64;
-2<sup>5</sup>&times;3 = 96 does not), and the compiler reports that only as a shift-count warning
-from inside a macro</li>
-<li><strong>Verified on hardware:</strong> <code>Node 1, zone LtRAM</code> with
-<code>spanned/present 65536</code> and <strong><code>managed 0</code></strong>;
-<code>stray_allocs 0</code>; and <code>numactl --membind=1</code> <strong>refuses</strong> with a
-page allocation failure rather than quietly handing over flash pages</li>
-</ul>
-
-<p><code>managed 0</code> is the load-bearing observation: the buddy allocator has been given
-<em>none</em> of these 65,536 pages, which is why a private bitmap allocator exists at all.</p>
-
-<h3 id="buddy">1.3.3 The buddy allocator never sees these pages &mdash; and cannot</h3>
-
-<p><strong>Correct: buddy never allocates a flash page.</strong> Not "is discouraged from" &mdash;
-four independent mechanisms each make it impossible, and any one of them alone would suffice.</p>
-
-<div class="tw"><table>
-<thead><tr><th class="num">#</th><th>mechanism</th><th>where</th><th>what it blocks</th></tr></thead>
-<tbody>
-<tr><td class="num">1</td><td><code>managed_pages = 0</code></td><td><code>mm/mm_init.c</code></td><td>buddy was never <em>given</em> the pages. Its free lists start empty and nothing ever adds to them</td></tr>
-<tr><td class="num">2</td><td>absent from every zonelist</td><td><code>build_zonerefs_node</code></td><td>the allocator's search never <em>visits</em> the zone, on any node, for any request</td></tr>
-<tr><td class="num">3</td><td>not GFP-selectable</td><td><code>include/linux/gfp.h:92-105</code></td><td>no <code>gfp_t</code> mask can name <code>ZONE_LTRAM</code>. There is no way to ask</td></tr>
-<tr><td class="num">4</td><td><code>free_pages_prepare()</code> refuses</td><td><code>mm/page_alloc.c:1102</code></td><td>even a page arriving by mistake is <strong>returned to the bitmap and not freed into buddy</strong></td></tr>
-</tbody></table></div>
-
-<p>Mechanism 4 is the backstop for the other three: if 1&ndash;3 were ever defeated, a flash page
-still could not <em>enter</em> buddy's free lists, because the one funnel every free path passes
-through turns it away.</p>
-
-<h4>How a page is allocated, both ways</h4>
-<figure><div class="cap"><span>the two allocation paths never meet</span></div>
-<pre><code>   ORDINARY PAGE                          FLASH PAGE
-   -------------                          ----------
-
-   alloc_pages(gfp, order)                ltram_scan_once()  [the policy scanner]
-         |                                      |
-         v                                      v
-   gfp_zone(gfp) -> ZONE_NORMAL           ltram_alloc_page()
-         |                                      |
-         v                                      v
-   zonelist walk:                         spin_lock_irqsave(&amp;ltram_alloc_lock)
-     node0: DMA, NORMAL, MOVABLE                |
-     node1: <span class="c">nothing</span>                            v
-            <span class="c">(LtRAM is absent from</span>          find_first_bit(free_bitmap, 65536)
-            <span class="c"> every zonelist)</span>                    |
-         |                                      v
-         v                                __clear_bit(idx)
-   free_area[order] buddy lists                 |
-         |                                      v
-         v                                set_page_count(p, 1)  <span class="c">&lt;- by hand: these pages</span>
-   struct page, refcount 1                                      <span class="c">   were never given a</span>
-                                                                <span class="c">   refcount by buddy</span></code></pre></figure>
-
-<p>Note the last step. A buddy page arrives with its refcount and page flags already
-established. A flash page does not exist as far as the core allocator is concerned, so
-<code>ltram_alloc_page()</code> has to do that by hand &mdash;
-<code>set_page_count(p, 1)</code> and clearing <code>PAGE_FLAGS_CHECK_AT_PREP</code> &mdash;
-"the way the migration core expects".</p>
-
-<h4>How a page comes back &mdash; and why there are two routes</h4>
-<figure><div class="cap"><span>every free path, and where each one is intercepted</span></div>
-<pre><code>        SINGLE PAGE                      BATCH  (munmap, process exit, reclaim)
-        -----------                      ------------------------------------
-        folio_put()                      tlb_gather -> release_pages()
-             |                                        |
-             v                                        v
-      __folio_put_small()                    free_unref_page_list()
-             |                                        |
-     folio_is_ltram()?                                |
-        |          |                                  |
-      yes          no                                 |
-        |          +----------> free_unref_page() ----+
-        v                                             |
- <span class="hl">ltram_free_folio()</span>                                   v
-        |                              <span class="hl">free_pages_prepare()   &lt;-- THE FUNNEL</span>
-        |                                             |
-        |                                   pfn_is_ltram()?
-        |                                      |          |
-        |                                    yes          no
-        |                                      |          |
-        |                                      v          v
-        +-------------------------&gt; <span class="hl">ltram_free_page()</span>   buddy free_area[]
-                                               |
-                                               v
-                                    __set_bit(idx); return false
-                                    <span class="c">&lt;- buddy never sees it</span></code></pre></figure>
-
-<div class="box box--bad">
-  <p class="lab">This diagram is the shape of a real bug we shipped</p>
-  <p>The original guard hooked only <code>__folio_put_small()</code> &mdash; the left branch.
-  <strong>The right branch is the one process exit and <code>munmap</code> actually take</strong>,
-  and it bypasses that hook entirely. Flash pages hit <code>free_pages_prepare()</code>, were
-  correctly kept out of buddy, and were then <em>dropped</em>: <strong>16,502 pages leaked in one
-  evening</strong>, a quarter of the window.</p>
-  <p>Measured proof of which branch dominates: in the station-4 run <code>late_free</code>
-  (the funnel) counted <strong>6,779</strong> against <strong>7</strong> for a run dominated by
-  demotion (the single-page path). They are genuinely different routes and both must be covered.</p>
-</div>
-
-<h4>Why it had to be a private allocator</h4>
-<ul>
-<li><strong>To be in buddy is to accept arbitrary use.</strong> A page on a buddy free list can be
-handed to a page table, a kernel stack, a DMA buffer, a slab. Any of those on NOR means stores
-<em>silently discarded</em> &mdash; and on this hardware that is not a fault, it is data loss with
-no diagnostic</li>
-<li><strong><code>managed_pages</code> feeds watermarks, OOM and <code>/proc/meminfo</code>.</strong>
-Counting 256 MiB of flash as free memory would make the kernel believe it has memory it can never
-hand to anyone</li>
-<li><strong>There is no gfp bit left to select it with.</strong> <code>GFP_ZONE_TABLE</code>
-overflows at a fifth GFP-selectable zone, so even if we wanted buddy to allocate flash on purpose,
-there is no way to express the request</li>
-</ul>
-
-<h4>What that costs &mdash; the honest ledger</h4>
-<div class="tw"><table>
-<thead><tr><th>what buddy gives free</th><th>what we have instead</th><th>cost</th></tr></thead>
-<tbody>
-<tr><td>orders &gt; 0, with merging</td><td><code>find_first_bit</code> returns <strong>one page</strong>. No merging, no compound allocation</td><td class="no"><strong>No huge pages on flash, ever.</strong> The scanner skips <code>folio_test_large()</code> outright. A 256 MiB resident set costs 65,536 PTEs where 128 PMDs would do</td></tr>
-<tr><td>O(log n) per-order free lists</td><td>O(n) bit scan &mdash; up to 1,024 longs</td><td class="mid">irrelevant at 65,536 pages; would not scale to a larger device</td></tr>
-<tr><td>anti-fragmentation machinery</td><td>nothing &mdash; every allocation is exactly one page</td><td class="yes"><strong>External fragmentation is impossible by construction.</strong> A genuine simplification: buddy's complexity exists to serve variable orders</td></tr>
-<tr><td>per-CPU page lists</td><td>one global spinlock, <code>irqsave</code></td><td class="mid">invisible at 32 pages/s; would contend under a parallel promoter</td></tr>
-<tr><td>every free path already funnels correctly</td><td>we had to <em>find</em> the funnel</td><td class="no"><strong>The 16,502-page leak.</strong> This is the real cost, and we paid it</td></tr>
-<tr><td><code>/proc/meminfo</code>, <code>vmstat</code>, page_owner, KASAN, DEBUG_PAGEALLOC</td><td><code>pages_in_use</code>, a counter we wrote</td><td class="mid">256 MiB invisible to every standard tool. Anyone debugging with normal instruments sees nothing</td></tr>
-<tr><td>allocation order chosen for locality</td><td>always the <strong>lowest free index</strong></td><td class="no"><strong>No wear levelling at all.</strong> Low sectors are erased on every run; high sectors stay pristine. A real flash allocator would pick round-robin or by erase count. <em>This is an unfixed gap, not a decision</em></td></tr>
-</tbody></table></div>
-
-<div class="box box--warn">
-  <p class="lab">Two consequences worth checking rather than assuming</p>
-  <ul>
-  <li><strong>Promoted pages go back onto an LRU</strong> (<code>migrate_pages</code> does this,
-  and the scanner calls <code>putback_movable_pages()</code>). So reclaim can in principle select
-  a flash-resident page and try to swap it &mdash; reading from NOR to write to swap. Whether that
-  is correct, merely wasteful, or a problem has <strong>not been tested</strong></li>
-  <li><strong>The bitmap has no erase-count memory.</strong> It cannot, because it is rebuilt at
-  boot. Wear levelling would need persistent per-sector counters, which do not exist yet</li>
-  </ul>
-</div>
-
-<div class="box box--key">
-  <p class="lab">The alternative that deserves review</p>
-  <p><code>ZONE_DEVICE</code> with <code>devm_memremap_pages()</code> is the upstream mechanism
-  for exactly this shape of problem: pages that are real, refcounted and mappable, but not owned
-  by buddy. <code>DEVICE_COHERENT</code> in particular describes coherent, CPU-accessible device
-  memory &mdash; which is what this NOR window is.</p>
-  <p>We did not use it, and the honest reason is that a dedicated zone was the shorter path to a
-  bootable kernel, not that <code>ZONE_DEVICE</code> was evaluated and rejected. It would have
-  supplied the page lifecycle we had to write by hand &mdash; and the leak was a bug in exactly
-  that hand-written part. <strong>This is the single design decision most worth challenging in
-  review.</strong></p>
-</div>
-
-<h3 id="alloc">1.3.4 The allocator, and the page-state tracking beside it</h3>
-
-<div class="box box--warn">
-  <p class="lab">Status, stated first</p>
-  <p>The <strong>live allocator below is unchanged</strong> and is what every measured result
-  in this document ran on. The page-state tracking in &sect;1.3.4b is committed and builds
-  clean (<code>354328995</code>), but is <strong>shadow only</strong> &mdash; it changes no
-  allocation decision &mdash; and <strong>has never been booted.</strong> Its assertions have
-  not run once.</p>
-</div>
-
-<h4>The live allocator</h4>
-<figure><div class="cap"><span>mm/ltram_policy.c</span><span class="rt">unchanged by 1a</span></div>
-<pre><code>static unsigned long *ltram_free_bitmap;   <span class="c">/* 1 = free */</span>
-static DEFINE_SPINLOCK(ltram_alloc_lock);
-
-spin_lock_irqsave(&amp;ltram_alloc_lock, flags);
-if (ltram_free_bitmap) {
-<span class="hl">        idx = find_first_bit(ltram_free_bitmap, ltram_nr_pages);</span>
-        if (idx &lt; ltram_nr_pages) {
-                __clear_bit(idx, ltram_free_bitmap);
-                p = pfn_to_page(ltram_start_pfn + idx);
-                atomic64_inc(&amp;ltram_pages_in_use);
-                lt_take(idx);           <span class="c">/* 1a shadow */</span>
-        }
-}
-spin_unlock_irqrestore(&amp;ltram_alloc_lock, flags);</code></pre></figure>
-
-<h4 id="lsb">The lowest free index is always chosen &mdash; still true, still a wear problem</h4>
-<p><code>find_first_bit()</code> scans from index 0 and returns the first set bit. With
-<code>1 = free</code> that is <em>&ldquo;give me the lowest-numbered free sector&rdquo;</em>:
-strictly ascending while nothing is freed, and after a free it <strong>refills the hole from
-the bottom</strong>.</p>
-<figure><div class="cap"><span>what lowest-first does to a 65,536-sector device</span></div>
-<pre><code>run 1   [################........................................]  0..16383 erased once
-run 2   [################........................................]  the SAME sectors again
-run 3   [################........................................]  and again
-        0                16k            32k            48k      64k
-
-sectors 0..16k : one erase per run     <span class="c">&lt;- all the wear here</span>
-sectors 16k..64k: zero, ever           <span class="c">&lt;- three quarters idle</span></code></pre></figure>
-<p>Exposure today is <strong>0.001% of one sector's life per run</strong> against a
-100,000-cycle rating, so nothing is at risk &mdash; but the distribution is wrong in the
-direction that worsens with uptime. Fixing it is what the tracking below exists to enable.</p>
-
-<h3 id="pagestate">1.3.4b Page-state tracking &mdash; committed, shadow only, unbooted</h3>
-
-<p>The target design is a four-state machine &mdash; <strong>FREE / VALID / DIRTY /
-ERASING</strong> &mdash; whose real prize is not wear levelling but <strong>moving the erase off
-the write path</strong>. Today <code>ft_ltram_write_page()</code> erases synchronously before
-every program:</p>
-<div class="tw"><table>
-<thead><tr><th></th><th class="num">cost</th><th>share</th></tr></thead>
-<tbody>
-<tr><td>subsector erase</td><td class="num">16.4 ms</td><td><strong>93%</strong></td></tr>
-<tr><td>programming a sector</td><td class="num">~1.2 ms</td><td>7%</td></tr>
-</tbody></table></div>
-<p>With pages arriving pre-erased from a Free pool, a promotion costs the DMA alone &mdash;
-<strong>~14&times; faster</strong>, and the migration spike measured at 27.6&times; DRAM
-(&sect;2.7 T6) should largely stop existing. <strong>Background erase removes the erase from the
-latency path, not from the throughput budget</strong>: sustained promotion is still capped near
-61 pages/s. Ours is a burst workload, so we get the win.</p>
-
-<h4>How each state is represented, and why they differ</h4>
+<h3>How each state is represented, and why they differ</h3>
 <div class="tw"><table>
 <thead><tr><th>state</th><th>representation</th><th class="num">size</th><th>why</th></tr></thead>
 <tbody>
-<tr><td><strong>VALID</strong></td><td>bitmap</td><td class="num">8 KiB</td><td rowspan="2">No ordering needed. <code>bitmap_weight()</code> <em>derives</em> the count from the data, so a count cannot drift away from the thing it describes &mdash; the exact bug class that lost 16,502 pages. Disjointness is one bitwise AND</td></tr>
+<tr><td><strong>VALID</strong></td><td>bitmap</td><td class="num">8 KiB</td><td rowspan="2">No ordering needed. <code>bitmap_weight()</code> <em>derives</em> the count, so a count cannot drift from what it counts. Disjointness is one bitwise AND</td></tr>
 <tr><td><strong>DIRTY</strong></td><td>bitmap</td><td class="num">8 KiB</td></tr>
-<tr><td><strong>ERASING</strong></td><td>one <code>u32</code> index</td><td class="num">4 B</td><td>The hardware erases one sector at a time, serialised under the backend mutex. A queue would be a container that never holds more than one thing</td></tr>
-<tr><td><strong>FREE</strong></td><td>bucket lists, <strong>and nothing else</strong></td><td class="num">1 MiB + 1.6 KiB</td><td>Deliberately no free bitmap: free is <code>~(VALID | DIRTY)</code> minus whatever is erasing, so it is <strong>derived</strong> at check time and cannot drift. A stored one would be a fourth structure that can be wrong in the same way as what it checks</td></tr>
-<tr><td>erase counts</td><td><code>u32 ec[65536]</code></td><td class="num">256 KiB</td><td>Must persist while a page is VALID or DIRTY, so the bucket index cannot store it</td></tr>
+<tr><td><strong>ERASING</strong></td><td>one <code>u32</code></td><td class="num">4 B</td><td>the device erases one sector at a time; a queue would never hold more than one thing</td></tr>
+<tr><td><strong>FREE</strong></td><td>101 bucket lists by erase count, <strong>nothing else</strong></td><td class="num">1 MiB</td><td>free is <code>~(VALID|DIRTY)</code> minus erasing, so it is <strong>derived</strong> at check time and cannot drift. A stored bitmap would be a fourth structure able to be wrong in the same way as what it checks</td></tr>
+<tr><td>erase counts</td><td><code>u32 ec[65536]</code></td><td class="num">256 KiB</td><td>must survive while a page is VALID or DIRTY, so the bucket index cannot hold it</td></tr>
 </tbody></table></div>
-<p><strong>RETIRED is deliberately absent.</strong> It only means something once the parking
-policy exists &mdash; park a permanently read-only page in a nearly-worn sector so it is never
-erased again &mdash; which is a later experiment. Carrying it now would mean a bitmap that is
-always empty and a line in the report for a feature that does not exist.</p>
+<p><strong>Buckets at 1000-erase granularity, FIFO within.</strong> Not a compromise: while every
+page shares an erase count they all sit in bucket 0, and pop-head / return-to-tail <em>is</em>
+round-robin. Exact per-count buckets behave identically there and cost 100,000 list heads
+instead of 101. <strong>RETIRED is deliberately absent</strong> &mdash; it only means something
+once the wear-parking policy exists, and carrying it now would mean a permanently empty bitmap.</p>
 
-<h4>Why buckets at 1000-erase granularity with FIFO inside</h4>
-<p>Not a compromise. While every page shares an erase count they all sit in bucket 0, and
-<strong>pop-head / return-to-tail <em>is</em> round-robin</strong> &mdash; which is precisely the
-wear spreading the flat allocator lacks. Exact per-erase-count buckets behave identically at that
-point and cost 100,000 list heads instead of 101.</p>
-
-<h4>The two transitions 1a performs</h4>
-<figure><div class="cap"><span>mm/ltram_policy.c &mdash; the only ways a page changes state</span></div>
-<pre><code>static void lt_take(unsigned long idx)          <span class="c">/* FREE -&gt; VALID */</span>
-{
-        list_del_init(&amp;lt_node[idx]);           <span class="c">/* off its free bucket */</span>
-        lt_free_count--;
-        __set_bit(idx, lt_bm[LT_VALID]);
-        if (lt_ec[idx] &lt; U32_MAX)
-                lt_ec[idx]++;
-}
-
-static void lt_give_back(unsigned long idx)     <span class="c">/* VALID -&gt; FREE */</span>
-{
-        __clear_bit(idx, lt_bm[LT_VALID]);
-        list_add_tail(&amp;lt_node[idx], &amp;lt_free_by_ec[lt_bucket_of(lt_ec[idx])]);
-        lt_free_count++;
-}</code></pre></figure>
-<p>1c inserts DIRTY and the background erase between the two halves of
-<code>lt_give_back()</code>. In 1a only FREE and VALID are ever occupied, because a freed page
-still goes straight back to FREE exactly as it does now.</p>
-
-<div class="box box--warn">
-  <p class="lab">The erase count is an upper bound in 1a</p>
-  <p>It is incremented at <em>allocation</em>, because in the current design every allocated page
-  is erased before it is programmed &mdash; so allocation and erase are one-to-one, except when a
-  migration fails after allocating, which over-counts by one. Wrong in the conservative
-  direction, and replaced by an erase-completion hook in 1c.</p>
-  <p>Counts start at 0, which is <strong>not</strong> the device's history: this chip took heavy
-  unknown wear during FPGA bring-up. Read them as <em>&ldquo;erases since counting began.&rdquo;</em></p>
+<h3>Allocation: the least-worn page, and what it replaced</h3>
+<figure><div class="cap"><span>mm/ltram_policy.c &mdash; lt_pop_free()</span></div>
+<pre><code>for (b = 0; b &lt; LT_EC_BUCKETS; b++)
+        if (!list_empty(&amp;lt_free_by_ec[b]))
+                return lt_free_by_ec[b].next - lt_node;
+return ltram_nr_pages;                 <span class="c">/* window full */</span></code></pre></figure>
+<p>No cursor or hint: scanning 101 buckets is <em>cheaper</em> than the <code>find_first_bit()</code>
+it replaced (101 <code>list_empty()</code> loads against a 1,024-word bitmap scan), and a hint
+would be wrong anyway &mdash; erase counts only rise, but a page that sat VALID at a low count
+returns to a bucket <em>below</em> where a hint had drifted.</p>
+<div class="box box--good">
+  <p class="lab">Measured: peak wear per sector, 1,518 &rarr; 1</p>
+  <p>Same workload, two kernels. <code>find_first_bit</code> always returned the lowest free
+  index, so a released page was handed straight back out: <strong>one sector absorbed 1,518
+  allocations while 65,535 were never touched.</strong> With buckets,
+  <code>total_allocs == pages_ever_used == 2,752</code> &mdash; every allocation went to a
+  different page, and no page was handed out twice.</p>
 </div>
 
-<h4>The five assertions &mdash; <code>/sys/kernel/debug/ltram/pagestate</code></h4>
-<div class="tw"><table>
-<thead><tr><th>check</th><th>catches</th></tr></thead>
-<tbody>
-<tr><td><code>VALID &amp; DIRTY == 0</code></td><td>a page in two states</td></tr>
-<tr><td><code>valid + dirty + free_count + erasing == 65536</code></td><td>a page lost from every state</td></tr>
-<tr><td><strong>derived FREE &equiv; the live allocator bitmap</strong></td><td>the shadow drifting from reality (1a-specific)</td></tr>
-<tr><td><strong>bucket lengths sum to <code>lt_free_count</code></strong></td><td>a page dropped from a list but still counted</td></tr>
-<tr><td>every bucketed page is not VALID/DIRTY, and is in the bucket its EC says</td><td>a page in the wrong bucket</td></tr>
-</tbody></table></div>
-<p>The middle three are the redundancy that matters: <strong>three independent descriptions of
-the free set</strong> &mdash; derived, counted, and walked &mdash; that must all agree. That is
-what turns a silent page loss into failed arithmetic. The file also reports the erase-count
-min / max / mean / spread and a histogram, which is what will answer <em>&ldquo;how skewed is the
-wear?&rdquo;</em> the first time it runs.</p>
-<p>Reading it holds the allocator lock with interrupts off for ~65,536 iterations &mdash; a few
-hundred microseconds. Fine for a file a human reads, deliberately not something a hot path could
-call. <code>lt_check_fast()</code> is the O(n/64) bitwise subset for that.</p>
-
-<h4 id="spinlock">What the spinlock is for &mdash; and one thing to correct</h4>
+<h3 id="lock">The lock, and one thing to correct</h3>
 <div class="box box--bad">
   <p class="lab">There are not 48 instances of Linux</p>
-  <p><strong>One kernel image runs across all 48 cores.</strong> This is SMP, not 48 machines
-  agreeing with each other. The cores share one physical address space, one kernel page table,
-  and <em>one</em> copy of every kernel data structure &mdash; a single
-  <code>ltram_free_bitmap</code> and a single <code>ltram_alloc_lock</code> at one address, which
-  all 48 cores load and store directly.</p>
-  <p>So the arbitration problem is real, but it is not consensus between instances. It is 48
-  execution contexts inside one OS mutating one shared object; hardware cache coherence makes
-  their views agree, and the lock decides <em>who may mutate it now</em>.</p>
+  <p><strong>One kernel image runs across all 48 cores.</strong> They share one physical address
+  space and <em>one</em> copy of every data structure &mdash; a single bitmap at a single address
+  that all 48 load and store directly. The arbitration problem is real, but it is not consensus
+  between instances; hardware cache coherence makes their views agree and the lock decides who
+  may mutate now.</p>
 </div>
-<p><strong>A spinlock is one word in memory.</strong> <code>spin_lock()</code> atomically
-test-and-sets it; if another core holds it, this core <em>spins</em> in a tight re-test loop
-until it is released. It never sleeps &mdash; right when the critical section is very short,
-because putting a thread to sleep and waking it costs far more than the wait.</p>
-<div class="tw"><table>
-<thead><tr><th>held for</th><th>use</th><th>where in this project</th></tr></thead>
-<tbody>
-<tr><td>nanoseconds &mdash; a bit scan and a bit clear</td><td><strong>spinlock</strong>, spin and retry</td><td><code>ltram_alloc_lock</code></td></tr>
-<tr><td>~16 ms &mdash; an erase plus a DMA</td><td><strong>mutex</strong>, sleep and be woken</td><td><code>ltram_wp_lock</code> in the backend</td></tr>
-</tbody></table></div>
-<p>Spinning for 16 ms would burn a core for 32 million cycles. Sleeping for ~50 ns of bitmap work
-would cost more than the work. Same problem, opposite answers, decided by expected hold time.</p>
+<p>A spinlock is one word: test-and-set, and spin if held. Never sleeps &mdash; right when the
+critical section is nanoseconds, because sleeping and waking costs more than the wait. The
+contrast is in this same project: the backend's flash write uses a <strong>mutex</strong>, because
+holding for ~16.4 ms would burn 32 million cycles spinning.</p>
+<p><code>irqsave</code> prevents a <strong>one-core self-deadlock</strong>: the free path is
+reachable from softirq via <code>free_pages_prepare()</code>, so a core holding the lock in
+process context that then took an interrupt wanting the same lock would spin forever waiting for
+itself. It masks interrupts only on the local core; the other 47 are still handled by the lock.</p>
 
-<h4><code>irqsave</code> prevents a one-core self-deadlock</h4>
-<figure><div class="cap"><span>the deadlock it prevents</span></div>
-<pre><code>CPU 12, process context          CPU 12, interrupt arrives
-------------------------          ------------------------
-spin_lock(&amp;ltram_alloc_lock)
-  <span class="c">... holding the lock ...</span>  --&gt;   softirq: free_pages_prepare()
-                                        ltram_free_page()
-                                        spin_lock(&amp;ltram_alloc_lock)
-                                          <span class="c">spins forever, waiting for a lock</span>
-                                          <span class="c">held by the very core it interrupted</span>
-<span class="hlb">                              DEADLOCK -- one core, against itself</span></code></pre></figure>
-<p>Not hypothetical: the free path <em>is</em> reachable from softirq, because
-<code>free_pages_prepare()</code> sits on the batch path taken by reclaim and
-<code>munmap</code>. That is why the lock was converted in <code>e6f915089</code>. Note it only
-masks interrupts on the <em>local</em> core; the other 47 are still handled by the lock.</p>
-
-<h4>Two details in that code worth noticing</h4>
-<ul>
-<li><strong><code>__clear_bit</code> / <code>__set_bit</code>, not the atomic forms.</strong> The
-<code>__</code> variants are non-atomic, which is correct: the spinlock already provides mutual
-exclusion, so an atomic RMW on top would be redundant cost.</li>
-<li><strong>The free path tests before setting.</strong> A page freed twice &mdash; through both
-the <code>__folio_put_small()</code> hook and the <code>free_pages_prepare()</code> backstop
-&mdash; will not double-decrement. The two guard sites are allowed to overlap safely.</li>
-</ul>
-
-<h3 id="hook">1.4 The write path, and where it attaches to migration</h3>
-
-<div class="box box--warn">
-  <p class="lab">Terminology &mdash; &ldquo;hook&rdquo; is loose, and worth being precise about</p>
-  <p><strong>&ldquo;Migration hook&rdquo; is not a standard kernel term, and there is no
-  <code>migration_hook</code> API.</strong> &ldquo;Hook&rdquo; is informal shorthand for
-  <em>a call-out point inserted into a generic path</em>. The kernel does use it formally in a
-  few places &mdash; LSM hooks, netfilter hooks &mdash; but migration is not one of them.</p>
-  <p>The precise description of what we added is: <strong>a conditional branch inside
-  <code>migrate_folio_extra()</code></strong>, the generic copy routine. Not a registered
-  callback, not a vtable entry &mdash; a patch to a core function.</p>
-</div>
-
-<h4>The real extension point, and why it could not be used</h4>
-<p>The kernel <em>does</em> have a formal migration override:
-<code>struct address_space_operations::migrate_folio</code> (<code>include/linux/fs.h:433</code>).
-Filesystems supply one to control how their pages move. It is structurally unusable here, for two
-independent reasons:</p>
-
-<figure><div class="cap"><span>mm/migrate.c &mdash; move_to_new_folio(), the dispatch</span></div>
-<pre><code>struct address_space *mapping = folio_mapping(src);
-
-<span class="hl">if (!mapping)
-        rc = migrate_folio(mapping, dst, src, mode);   </span><span class="c">/* &lt;- clean anon lands HERE */</span>
-else if (mapping_unmovable(mapping))
-        rc = -EOPNOTSUPP;
-else if (mapping-&gt;a_ops-&gt;migrate_folio)
-        rc = mapping-&gt;a_ops-&gt;migrate_folio(mapping, dst, src, mode);
-else
-        rc = fallback_migrate_folio(mapping, dst, src, mode);</code></pre></figure>
-
-<ol>
-<li><strong>It dispatches on the source, we need to act on the destination.</strong>
-<code>a_ops</code> is reached through <code>folio_mapping(<u>src</u>)</code> &mdash; it answers
-&ldquo;where did this page come from?&rdquo; Our entire condition is
-<code>folio_is_ltram(<u>dst</u>)</code>: <em>where is it going?</em> No per-source callback can
-express that, because the same source folio may be migrated to DRAM or to flash depending only on
-who allocated the destination.</li>
-<li><strong>Clean anonymous folios have no mapping at all.</strong> <code>folio_mapping()</code>
-returns NULL for them, so they take the first branch and never consult <code>a_ops</code>.
-Anonymous memory is <em>precisely</em> what this policy migrates &mdash; see the anon-only filter
-in &sect;1.6 &mdash; so the formal extension point is not on the path we care about.</li>
-</ol>
-
-<p>So the conditional in <code>migrate_folio_extra()</code> is not laziness in place of a proper
-interface; there is no existing interface with the right shape. <strong>If this were being
-upstreamed, inventing one &mdash; a destination-keyed migration operation &mdash; would be the
-main design conversation.</strong></p>
-
-<h4>Where exactly it attaches, and why there</h4>
-<p><code>mm/ltram.c</code> knows nothing about the FPGA. It calls out through one function
-pointer, <code>struct ltram_flash_ops::write_page</code>. Until a backend registers,
-<code>ltram_write_page()</code> returns <code>-ENODEV</code> &mdash; <strong>that is the safety
-property, not a gap.</strong></p>
-
-<figure><div class="cap"><span>mm/migrate.c &mdash; migrate_folio_extra</span><span class="rt">hook placement</span></div>
-<pre><code><span class="c">/* Deliberately BEFORE folio_migrate_mapping(): @src is already unmapped
- * by try_to_migrate() so its contents are stable, and a flash error
- * returns here with nothing published. After the mapping move there is
- * no way to fail safely. */</span>
-<span class="hl">if (folio_is_ltram(dst) &amp;&amp; mode != MIGRATE_SYNC_NO_COPY) {
-        rc = ltram_copy_to_flash(dst, src);
-        if (rc)
-                return rc;
-}</span>
-rc = folio_migrate_mapping(mapping, dst, src, extra_count);
-if (rc != MIGRATEPAGE_SUCCESS)
-        return rc;
-<span class="hl">if (mode == MIGRATE_SYNC_NO_COPY || folio_is_ltram(dst))
-        folio_migrate_flags(dst, src);  </span><span class="c">/* LtRAM data programmed above */</span>
-else
-        folio_migrate_copy(dst, src);</code></pre></figure>
-
-<p><strong>Check this against your criteria:</strong> for an LtRAM destination there is
-<em>no</em> <code>folio_migrate_copy()</code>. The CPU never memcpy's into the flash window
-&mdash; which matters because such stores would be silently discarded by the hardware while
-still occupying CPU cache lines.</p>
-
-<h4 id="modes">What <code>mode != MIGRATE_SYNC_NO_COPY</code> is guarding against</h4>
-<figure><div class="cap"><span>include/linux/migrate_mode.h</span></div>
-<pre><code>enum migrate_mode {
-        MIGRATE_ASYNC,
-        MIGRATE_SYNC_LIGHT,
-        MIGRATE_SYNC,
-        MIGRATE_SYNC_NO_COPY,
-};</code></pre></figure>
-<div class="tw"><table>
-<thead><tr><th>mode</th><th>meaning</th><th>who uses it</th></tr></thead>
-<tbody>
-<tr><td><code>MIGRATE_ASYNC</code></td><td>never block. Bail out of anything that would sleep</td><td>compaction's async pass, GUP</td></tr>
-<tr><td><code>MIGRATE_SYNC_LIGHT</code></td><td>may block, but <strong>not</strong> on writeback</td><td>compaction's sync-light pass</td></tr>
-<tr><td><code>MIGRATE_SYNC</code></td><td>may block on anything, including waiting for writeback to finish</td><td><strong>our scanner</strong>, memory hotplug, <code>move_pages()</code></td></tr>
-<tr><td><code>MIGRATE_SYNC_NO_COPY</code></td><td>synchronous, but <strong>the caller moves the data itself</strong> &mdash; the core must not copy</td><td>device migration, where a device DMA engine does the copy</td></tr>
-</tbody></table></div>
-<p>So the condition reads: <em>&ldquo;unless the caller has said it is handling the data movement
-itself, program the flash here.&rdquo;</em> It is a <strong>guard against double-programming a
-sector</strong> &mdash; writing it once from our path and again from the caller's.</p>
-<p>In practice our scanner always passes <code>MIGRATE_SYNC</code>
-(<code>migrate_pages(&amp;ctx.candidates, ltram_get_new_folio, ltram_put_new_folio, 0,
-MIGRATE_SYNC, MR_NUMA_MISPLACED, &amp;moved)</code>), so the branch is always taken today. The
-check exists so that a future caller using <code>NO_COPY</code> does not silently erase and
-reprogram a sector that already holds the right data &mdash; which would cost two extra erases
-and a window in which the page is neither the old nor the new content.</p>
-<p>Note the symmetry two lines further down: <code>folio_migrate_flags()</code> is used for
-<em>both</em> <code>MIGRATE_SYNC_NO_COPY</code> and LtRAM destinations, because in both cases the
-data was moved by something other than <code>folio_migrate_copy()</code>.</p>
-
-<h4 id="dma">Does <code>ltram_copy_to_flash()</code> drive the FPGA's DMA engine?</h4>
+<h2 id="erase">1.5 &middot; The background erase engine</h2>
 <div class="box box--key">
-  <p class="lab">Short answer: no &mdash; and that separation is deliberate</p>
-  <p><code>ltram_copy_to_flash()</code> lives in <code>mm/ltram.c</code> and contains
-  <strong>no device knowledge whatsoever</strong>. It iterates the folio's pages,
-  <code>kmap_local_folio()</code>s each source page, and calls
-  <code>ltram_write_page(dst_pfn, src)</code>, which calls out through the registered
-  <code>ltram_flash_ops::write_page</code> pointer. It cannot touch MMIO; it does not know an FPGA
-  exists.</p>
-  <p>The device work happens one layer down, in the backend module:
-  <code>ft_ltram_write_page()</code> &rarr; <code>trigger_erase()</code> and
-  <code>write_sector()</code>.</p>
+  <p class="lab">Why this exists</p>
+  <div class="tw"><table>
+  <thead><tr><th></th><th class="num">cost</th><th class="num">share</th></tr></thead>
+  <tbody>
+  <tr><td>subsector erase</td><td class="num">16.4 ms</td><td class="num"><strong>93%</strong></td></tr>
+  <tr><td>programming a sector</td><td class="num">~1.2 ms</td><td class="num">7%</td></tr>
+  </tbody></table></div>
+  <p><code>write_page()</code> erases synchronously before every program, so <strong>93% of a
+  promotion's cost is erase, on the critical path.</strong> Pages arriving pre-erased cost the
+  DMA alone. It removes the erase from the <em>latency</em> path, not the <em>throughput</em>
+  budget &mdash; sustained promotion is still capped near 61 pages/s. Ours is a burst workload,
+  so we collect the win.</p>
 </div>
 
-<figure><div class="cap"><span>the layers, and where the MMIO actually is</span></div>
-<pre><code>  mm/migrate.c        migrate_folio_extra()          generic, no device knowledge
-        |
-        v
-  mm/ltram.c          ltram_copy_to_flash()          per-page loop, kmap, no MMIO
-        |                     |
-        |                     v
-        |             ltram_write_page()             pins the module, counts ok/failed,
-        |                     |                      returns -ENODEV with no backend
-        |                     v
-        |             ops-&gt;write_page  <span class="c">&lt;-- the only crossing point</span>
-        v
-  <span class="hl">backend module      ft_ltram_write_page()          THE DEVICE CODE STARTS HERE</span>
-                            |
-                            +--&gt; memcpy(dma_buf, src, 4096)
-                            +--&gt; dc cvac over dma_buf     <span class="c">clean to PoC: the FPGA</span>
-                            |                             <span class="c">reads this from DRAM</span>
-                            +--&gt; trigger_erase(sec)       <span class="c">store to er_win</span>
-                            +--&gt; wait on the erase COUNTER, not a sleep
-                            +--&gt; write_sector(sec)        <span class="c">the descriptor store</span>
-                            +--&gt; inval_sector(sec)        <span class="c">drop stale read-window lines</span></code></pre></figure>
+<h3>A workqueue, not a timer</h3>
+<p>The erase sleeps ~16.4 ms inside the backend waiting on the device's erase <em>counter</em>
+(never a fixed delay &mdash; a dropped trigger is invisible to a sleep), and timer callbacks run
+in softirq where sleeping is forbidden. The worker drains <code>erase_batch</code> per invocation
+and re-arms with <strong>zero delay while a backlog remains</strong>: one erase per 50 ms poll
+would have capped the engine at 20/s against a device sustaining ~61/s.</p>
 
-<h4>The descriptor itself</h4>
-<figure><div class="cap"><span>ltram-backend &mdash; write_sector()</span></div>
-<pre><code>desc = ((SECT_SZ &amp; 0xFFFFFF) &lt;&lt; 40) | ((u64)dma_h &amp; 0xFFFFFFFFFFULL);
-<span class="hl">writeq(desc, io_win + base);   </span><span class="c">/* descriptor at io_win + (sector * 4096) */</span>
-wmb();
-for (tries = 0; tries &lt; 200000; tries++) {
-        got = readq(io_win) &amp; 0xFFFFFF;      <span class="c">/* engine's byte count */</span>
-        if (got &gt;= SECT_SZ) break;
-        udelay(10);
-}</code></pre></figure>
-<ul>
-<li><strong>One 64-bit store is the entire command.</strong> Bits [63:40] carry the length
-(4096); bits [39:0] carry the <em>source</em> physical address from
-<code>dma_alloc_coherent()</code></li>
-<li><strong>The destination is encoded in the address of the store</strong>, not in the payload:
-<code>io_win + sector*4096</code>. The window is 256 MB precisely so every sector has its own
-descriptor address</li>
-<li><strong>The FPGA then reads the source page out of DRAM itself.</strong> That is why the
-<code>dc cvac</code> is mandatory &mdash; the data must be visible at the point of coherency
-before the descriptor is posted, and the <code>wmb()</code> orders those two</li>
-<li>Completion is polled from a free-running byte counter in the status word, read back through
-the same window</li>
-</ul>
+<h3>The device-idle gate</h3>
+<figure><div class="cap"><span>the only visibility into read traffic that exists</span></div>
+<pre><code>!ST_HW_BUSY(w) &amp;&amp; !ST_ER_INFL(w) &amp;&amp; ST_SCH(w) == 0
 
+sch_state: 0=IDLE 1=CMD 2=WRDATA <span class="hl">3=RDDATA</span> 4=DONE   <span class="c">(nor_read_subsystem.v:328)</span></code></pre></figure>
+<p><strong>Reads never reach the driver</strong> &mdash; they are plain loads through the cacheable
+window &mdash; so the FPGA's status word is the only way the kernel can see them at all.
+<code>RDDATA</code> is why it can. A <em>single</em> sample can land in the gap between two reads,
+so the device must look idle <code>idle_samples</code> (3) times in a row before a 16.4 ms erase
+is committed. Not quiet &rarr; back to DIRTY, <code>erase_deferred++</code>, never erase into a
+read stream.</p>
+
+<h3>Lazy erase is correct, and it invalidates an obvious assertion</h3>
 <div class="box box--warn">
-  <p class="lab">On &ldquo;AXI-Lite&rdquo; specifically &mdash; I cannot confirm this from the driver</p>
-  <p>From the CPU's side this is a <code>writeq</code> into an <code>ioremap()</code>d
-  (uncached, Device-nGnRE) window whose transactions cross ECI. What that lands on <em>inside</em>
-  the FPGA &mdash; an AXI-Lite slave, or something else &mdash; is not visible in the driver
-  source, and I would be guessing.</p>
-  <p>Two observations that argue against a plain AXI-Lite register bank: the window is
-  <strong>256 MB</strong>, and the <strong>address carries the destination sector</strong>. That
-  is a memory-mapped command region, not a small register file. The FPGA-side answer is in the
-  shell RTL (<code>nor_read_subsystem.v</code>, the <code>write_manager</code>), not here.</p>
+  <p class="lab">DIRTY does not drain, and should not</p>
+  <p>Erasing starts only below <code>erase_low_water</code> and continues to
+  <code>erase_high_water</code> &mdash; hysteresis, so the engine is not started and stopped once
+  per allocation at a boundary. After a workload exits, <code>free</code> sits far above the high
+  mark, so the worker deliberately does nothing and DIRTY simply accumulates. Spending erases on
+  sectors nobody needs is pure wear.</p>
+  <p><strong>So &ldquo;free returns to 65,536&rdquo; is the wrong success criterion</strong> once a
+  backend is loaded. The right one is the four states summing to 65,536. An earlier test asserted
+  the former and would have failed on correct behaviour.</p>
 </div>
 
-<h3 id="invariant">1.5 The invariant, and the four places that enforce it</h3>
+<h2 id="invariant">1.6 &middot; The invariant, and the four guards</h2>
 <div class="box box--key">
   <p class="lab">The invariant</p>
   <p><strong>A flash-backed page is never writable, and never reaches the buddy allocator.</strong>
-  A store to the NOR read window is silently discarded by the hardware &mdash; no fault, no
-  error &mdash; so a writable flash PTE loses data with no diagnostic whatsoever.</p>
+  A store to the NOR read window is silently discarded by the hardware &mdash; no fault, no error
+  &mdash; so a writable flash PTE loses data with no diagnostic whatsoever.</p>
 </div>
 <div class="tw"><table>
-<thead><tr><th>site</th><th>file:line</th><th>what it prevents</th></tr></thead>
+<thead><tr><th>site</th><th>file:line</th><th>prevents</th></tr></thead>
 <tbody>
-<tr><td>write fault</td><td><code>mm/memory.c:3516-3520</code></td><td><code>do_wp_page</code> reusing a flash folio in place. Adds <code>&amp;&amp; !folio_is_ltram(folio)</code> to the reuse condition, so it falls through to <code>wp_page_copy()</code> &mdash; which <em>is</em> the demotion. Also counts it via <code>ltram_note_demotion()</code></td></tr>
-<tr><td>migration entry</td><td><code>mm/migrate.c:230</code></td><td><code>remove_migration_pte</code> restoring a <strong>writable</strong> PTE onto a flash folio &mdash; the one route to a writable LtRAM PTE that does not pass through <code>do_wp_page</code></td></tr>
-<tr><td>single-page free</td><td><code>mm/swap.c:113-116</code></td><td><code>__folio_put_small</code> handing a flash page to <code>free_unref_page()</code>. Redirects to <code>ltram_free_folio()</code> and returns</td></tr>
-<tr><td>every other free</td><td><code>mm/page_alloc.c:1102-1105</code></td><td><strong>The catch-all.</strong> <code>free_pages_prepare()</code> is the single funnel every free path passes through. Returns the page to the bitmap and refuses the buddy free</td></tr>
+<tr><td>write fault</td><td><code>mm/memory.c:3516</code></td><td><code>do_wp_page</code> reusing a flash folio in place. Falls through to <code>wp_page_copy()</code> &mdash; which <em>is</em> the demotion</td></tr>
+<tr><td>migration entry</td><td><code>mm/migrate.c:230</code></td><td><code>remove_migration_pte</code> restoring a <strong>writable</strong> PTE &mdash; the one route to a writable LtRAM PTE not passing through <code>do_wp_page</code></td></tr>
+<tr><td>single-page free</td><td><code>mm/swap.c:113</code></td><td><code>__folio_put_small</code> handing a flash page to buddy</td></tr>
+<tr><td>every other free</td><td><code>mm/page_alloc.c:1102</code></td><td><strong>the catch-all.</strong> <code>free_pages_prepare()</code> is the one funnel every free path passes through</td></tr>
 </tbody></table></div>
-<div class="box box--warn">
-  <p class="lab">Why the fourth site exists, and why it is the important one</p>
+<div class="box box--bad">
+  <p class="lab">Why the fourth site is the one that matters</p>
   <p><code>release_pages()</code> and <code>free_unref_page_list()</code> &mdash; the batch path
-  that <strong>process exit and <code>munmap</code> take</strong> &mdash; bypass
-  <code>__folio_put_small()</code> entirely. With only sites 1&ndash;3, flash pages hit the
-  backstop, were correctly kept out of buddy, and were then <strong>dropped</strong>: 16,502
-  leaked in one evening. Hooking the funnel covers every caller <em>by construction</em>
-  instead of by enumeration.</p>
+  that <strong>process exit and munmap take</strong> &mdash; bypass
+  <code>__folio_put_small()</code> entirely. With only the first three, flash pages hit the
+  backstop, were correctly kept out of buddy, and were then <strong>dropped: 16,502 leaked in one
+  evening.</strong></p>
+  <p>Measured since: in one run <strong>4,452 frees took the batch path and 3 took the
+  single-page path.</strong> At process exit the batch path is not one of two routes, it is
+  effectively the only one.</p>
 </div>
 
-<h3 id="policy">1.6 The policy &mdash; exact selection filters, in evaluation order</h3>
-<p>Per PTE, in <code>scan_pte_range()</code>. A page must survive <em>all</em> of these:</p>
+<h2 id="policy">1.7 &middot; The policy</h2>
+<h3>Selection filters, in evaluation order</h3>
 <div class="tw"><table>
 <thead><tr><th class="num">#</th><th>test</th><th>rejected if</th><th>counted as</th></tr></thead>
 <tbody>
-<tr><td class="num">1</td><td><code>pte_present(p)</code></td><td>not present</td><td>&mdash; (not scanned)</td></tr>
-<tr><td class="num">2</td><td><code>vm_normal_folio()</code></td><td>no folio</td><td>&mdash;</td></tr>
-<tr><td class="num">3</td><td><code>folio_test_large()</code></td><td>compound/THP</td><td>&mdash;</td></tr>
-<tr><td class="num">4</td><td><code>folio_is_ltram()</code></td><td>already on flash</td><td>&mdash;</td></tr>
-<tr><td class="num">5</td><td><code>folio_maybe_dma_pinned()</code></td><td>pinned &mdash; cannot be migrated later, a device may hold its address</td><td>&mdash;</td></tr>
-<tr><td class="num">6</td><td><code>folio_test_anon() &amp;&amp; !folio_test_ksm()</code></td><td><strong>file-backed or KSM</strong></td><td><code>rej_not_anon</code></td></tr>
-<tr><td class="num">7</td><td><code>folio_try_get()</code></td><td>refcount race</td><td>&mdash;</td></tr>
-<tr><td colspan="4" style="background:var(--surface-3)"><em>&mdash; <code>stat_scanned</code> increments here; everything above is outside the partition &mdash;</em></td></tr>
-<tr><td class="num">8</td><td><code>written = pte_write(p)</code></td><td>currently writable</td><td><code>rej_writable</code>, then re-armed</td></tr>
-<tr><td class="num">9</td><td><code>clean_runs &gt;= 3</code></td><td>not yet 3 consecutive clean passes</td><td><code>rej_runs_short</code></td></tr>
-<tr><td class="num">10</td><td><code>folio_isolate_lru()</code></td><td>the LRU refuses it</td><td><code>sel_isolate_fail</code></td></tr>
-<tr><td class="num">11</td><td><code>ctx-&gt;nr &lt; promote_batch</code></td><td>batch already full &mdash; <strong>the pass short-circuits</strong></td><td>&mdash; (not scanned)</td></tr>
+<tr><td class="num">1&ndash;4</td><td>present, normal folio, not large, not already LtRAM</td><td>&mdash;</td><td>&mdash;</td></tr>
+<tr><td class="num">5</td><td><code>folio_maybe_dma_pinned()</code></td><td>pinned &mdash; a device may hold its address</td><td>&mdash;</td></tr>
+<tr><td class="num">6</td><td><code>folio_test_anon() &amp;&amp; !folio_test_ksm()</code></td><td><strong>file-backed or KSM</strong></td><td><code>skipped_file_backed</code></td></tr>
+<tr><td colspan="4" style="background:var(--surface-3)"><em>&mdash; <code>ptes_examined</code> increments here; everything above is outside the partition &mdash;</em></td></tr>
+<tr><td class="num">7</td><td><code>written = pte_write(p)</code></td><td>currently writable</td><td><code>was_written</code>, then write-protected</td></tr>
+<tr><td class="num">8</td><td><code>folio_isolate_lru()</code></td><td>the LRU refuses</td><td><code>lru_refused</code></td></tr>
+<tr><td class="num">9</td><td><code>ctx-&gt;nr &lt; promote_batch</code></td><td>batch full &mdash; the pass short-circuits</td><td>&mdash;</td></tr>
 </tbody></table></div>
+<p>Identity: <code>ptes_examined = was_written + chosen + lru_refused</code>.</p>
 
-<div class="box box--bad">
-  <p class="lab">Two accounting facts you must know to read the counters</p>
-  <ul>
-  <li><code>rej_not_anon</code> is <strong>outside</strong> the <code>scanned</code> partition
-  (filter 6 runs before <code>stat_scanned</code>). The identity that holds is
-  <code>scanned = rej_writable + rej_runs_short + sel_isolated + sel_isolate_fail</code>.</li>
-  <li><strong>A large <code>scanned</code> is the symptom of finding nothing.</strong> The walk
-  restarts at address 0 every pass with no cursor, and filter 11 short-circuits once the batch
-  fills. A healthy pass stops early. 13.2 M &rarr; 110,732 was the fix working.</li>
-  </ul>
-</div>
-
-<h3>1.7 The promotion predicate, verbatim</h3>
-<figure><div class="cap"><span>mm/ltram_policy.c:173-182</span></div>
-<pre><code>static bool clean_run_should_promote(struct folio *f, struct ltram_obs *o, bool written)
+<h3>The predicate is one line</h3>
+<figure><div class="cap"><span>mm/ltram_policy.c</span></div>
+<pre><code>static bool clean_run_should_promote(struct folio *f, bool written)
 {
-        if (written) {
-                o-&gt;clean_runs = 0;      <span class="c">/* a write resets the count entirely */</span>
-                return false;
-        }
-        if (o-&gt;clean_runs &lt; U32_MAX)
-                o-&gt;clean_runs++;
-        return o-&gt;clean_runs &gt;= clean_passes_required;
-}</code></pre></figure>
-<p>And the re-arm, which is what makes <code>written</code> mean anything on the next pass:</p>
-<figure><div class="cap"><span>mm/ltram_policy.c &mdash; the re-arm</span></div>
-<pre><code>rearm:
-if (written) {
-        ptep_set_wrprotect(walk-&gt;mm, addr, pte);
-        flush_tlb_page(walk-&gt;vma, addr);
-        atomic64_inc(&amp;rearmed);
+        return !written;
 }</code></pre></figure>
 <div class="box box--key">
-  <p class="lab">Why <code>pte_write()</code> and not <code>pte_dirty()</code></p>
-  <p>On arm64 <code>pte_dirty()</code> is <code>pte_sw_dirty || pte_hw_dirty</code>, and
-  <code>pte_sw_dirty</code> is <strong>bit 55, a one-way latch</strong>: set on first write,
-  <em>set</em> again by <code>pte_wrprotect()</code>, preserved by <code>pte_modify()</code>
-  across <code>mprotect</code>, and cleared only by <code>pte_mkclean()</code> &mdash; which is
-  called <strong>nowhere</strong> in this subsystem. This CPU has no hardware DBM
-  (<code>ID_AA64MMFR1_EL1</code> HAFDBS = 0) and arm64 has <strong>no soft-dirty at all</strong>.
-  Measured consequence of asking the wrong question: <strong>13,247,550 of 13,258,954 scans
-  rejected, zero target pages promoted, ever.</strong></p>
-  <p><code>pte_write()</code> has an answer that can change, and one the scanner itself changes.</p>
+  <p class="lab">Why <code>pte_write()</code>, and why there is no streak counter</p>
+  <p>The original predicate asked <code>pte_dirty()</code>. On arm64 that is
+  <code>pte_sw_dirty || pte_hw_dirty</code>, and <code>pte_sw_dirty</code> is <strong>bit 55, a
+  one-way latch</strong>: set on first write, <em>set again</em> by <code>pte_wrprotect()</code>,
+  preserved by <code>pte_modify()</code>, and cleared only by <code>pte_mkclean()</code> &mdash;
+  called <strong>nowhere</strong> here. No hardware DBM (HAFDBS = 0), no soft-dirty on arm64.
+  Measured cost: <strong>13,247,550 of 13,258,954 scans rejected, zero target pages ever
+  promoted.</strong></p>
+  <p>A page also used to need N consecutive clean sightings, which meant a counter per pfn in an
+  xarray that was <strong>never erased</strong> &mdash; an unbounded leak, plus an
+  <code>xa_load</code> on every PTE of every pass. It bought nothing: how much confidence
+  &ldquo;not writable when we looked&rdquo; carries is set by how long the page had been
+  write-protected, and <code>scan_interval_ms</code> &times; <code>scan_ptes_per_pass</code>
+  already control that. One knob, no metadata.</p>
+  <p>The minimum is still <strong>two sightings</strong> &mdash; one to arm, one to confirm. That
+  is not extra waiting; a page cannot be known read-only until it has been protected and left
+  alone. A page already non-writable when first seen is promoted on the first sighting.</p>
 </div>
 
-<h3>1.8 Counters &mdash; what each one actually counts</h3>
+<h3>The scan resumes; it does not restart</h3>
+<p>The walk used to restart at address 0 <em>every pass</em> and stop once the batch filled, so
+anything above that point was never examined &mdash; a second large region above the first would
+have starved indefinitely, and the only reason none did is that <code>mmap</code> happened to
+place the region we cared about lowest. It also re-examined the same low PTEs every second, which
+is why <code>ptes_examined</code> reached 13.2 M over an address space of 50,176 pages.</p>
+<div class="box box--good">
+  <p class="lab">Measured: the cursor works</p>
+  <p><code>sweeps 1</code>, <code>scan_cursor 0xf89666fbe000</code>, and
+  <code>ptes_examined / chosen</code> at <strong>3.8&times;</strong> where it was
+  <strong>1:1</strong> before. It is now walking past regions instead of re-hitting the same
+  eligible pages.</p>
+</div>
+<p>Consequence worth knowing: a page is sighted once per <em>sweep</em>, so the sweep time
+<em>is</em> the observation window.</p>
+
+<h2 id="counters">1.8 &middot; Counters and tunables</h2>
 <div class="tw"><table>
 <thead><tr><th>counter</th><th>increments when</th></tr></thead>
 <tbody>
-<tr><td><code>scanned</code></td><td>a PTE survived filters 1&ndash;7</td></tr>
-<tr><td><code>rej_not_anon</code></td><td>file-backed or KSM folio (filter 6, outside the partition)</td></tr>
-<tr><td><code>rej_writable</code></td><td><code>pte_write()</code> was true this pass</td></tr>
-<tr><td><code>rearmed</code></td><td>the write-protect actually executed. Should equal <code>rej_writable</code></td></tr>
-<tr><td><code>rej_runs_short</code></td><td>seen clean, but fewer than 3 consecutive clean passes</td></tr>
-<tr><td><code>stale_dirty</code></td><td><em>diagnostic overlay:</em> <code>pte_dirty() &amp;&amp; !pte_write()</code> &mdash; exactly the pages the old rule rejected and this one accepts</td></tr>
-<tr><td><code>sel_isolated</code></td><td>chosen and successfully isolated from the LRU</td></tr>
-<tr><td><code>sel_isolate_fail</code></td><td>chosen, but <code>folio_isolate_lru()</code> refused</td></tr>
-<tr><td><code>promoted</code> / <code>promote_failed</code></td><td><code>migrate_pages()</code> returned success / failure. <strong>The last argument is <code>ret_succeeded</code></strong> &mdash; read as failures it reports success while nothing moves</td></tr>
-<tr><td><code>demoted</code></td><td>a write fault hit a flash folio in <code>do_wp_page</code></td></tr>
-<tr><td><code>late_free</code></td><td>a flash page reached <code>free_pages_prepare()</code> rather than the <code>__folio_put_small()</code> hook &mdash; i.e. the <strong>batch</strong> free path</td></tr>
-<tr><td><code>pages_in_use</code></td><td>live count from the bitmap allocator</td></tr>
+<tr><td><code>ptes_examined</code></td><td>a PTE survived filters 1&ndash;6. <strong>Visits, not distinct pages</strong> &mdash; the same page on two sweeps counts twice</td></tr>
+<tr><td><code>was_written</code></td><td>the trap sprang: <code>pte_write()</code> was true, so a write has landed since we last protected it</td></tr>
+<tr><td><code>write_protected</code></td><td>the trap was set. <strong>Must equal <code>was_written</code></strong></td></tr>
+<tr><td><code>dirty_but_readonly</code></td><td>diagnostic: <code>pte_dirty() &amp;&amp; !pte_write()</code> &mdash; what the old predicate rejected</td></tr>
+<tr><td><code>chosen</code> / <code>lru_refused</code></td><td>picked and isolated / picked but <code>folio_isolate_lru()</code> refused</td></tr>
+<tr><td><code>skipped_file_backed</code></td><td>page-cache or KSM folio. <strong>Outside the <code>ptes_examined</code> partition</strong></td></tr>
+<tr><td><code>moved_to_ltram</code> / <code>not_moved_this_pass</code></td><td>migrated onto flash / isolated but did not move. The latter is <strong>retried next pass</strong>, not a permanent failure</td></tr>
+<tr><td><code>moved_to_dram</code></td><td>a write fault hit a flash folio, forcing the copy back</td></tr>
+<tr><td><code>freed_via_backstop</code> / <code>freed_via_hook</code></td><td>returned via <code>free_pages_prepare()</code> (batch) / <code>__folio_put_small()</code> (single page)</td></tr>
+<tr><td><code>dst_allocated</code> / <code>dst_released</code></td><td>destinations handed to <code>migrate_pages()</code> / handed back on failure</td></tr>
+<tr><td><code>sweeps</code> / <code>scan_cursor</code></td><td>the cursor wrapped / where it currently sits</td></tr>
+<tr><td><code>erases_done</code> / <code>erases_failed</code> / <code>erase_deferred</code></td><td>background erases completed / failed / deferred because the device was busy</td></tr>
 </tbody></table></div>
+<p><strong>The accounting identity:</strong>
+<code>moved_to_ltram == valid + freed_via_backstop + freed_via_hook</code>. Every promoted page is
+either still in use or was returned by one of exactly two paths.</p>
 
-<h3>1.9 Tunables and their defaults</h3>
 <div class="tw"><table>
-<thead><tr><th>knob</th><th class="num">default</th><th>why that value</th></tr></thead>
+<thead><tr><th>tunable</th><th class="num">default</th><th>why</th></tr></thead>
 <tbody>
 <tr><td><code>scan_interval_ms</code></td><td class="num">1000</td><td>one pass per second</td></tr>
-<tr><td><code>clean_passes_required</code></td><td class="num">3</td><td>three consecutive passes with no trapped write</td></tr>
-<tr><td><code>promote_batch</code></td><td class="num">32</td><td><strong>the wear control.</strong> 65,536 sectors &times; 100,000 erases over 5 years = 41.5 erases/s sustained. A promotion that turns out wrong costs two erases, so the batch cap matters more than the interval</td></tr>
+<tr><td><code>promote_batch</code></td><td class="num">32</td><td><strong>the wear control.</strong> 65,536 sectors &times; 100,000 erases over 5 years = 41.5 erases/s sustained</td></tr>
+<tr><td><code>scan_ptes_per_pass</code></td><td class="num">8192</td><td>bounds work per pass independently of the batch, so barren regions sweep fast</td></tr>
+<tr><td><code>erase_low_water</code> / <code>erase_high_water</code></td><td class="num">2048 / 8192</td><td>hysteresis. The high mark is &ldquo;how big a burst can be absorbed&rdquo;, and costs ~2.2 min of erasing to fill</td></tr>
+<tr><td><code>erase_batch</code></td><td class="num">16</td><td>~260 ms of erases per invocation; one per poll would cap the engine at 20/s</td></tr>
+<tr><td><code>idle_samples</code> / <code>idle_sample_us</code></td><td class="num">3 / 1000</td><td>consecutive idle observations before committing an erase</td></tr>
+<tr><td><code>inline_erase</code> <em>(backend)</em></td><td class="num">1</td><td><strong>the switch that collects the win.</strong> 0 = trust the pre-erased pool. Can destroy data if the state machine is wrong: NOR programs by clearing bits, so an unerased sector yields the AND of old and new, silently</td></tr>
+<tr><td><code>verify_erased</code> <em>(backend)</em></td><td class="num">1</td><td>reads four words back and refuses with <code>-EIO</code> rather than corrupting</td></tr>
 </tbody></table></div>
-<p>All three are <code>module_param(..., 0644)</code> and live-writable at
-<code>/sys/module/ltram_policy/parameters/</code>. Targeting is
-<code>/sys/kernel/ltram/target_pid</code>; counters are <code>/sys/kernel/ltram/stats</code>;
-the physical range is <code>/sys/kernel/debug/ltram/{start_pfn,end_pfn}</code>.</p>
 
 <h2 id="method">2 &middot; Method</h2>
-
-<h3 id="boundary">2.1 The measurement boundary &mdash; what is inside the timer</h3>
-<figure><div class="cap"><span>workloads/matmul/matmul.c:606-621</span><span class="rt">the only timed region</span></div>
+<h3 id="boundary">2.1 The measurement boundary</h3>
+<figure><div class="cap"><span>workloads/matmul/matmul.c</span><span class="rt">the only timed region</span></div>
 <pre><code>memset(y, 0, ybytes);
 cache_scrub();          <span class="c">/* BEFORE t0: excluded from the measurement */</span>
 <span class="hl">double t0 = now();
-for (int it = 0; it &lt; ITERS; it++) {
+for (int it = 0; it &lt; ITERS; it++)
         for (size_t i = 0; i &lt; N; i++) {
                 const float *row = W + i * N;
                 float acc = 0.0f;
                 for (size_t j = 0; j &lt; N; j++) acc += row[j] * x[j];
                 y[i] += acc;
         }
-}
 t[r] = now() - t0;</span>   <span class="c">/* stop the clock HERE */</span></code></pre></figure>
-
 <div class="inout">
   <div class="io" style="--ioc:var(--good)">
     <h4>Inside the timer</h4>
-    <ul>
-      <li>The <code>ITERS</code> &times; N &times; N matrix&ndash;vector inner loop, and nothing else</li>
-      <li>Every read of <code>W</code>, which is what crosses to NOR once promoted</li>
-    </ul>
+    <ul><li>the <code>ITERS</code> &times; N &times; N inner loop, and nothing else</li>
+    <li>every read of <code>W</code>, which is what crosses to NOR once promoted</li></ul>
   </div>
   <div class="io" style="--ioc:var(--bad)">
     <h4>Outside the timer</h4>
-    <ul>
-      <li><code>memset(y)</code> &mdash; the accumulator reset</li>
-      <li><code>cache_scrub()</code> &mdash; the LLC eviction</li>
-      <li>SHA-256 digest computation and comparison</li>
-      <li>All <code>printf</code>, including the <code>POINT</code> line</li>
-      <li>The entire <code>--phys</code> pagemap census and move diff</li>
-    </ul>
+    <ul><li><code>memset(y)</code> and <code>cache_scrub()</code></li>
+    <li>the SHA-256 digest and its comparison</li>
+    <li>every <code>printf</code>, including the <code>POINT</code> line</li>
+    <li>the entire <code>--phys</code> pagemap census</li></ul>
   </div>
 </div>
-<p><code>now()</code> is <code>clock_gettime(CLOCK_MONOTONIC)</code>. The clock stops before the
-digest, so <strong>verification never inflates a timing</strong>.</p>
+<p><code>now()</code> is <code>CLOCK_MONOTONIC</code>, and the clock stops before the digest, so
+<strong>verification never inflates a timing</strong>.</p>
 
-<h3>2.2 The cache scrub, exactly</h3>
-<figure><div class="cap"><span>matmul.c &mdash; cache_scrub()</span></div>
-<pre><code>volatile unsigned long sink = 0;
-for (i = 0; i &lt; scrub_bytes; i += 128) sink += scrub_buf[i];   <span class="c">/* one read per 128 B line */</span>
-(void)sink;
+<h3 id="scrub">2.2 The cache scrub &mdash; and it changes nothing</h3>
+<figure><div class="cap"><span>cache_scrub()</span></div>
+<pre><code>for (i = 0; i &lt; scrub_bytes; i += 128) sink += scrub_buf[i];   <span class="c">/* one read per line */</span>
 for (i = 0; i &lt; scrub_bytes; i += 4096) scrub_buf[i]++;        <span class="c">/* one store per page */</span></code></pre></figure>
 <ul>
-<li><strong>Capacity eviction, not <code>dc civac</code>.</strong> One read per 128 B line over a
-buffer 4&times; the LLC steamrolls every set, needs no privilege, and does not depend on which
-cache-maintenance instructions EL0 may issue</li>
-<li><strong>Sized 64 MiB against a 16 MiB LLC.</strong> This machine has <em>no private L2</em>:
-16 MiB is the LLC and it is shared by all 48 cores</li>
-<li><strong>The <code>volatile</code> sink</strong> is what stops the compiler deleting the loop</li>
-<li><strong>The store pass exists so the scrub buffer cannot itself be promoted.</strong> It keeps
-<code>pte_write()</code> true, so the policy rejects and re-arms it every pass. Without it the
-buffer is anonymous and read-mostly &mdash; a perfect candidate &mdash; and
-<code>mmap</code> puts it <em>below</em> the weights, so the scanner reaches it first</li>
+<li><strong>Capacity eviction, not <code>dc civac</code></strong> &mdash; needs no privilege and
+does not depend on which cache-maintenance instructions EL0 may issue</li>
+<li><strong>64 MiB against a 16 MiB LLC.</strong> This machine has no private L2: 16 MiB is the
+LLC, shared by all 48 cores</li>
+<li><strong>The store pass exists so the scrub buffer cannot itself be promoted.</strong> Without
+it the buffer is anonymous and read-mostly &mdash; a perfect candidate &mdash; and
+<code>mmap</code> places it <em>below</em> the weights, so the scanner promoted all 16,384 pages
+of the instrument before touching the subject, burning 457 s and 16,384 erases</li>
 </ul>
 <div class="box box--warn">
-  <p class="lab">Measured: the scrub changes nothing at this size</p>
-  <p>DRAM baseline <strong>warm 0.107 s, cold 0.107 s</strong> &mdash; identical to four decimal
-  places over six runs each. A 64 MiB linear sweep against a 16 MiB shared cache already
-  self-evicts before it wraps, so these timings were <em>always</em> effectively cold. The flush
-  is kept because it forecloses the objection, not because it changed an answer. <strong>If you
-  need a warm-cache number, this method will not give you one.</strong></p>
+  <p class="lab">Measured: the flush is a no-op at this size</p>
+  <p>DRAM baseline <strong>warm 0.1074 s, cold 0.1074 s</strong>, identical to four decimals over
+  six runs each. A 64 MiB linear sweep against a 16 MiB cache self-evicts before it wraps, so
+  these timings were <em>always</em> effectively cold. The flag is kept because it forecloses the
+  objection, not because it changed an answer. <strong>If you need a warm-cache number, this
+  method will not give you one.</strong></p>
 </div>
 
-<h3>2.3 What one measured point is</h3>
+<h3>2.3 What one point is, and how residency is measured</h3>
 <ul>
-<li><code>--iters 1 --runs N</code> &rarr; <strong>one point = one complete pass over the whole
-weight matrix, from a scrubbed cache.</strong> No pass shares a cache with itself</li>
-<li><code>--iters K</code> with K&gt;1 makes a point <em>K passes</em>, and iterations 2..K
-<em>are</em> warm. The station-4 runs used K=60; the station-7 measurement used K=1</li>
-<li>Each point emits <code>POINT &lt;run&gt; &lt;seconds&gt; &lt;wall_offset&gt;</code></li>
+<li><code>--iters 1 --runs N</code> &rarr; one point = <strong>one cold pass over the whole
+region</strong>. With <code>--iters K</code>, iterations 2..K are warm</li>
+<li>Residency comes from <code>/proc/pid/pagemap</code> compared against
+<code>/sys/kernel/debug/ltram/{start,end}_pfn</code> &mdash; <strong>page-table truth, not the
+policy's opinion</strong>, so it would catch a counter that lies</li>
+<li><strong>Root is required.</strong> Unprivileged pagemap on this box reports every page absent;
+the tool warns rather than reporting a silent zero</li>
+<li>Alignment: matmul prints <code>TSTART</code> as a <code>CLOCK_REALTIME</code> epoch at the run
+loop's origin, so a sampler needs no guess about how long the fill took</li>
 </ul>
 
-<h3>2.4 How residency is measured &mdash; independently of the kernel's own counters</h3>
-<ul>
-<li><code>ltram-inspect &lt;pid&gt; &lt;name&gt; &lt;start&gt; &lt;len&gt;</code> reads
-<code>/proc/&lt;pid&gt;/pagemap</code> directly</li>
-<li><code>PM_PRESENT</code> = bit 63; PFN = bits 0..54</li>
-<li>Each PFN is compared against <code>/sys/kernel/debug/ltram/{start_pfn,end_pfn}</code> and
-classified <code>LtRAM</code> / <code>DRAM</code> / <code>not present</code></li>
-<li>This is <strong>page-table truth</strong>, not the policy's opinion &mdash; it would catch a
-counter that lies</li>
-<li><strong>Must run as root.</strong> Unprivileged <code>pagemap</code> on this box reports every
-page absent; verified, and the tool warns rather than reporting a silent zero</li>
-<li>The result buffer is checked too: <em>any</em> page of it on flash is a failure, not a low
-percentage, because it is written every iteration</li>
-</ul>
-
-<h3>2.5 How the two time bases are aligned</h3>
-<ul>
-<li>matmul prints <code>TSTART &lt;epoch&gt;</code> from <code>CLOCK_REALTIME</code> at the run
-loop's origin, <em>after</em> the fill</li>
-<li>The residency sampler logs absolute epoch times; offset = <code>epoch &minus; TSTART</code></li>
-<li>This removes all guesswork about how long the fill took. An earlier version inferred it, which
-is exactly the kind of assumption that produces a plausible wrong graph</li>
-</ul>
-
-<h3>2.6 The correctness gates &mdash; what makes a timing admissible</h3>
+<h3>2.4 The correctness gates</h3>
 <div class="tw"><table>
 <thead><tr><th>gate</th><th>mechanism</th><th>on failure</th></tr></thead>
 <tbody>
-<tr><td><strong>digest</strong></td><td>SHA-256 over the result vector recomputed <strong>after every pass</strong> and compared to pass 1</td><td><code>exit 44</code>, immediately</td></tr>
-<tr><td><strong>read-only premise</strong></td><td><code>--protect-weights</code> &rarr; <code>mprotect(PROT_READ)</code> + SIGSEGV/SIGBUS handler</td><td><code>exit 42</code></td></tr>
-<tr><td><strong>provenance</strong></td><td><code>ltram-inspect</code>, independent of kernel counters</td><td>reported, not fatal</td></tr>
-<tr><td><strong>kernel health</strong></td><td><code>dmesg -w</code> streamed <strong>off-box</strong> to another machine</td><td>captured even through a panic</td></tr>
+<tr><td><strong>digest</strong></td><td>SHA-256 over the result, recomputed <strong>after every pass</strong></td><td><code>exit 44</code>, immediately</td></tr>
+<tr><td><strong>state machine</strong></td><td>four states must sum to 65,536; bucket lists must equal the free count</td><td>test FAIL</td></tr>
+<tr><td><strong>accounting</strong></td><td><code>moved_to_ltram == valid + backstop + hook</code></td><td>test FAIL</td></tr>
+<tr><td><strong>release</strong></td><td><code>valid == 0</code> after the workload exits, polled up to 60 s</td><td>test FAIL</td></tr>
+<tr><td><strong>kernel health</strong></td><td><code>dmesg -w</code> streamed <strong>off-box</strong></td><td>captured even through a panic</td></tr>
 </tbody></table></div>
 <div class="box box--key">
   <p class="lab">The rule</p>
   <p><strong>A faster run with a different digest is corruption, not a result.</strong> On this
-  hardware corruption is silent by default, so the digest gate is not a formality &mdash; it is
-  what caught the stale-cache-line bug, at run 12 of 15.</p>
-  <p><code>--protect-weights</code> is an <strong>experiment control, not a kernel hint</strong>.
-  The policy reads PTE state and never looks at VMA flags. It was proven irrelevant: a run
-  without it reaches the same promotion rate.</p>
+  hardware corruption is silent by default, which is why the digest gate is not a formality
+  &mdash; it caught the stale-cache-line bug at run 12 of 15.</p>
 </div>
 
-<h3 id="tests">2.7 Every test run, with method and result</h3>
+<h2 id="tests">3 &middot; The test</h2>
+<p><strong>One script, <code>ltram-test.sh</code></strong>, replacing five. <code>--flash</code>
+toggles the backend rather than having separate files.</p>
+<div class="box box--bad">
+  <p class="lab">There is no <code>--protect-weights</code> in it, and there never will be</p>
+  <p>It <code>mprotect</code>s the region <code>PROT_READ</code>, so pages arrive <strong>already
+  write-protected</strong> and are promoted on first sighting &mdash; which means the
+  arm&nbsp;&rarr;&nbsp;wait&nbsp;&rarr;&nbsp;promote cycle, the entire detection mechanism,
+  <em>never runs</em>. It hid that from three separate runs before it was noticed. The policy
+  reads PTE state and has never looked at VMA flags, so the hint proves nothing it does not also
+  conceal.</p>
+</div>
+<p><strong>Without <code>--flash</code></strong>, no backend is loaded: every flash write fails
+<code>-ENODEV</code>, so no sector is ever programmed and nothing can reach DIRTY. The policy,
+allocator and state machine run at full speed with <strong>nothing at risk</strong>. That
+separation is why most testing is done that way.</p>
 
-<h4>T1 &mdash; detection, with and without an application hint</h4>
-<ul>
-<li><strong>Method:</strong> two phases, same binary, same size, same 240 s attach window,
-counters sampled before/after and reported as deltas so no reboot is needed between them.
-Phase A passes <code>--protect-weights</code>; phase B passes nothing. Backend
-<strong>deliberately not loaded</strong>, isolating detection from the write path</li>
-<li><strong>Result:</strong> phase B <code>rej_writable == rearmed == 50,179</code> against
-exactly 50,176 weight pages. Same <code>sel_isolated</code> as phase A (7,488 vs 7,456)
-&rarr; <strong>the hint bought nothing</strong></li>
-<li><strong>Limit:</strong> <code>promoted 0</code> by construction; proves nothing about flash</li>
-</ul>
-
-<h4>T2 &mdash; end to end, first attempt</h4>
-<ul>
-<li><strong>Method:</strong> 64 MiB weights, <code>--iters 60 --runs 15</code>,
-<code>promote_batch=256</code>, backend loaded</li>
-<li><strong>Result:</strong> 16,384/16,384 resident, digest held 15/15, steady state 31.299 s
-vs 6.432 s control</li>
-<li><strong>Caveat you must apply:</strong> this run passed <em>for the wrong reason</em>. A page
-leak meant <strong>no sector was ever reused</strong>, so the stale-cache-line bug underneath
-could not fire. Do not cite its 15/15 as evidence the write path is sound</li>
-</ul>
-
-<h4>T3 &mdash; end to end after the leak and anon fixes &mdash; <span class="no">FAILED</span></h4>
-<ul>
-<li><strong>Method:</strong> identical, <code>promote_batch=32</code></li>
-<li><strong>Result:</strong> digest changed between run 11 and run 12, <code>exit 44</code>.
-<code>run1 8873ba56&hellip;</code> vs <code>run12 8d57ab9c&hellip;</code></li>
-<li><strong>Cause:</strong> <code>rd_win</code> is <code>ioremap_cache</code>d and an FPGA-side
-erase/program does not invalidate CPU caches. <code>inval_sector()</code> existed in the backend
-for exactly this and the migration path never called it</li>
-</ul>
-
-<h4>T4 &mdash; end to end after the cache-invalidate fix &mdash; <span class="yes">PASS</span></h4>
-<ul>
-<li><strong>Result:</strong> digest identical 15/15, <code>promoted 6,784 == writes_ok 6,784</code>,
-<code>promote_failed 0</code>, <code>writes_failed 0</code>, <code>pages_in_use 1</code> after exit</li>
-<li><strong>Does not reach steady state:</strong> at <code>batch=32</code> only ~21% had migrated
-by run 15, so its 13.766 s mean is a <strong>ramp, not a plateau</strong>, and is not comparable
-to T2's 31.299 s</li>
-</ul>
-
-<h4>T5 &mdash; writeback: the fault path back to DRAM &mdash; <span class="yes">PASS</span></h4>
-<ul>
-<li><strong>Method:</strong> fill 32 MiB with pattern A; <strong>stop writing</strong>; let the
-policy promote it by reading only; at &ge;90% residency write pattern B over every page; verify.
-The pattern is position-dependent (<code>idx * 0x9E3779B97F4A7C15 ^ epoch</code>) so a page
-restored from the <em>wrong</em> sector fails too. The scanner is detached 2 s before the write so
-a real failure cannot be confused with a page re-promoted under the writer</li>
-<li><strong>Result:</strong> 7,517/8,192 (91.8%) resident; <strong><code>STALE 0</code></strong>,
-<strong><code>WRONG 0</code></strong>; <code>demoted</code> +7,519 against 7,517 resident &mdash;
-one demotion per flash-resident page</li>
-<li><strong>Bonus:</strong> <code>rej_writable == rearmed == 8,211</code> on a program that is not
-matmul &rarr; transparent detection confirmed independently. And <code>late_free</code> moved by
-only 7, showing the single-page and batch free paths are distinct routes, both covered</li>
-</ul>
-
-<h4>T6 &mdash; the cost measurement</h4>
-<ul>
-<li><strong>Method:</strong> <code>--iters 1 --runs 1500 --flush 64</code>, twice: once with no
-backend and no policy (control), once with the policy attached. Residency sampled every 3 s and
-aligned by <code>TSTART</code></li>
-<li><strong>Result:</strong> control 0.1075 s (sd 0.09%, n=1500); peak 2.971 s; plateau 0.5139 s
-(sd 0.08%, n=222) = <strong>4.78&times;</strong>. Digest <code>b1b51e52&hellip;</code> identical
-across both runs</li>
-<li><strong>Known contamination:</strong> in this run the 64 MiB scrub buffer was itself promoted
-first, consuming the first 457 s. Effect on the timed passes was <strong>+1.5%</strong>
-(0.109 vs 0.1075) because the timed region never touches that buffer. Fixed by the store pass in
-&sect;2.2; the clean re-run completed but its data has not yet been retrieved</li>
-</ul>
-
-<h2 id="numbers">3 &middot; Every number, with provenance and confidence</h2>
+<h3>Results, current kernel</h3>
 <div class="tw"><table>
-<thead><tr><th>claim</th><th class="num">value</th><th class="num">n</th><th>source</th><th>confidence</th></tr></thead>
+<thead><tr><th>check</th><th>result</th></tr></thead>
 <tbody>
-<tr><td>DRAM baseline, one cold pass</td><td class="num">0.1075 s</td><td class="num">1500</td><td><code>260820_step7_cost/A-dram.log</code></td><td class="yes">high &mdash; sd 0.09%</td></tr>
-<tr><td>Steady state on NOR</td><td class="num">0.5139 s</td><td class="num">222</td><td><code>260820_step7_cost/B-nor.log</code></td><td class="yes">high &mdash; sd 0.08%</td></tr>
-<tr><td><strong>NOR / DRAM, steady state</strong></td><td class="num"><strong>4.78&times;</strong></td><td class="num">&mdash;</td><td>ratio of the two above</td><td class="yes">high &mdash; reproduced 4.87&times; independently</td></tr>
-<tr><td>Peak during migration</td><td class="num">2.971 s</td><td class="num">1</td><td>same</td><td class="mid">single peak; the <em>shape</em> is robust, the exact maximum is not</td></tr>
-<tr><td>Migration rate</td><td class="num">36 pages/s</td><td class="num">1</td><td>residency curve</td><td class="mid">policy-dependent, not a device property</td></tr>
-<tr><td>Sector erase</td><td class="num">~16.4 ms</td><td class="num">&mdash;</td><td>backend source comment</td><td class="mid">quoted, not independently measured by me</td></tr>
-<tr><td>Transparent detection</td><td class="num">50,179 = 50,179</td><td class="num">2</td><td>T1 phase B, T5</td><td class="yes">high &mdash; two programs</td></tr>
-<tr><td>Writeback correctness</td><td class="num">0 stale, 0 wrong</td><td class="num">1</td><td>T5</td><td class="mid">one region, one size</td></tr>
-<tr><td>Old predicate rejection rate</td><td class="num">13,247,550 / 13,258,954</td><td class="num">1</td><td>08-19 diagnostic</td><td class="yes">high &mdash; 99.91%</td></tr>
+<tr><td>digest, control vs flash</td><td class="yes">identical, <code>8873ba56…</code></td></tr>
+<tr><td>state machine</td><td class="yes"><code>0 + 4455 + 61081 + 0 = 65536</code></td></tr>
+<tr><td>bucket lists vs free count</td><td class="yes">61,081 = 61,081</td></tr>
+<tr><td>accounting</td><td class="yes"><code>4455 = 0 + 4452 + 3</code></td></tr>
+<tr><td>release at exit</td><td class="yes">all released</td></tr>
 </tbody></table></div>
 
-<h2 id="doubt">4 &middot; What would make me distrust these numbers</h2>
+<h2 id="numbers">4 &middot; Every number, with provenance</h2>
+<div class="tw"><table>
+<thead><tr><th>claim</th><th class="num">value</th><th class="num">n</th><th>confidence</th></tr></thead>
+<tbody>
+<tr><td>DRAM baseline, one cold pass</td><td class="num">0.1075 s</td><td class="num">1500</td><td class="yes">high &mdash; sd 0.09%</td></tr>
+<tr><td>Steady state on NOR</td><td class="num">0.5139 s</td><td class="num">222</td><td class="yes">high &mdash; sd 0.08%</td></tr>
+<tr><td><strong>NOR / DRAM, steady state</strong></td><td class="num"><strong>4.78&times;</strong></td><td class="num">&mdash;</td><td class="mid">reproduced 4.87&times; independently, but <em>both</em> on pre-1c kernels</td></tr>
+<tr><td>Peak during migration</td><td class="num">2.971 s (27.6&times;)</td><td class="num">1</td><td class="mid">shape robust; the exact peak is one sample, and 1c-b should change it</td></tr>
+<tr><td>Transparent detection</td><td class="num"><code>was_written == write_protected</code></td><td class="num">2</td><td class="yes">high &mdash; two unrelated programs</td></tr>
+<tr><td>Writeback correctness</td><td class="num">0 stale, 0 wrong / 7,517</td><td class="num">1</td><td class="mid">one region, one size</td></tr>
+<tr><td>Peak wear per sector</td><td class="num">1,518 &rarr; 1</td><td class="num">1</td><td class="yes">high &mdash; identical workload either side</td></tr>
+<tr><td>Old predicate rejection rate</td><td class="num">99.91%</td><td class="num">1</td><td class="yes">high</td></tr>
+<tr><td>Erase share of a promotion</td><td class="num">93%</td><td class="num">&mdash;</td><td class="mid">from the backend's own timings, not independently measured</td></tr>
+</tbody></table></div>
+
+<h2 id="doubt">5 &middot; What would falsify these</h2>
 <div class="box box--bad">
   <p class="lab">Stated so you can check them rather than take my word</p>
   <ul>
-  <li><strong>The 4.87&times; from T2 came from the run whose sectors were never reused</strong>,
-  i.e. before the cache-invalidate fix. It agrees with T6's 4.78&times;, which is reassuring, but
-  it is not an independent confirmation from a <em>correct</em> kernel. A steady-state re-measure
-  on the current kernel has not been done</li>
-  <li><strong>The on/off delta mixes three things:</strong> flash read latency, NUMA distance, and
-  migration cost. Separating them needs a DRAM-backed node-1 control &mdash; same migration, same
-  distance, no flash &mdash; which does not exist. I will not attribute the delta to flash
-  latency until it does</li>
-  <li><strong>One access pattern.</strong> A 64 MiB sequential sweep. Random access, or a working
-  set that fits in LLC, would land somewhere else entirely. 4.78&times; is not a constant</li>
-  <li><strong>Above the 256 MB window is completely untested.</strong> Every result here depends
-  on each page getting its own sector, written exactly once. Above the window that stops being
-  true and phase 3 stops being a plateau</li>
-  <li><strong>A write racing an in-flight promotion is untested</strong> &mdash; T5 deliberately
-  <em>avoids</em> that race rather than exercising it</li>
-  <li><strong><code>folio_isolate_lru()</code> refuses 3&ndash;20% of selections</strong> across
-  runs and I cannot explain the variance</li>
-  <li><strong>Step 5's negative test has never run.</strong> <code>fail_writes=1</code>, then
-  assert the migration fails with the page still in DRAM and correct. Without it, hook placement
-  is argued from code reading, not demonstrated &mdash; the positive path passes whether or not
-  the hook precedes <code>folio_migrate_mapping()</code></li>
+  <li><strong>Both 4.78&times; measurements predate 1c.</strong> They agree with each other, which
+  is reassuring, but neither came from a kernel with the current state machine. A steady-state
+  re-measure is outstanding</li>
+  <li><strong>The on/off delta mixes three things</strong> &mdash; flash read latency, NUMA
+  distance, and migration cost. Separating them needs a DRAM-backed node-1 control that does not
+  exist. Until it does, the delta is a combined figure</li>
+  <li><strong>One access pattern.</strong> A 64 MiB sequential sweep. Random access, or a set that
+  fits in LLC, would land elsewhere. 4.78&times; is not a constant</li>
+  <li><strong>Above the 256 MB window is untested.</strong> Every result here depends on each page
+  getting its own sector, written once</li>
+  <li><strong>A write racing an in-flight promotion is untested</strong> &mdash; the writeback test
+  deliberately <em>avoids</em> that race rather than exercising it</li>
+  <li><strong>Path A is under-tested.</strong> Demotions take <code>__folio_put_small()</code>, and
+  our workloads exit rather than churn, so 4,452 frees took the batch path against 3 single-page.
+  A write-heavy workload would invert that</li>
+  <li><strong>Step 5's negative test has never run.</strong> Without it, hook placement is argued
+  from code reading &mdash; the positive path passes whether or not the hook precedes
+  <code>folio_migrate_mapping()</code></li>
+  <li><strong><code>erases_done</code> is still 0.</strong> The worker, watermark and idle gate are
+  compiled and, as of this writing, unexercised against real erases</li>
   </ul>
+</div>
+
+<div class="box box--warn">
+  <p class="lab">A methodology note that cost four hypotheses</p>
+  <p>Ten pages stayed VALID after a workload exited, and were called a leak. In order, the
+  explanations offered were: a refcount 2&rarr;1 across a COW <em>(ordinary &mdash; LRU membership
+  holds one)</em>; waiting for reclaim <em>(they were not on an LRU to reclaim from)</em>;
+  destinations stranded on a migration failure path <em>(<code>dst_released 0</code> &mdash; there
+  were no failures)</em>; and a genuine reference leak <em>(they released themselves)</em>.</p>
+  <p>They were folios sitting in per-CPU folio batches, draining lazily. <strong>The measurement
+  that settled it was reading the same file twice</strong> and noticing a counter had moved. Every
+  wrong answer came from reasoning about counters instead of looking.</p>
 </div>
 
 </section>
 <footer class="end">
 zuestoll08 &mdash; Cavium ThunderX CRB-2S, Xilinx VU9P, bitstream <code>169_phy200</code>,
-kernel <code>6.8.0-ltram #5</code> (<code>53fc3a101</code>). Micron MT35XU02GCBA octal-DDR NOR as
-NUMA node 1 / <code>ZONE_LTRAM</code>. Sources under <code>linux/</code>, evidence under
-<code>baselines/260820_*</code>, one commit per step from <code>260818_v6.8-base</code>.
+kernel <code>6.8.0-ltram</code>. Micron MT35XU02GCBA octal-DDR NOR as NUMA node 1 /
+<code>ZONE_LTRAM</code>. Sources under <code>linux/</code> and <code>ltram-backend/</code>,
+evidence under <code>baselines/</code>, one commit per change from <code>260818_v6.8-base</code>.
 </footer>
 </div></div>
