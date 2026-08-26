@@ -6799,10 +6799,32 @@ static int ft_ltram_write_page(unsigned long dst_pfn, const void *src)
      *
      * Inside the mutex and before the unlock, so no other migration can publish
      * a mapping to this sector in the window between the DMA and the evict.
-     * thrash_mb=0 is correct on PSHA (v6+) builds, where civac is reliable.
+     *
+     * cvm_evict_sector(), NOT inval_sector(). inval_sector() is dc civac only,
+     * and civac is a NO-OP on this machine: it cleans to the point of coherence,
+     * which here IS the L2/LLC, so the line that matters is never evicted. That
+     * is measured, not assumed -- see the STALE banner above
+     * verify_pattern_settled(): on 2026-08-16 against the known-good 169
+     * bitstream, a civac-only verifier read back 0xffffffff on every sector and
+     * reported 1024 bad words, because it was served the erased state it had
+     * cached moments earlier. The write was fine; the verifier lied.
+     *
+     * So this path has never actually evicted anything, and it went unnoticed
+     * because inline_erase=1 put ~16.4 ms between the DMA and any read of the
+     * page -- long enough for a 64 MiB workload sweeping a 16 MiB LLC to evict
+     * the stale line by capacity every time. inline_erase=0 cut promotion to
+     * ~1.2 ms, closed that window, and matmul's digest broke on the second run.
+     *
+     * Only CVMCACHEWBIL2 with a PHYSICAL address forces a real eviction, which
+     * is also what makes it correct here regardless of WHICH virtual alias
+     * brought the line in -- the boot scan in mm/ltram_policy.c reads through
+     * page_address(), the driver through rd_win, and a VA-based op on either
+     * one cannot be relied on to reach the other's lines.
+     *
+     * ~306 ns at the default evict_mode=1 against a ~1.2 ms DMA: 0.03%.
      */
     if (!rc)
-        inval_sector(sec);
+        cvm_evict_sector(sec);
 
     chase_fill = saved;
     mutex_unlock(&ltram_wp_lock);
@@ -6848,8 +6870,19 @@ static int ft_ltram_erase_page(unsigned long pfn)
     }
     /* The CPU may hold lines for this sector from before the erase. An
      * FPGA-side erase does not invalidate them, and a reader would see the old
-     * contents of a sector that is now blank. */
-    inval_sector(sec);
+     * contents of a sector that is now blank.
+     *
+     * cvm_evict_sector(), for the same reason ft_ltram_write_page() uses it:
+     * inval_sector() is dc civac only, and civac is a no-op here. This comment
+     * has always described the right requirement and called the one instruction
+     * that does not meet it.
+     *
+     * It matters most for verify_erased, which reads four words back through
+     * rd_win expecting 0xFFFFFFFF. Served from a line cached before the erase,
+     * that check reads the OLD contents and refuses a sector that is in fact
+     * blank -- the guard against programming an unerased sector failing on a
+     * sector it was right about. */
+    cvm_evict_sector(sec);
     mutex_unlock(&ltram_wp_lock);
     return 0;
 }
