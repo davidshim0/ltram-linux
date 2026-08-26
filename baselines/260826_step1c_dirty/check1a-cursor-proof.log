@@ -1,0 +1,102 @@
+[16:37:17] backend loaded: 0 (want 0)
+[16:37:17] === BEFORE ===
+pages                65536
+free                 65536   (bucket lists)
+valid                0
+dirty                0
+erasing              idle
+free_from_bucketlist 65536   (recount, must equal free)
+total_allocs         0   (sum of all erase counts)
+pages_ever_used      0   of 65536, ever allocated (0%)
+erase_count          min 0  max 0  spread 0
+ec_histogram         log2; bucket k is 2^(k-1)..2^k-1
+           never 65536
+free_buckets         non-empty only
+  [     0..   999] 65536 free
+invariant            ok
+[16:37:19] attached 1655
+[16:37:34] t+15s  free 65536 valid 0 invariant ok
+[16:37:49] t+30s  free 65536 valid 0 invariant ok
+[16:38:04] t+45s  free 65536 valid 0 invariant ok
+[16:38:19] === DURING (attached, transitions in flight) ===
+pages                65536
+free                 65536   (bucket lists)
+valid                0
+dirty                0
+erasing              idle
+free_from_bucketlist 65536   (recount, must equal free)
+total_allocs         2958   (sum of all erase counts)
+pages_ever_used      2958   of 65536, ever allocated (4%)
+erase_count          min 0  max 1  spread 1
+ec_histogram         log2; bucket k is 2^(k-1)..2^k-1
+           never 62578
+  [     1..     1] 2958
+most_worn            page index : erase count
+           0 : 1
+           1 : 1
+           2 : 1
+           3 : 1
+           4 : 1
+           5 : 1
+           6 : 1
+           7 : 1
+           8 : 1
+           9 : 1
+          10 : 1
+          11 : 1
+          12 : 1
+          13 : 1
+          14 : 1
+          15 : 1
+free_buckets         non-empty only
+  [     0..   999] 65536 free
+invariant            ok
+[16:38:19] detached
+[16:38:19] matmul exit 0
+[16:38:24] === AFTER (all pages returned) ===
+pages                65536
+free                 65536   (bucket lists)
+valid                0
+dirty                0
+erasing              idle
+free_from_bucketlist 65536   (recount, must equal free)
+total_allocs         2958   (sum of all erase counts)
+pages_ever_used      2958   of 65536, ever allocated (4%)
+erase_count          min 0  max 1  spread 1
+ec_histogram         log2; bucket k is 2^(k-1)..2^k-1
+           never 62578
+  [     1..     1] 2958
+most_worn            page index : erase count
+           0 : 1
+           1 : 1
+           2 : 1
+           3 : 1
+           4 : 1
+           5 : 1
+           6 : 1
+           7 : 1
+           8 : 1
+           9 : 1
+          10 : 1
+          11 : 1
+          12 : 1
+          13 : 1
+          14 : 1
+          15 : 1
+free_buckets         non-empty only
+  [     0..   999] 65536 free
+invariant            ok
+
+================ 1a VERDICT ================
+free after run : 65536  (want 65536)
+invariant      : ok
+ptes_examined        5599
+moved_to_ltram       0
+not_moved_this_pass  1479
+pages_in_use         0
+chosen               1479
+freed_via_backstop   0
+sweeps               1
+scan_cursor          0xf89666fbe000
+VERDICT: PASS -- every allocated page came back and all five assertions hold
+===========================================
