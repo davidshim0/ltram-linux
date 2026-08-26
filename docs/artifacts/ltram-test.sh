@@ -104,16 +104,31 @@ wait $SUDOPID; RC=$?
 # the loop gave up -- the system was erasing flat out, which slows every drain.
 # A count that is still falling is draining, however slowly. Only a count that has
 # not moved at all is evidence of a reference nobody will drop.
-DRAIN=0; FLAT=0; PREV=-1; POLLED=0
+# A flat count is almost always folios parked in per-CPU lru_add batches, NOT a
+# held reference. Confirmed 2026-08-26 by reading /proc/kpageflags on eight stuck
+# pfns: ACTIVE set, LRU clear, refs 1, map 0 -- folio_add_lru() sets ACTIVE and
+# queues the folio, and LRU is only set when the batch drains. On a 48-core box
+# that has gone idle a CPU holding 8 of 15 slots never fills its batch, so nothing
+# drains it and the count sits forever. compact_memory calls lru_add_drain_all(),
+# which released all eight instantly.
+# So force the drain before concluding anything. Four separate "stuck page"
+# investigations died on this; the harness should settle it rather than report it.
+DRAIN=0; FLAT=0; PREV=-1; POLLED=0; FORCED=0
 : > "$OUT/drain.log"
 for i in $(seq 1 300); do
         V=$(g "$(ps_)" valid)
         POLLED=$i
-        echo "$i ${V:-READ_FAILED}" >> "$OUT/drain.log"
+        echo "$i ${V:-READ_FAILED} forced=$FORCED" >> "$OUT/drain.log"
         [ "${V:-x}" = "0" ] && { DRAIN=$i; break; }
         if [ "${V:-x}" = "$PREV" ]; then FLAT=$((FLAT+1)); else FLAT=0; fi
         PREV="${V:-x}"
-        [ "$FLAT" -ge 30 ] && break
+        if [ "$FLAT" -ge 10 ] && [ "$FORCED" = 0 ]; then
+                say "  count flat at $V -- forcing lru_add_drain_all"
+                echo 1 | sudo -n tee /proc/sys/vm/compact_memory >/dev/null 2>&1
+                FORCED=1; FLAT=0; sleep 2; continue
+        fi
+        # Only a count still flat AFTER a forced drain is evidence of anything.
+        [ "$FLAT" -ge 30 ] && [ "$FORCED" = 1 ] && break
         sleep 1
 done
 # Say nothing alarming here. The loop only WAITS; whether anything is actually
@@ -154,9 +169,11 @@ echo "-- release at exit: every page the workload held must be released --"
 echo "  VALID while it held        ${PEAK:-?}"
 echo "  VALID after it exited      $V   (drain poll: ${DRAIN}s)"
 if [ "${V:-1}" = "0" ]; then echo "  ALL RELEASED"
-else echo "  !! $V pages still VALID: count unchanged for ${FLAT}s of ${POLLED}s polled."
-     echo "     A falling count is a slow drain; a flat one is a reference"
-     echo "     nobody will drop. See drain.log for which this was."; FAIL=1; fi
+else echo "  !! $V pages still VALID after ${POLLED}s (lru_add_drain_all forced: $FORCED)."
+     echo "     Flat AFTER a forced drain, so not a per-CPU folio batch. Check"
+     echo "     /proc/kpageflags for these pfns: ACTIVE without LRU would mean"
+     echo "     the batch theory after all; anything else is a held reference."
+     echo "     pfns are in the valid_detail block of after.pagestate."; FAIL=1; fi
 echo
 echo "-- page accounting: every promoted page is valid, or was freed --"
 echo "  moved_to_ltram      $TOL"
