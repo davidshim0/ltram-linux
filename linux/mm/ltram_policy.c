@@ -1296,8 +1296,23 @@ static long __init lt_scan_pool(void)
 			lt_free_count++;
 			blank++;
 		} else {
-			/* Holds something. Not allocatable until erased. */
+			/*
+			 * Holds something: not allocatable until erased.
+			 *
+			 * Both of the next two lines matter. ltram_policy_init()
+			 * has already bitmap_fill()ed the live allocator bitmap,
+			 * so a sector left set there while the shadow calls it
+			 * DIRTY makes the two structures lt_check_fast() exists
+			 * to cross-check disagree from the very first boot. And
+			 * a sector that cannot be handed out is occupying the
+			 * window exactly as much as a VALID one, so it counts as
+			 * in use -- otherwise the erase that eventually frees it
+			 * decrements a count it never incremented, and
+			 * pages_in_use goes negative.
+			 */
 			set_bit(i, lt_bm[LT_DIRTY]);
+			__clear_bit(i, ltram_free_bitmap);
+			atomic64_inc(&ltram_pages_in_use);
 		}
 
 		/* 256 MB of reads in an initcall: do not hold the CPU for all of it. */
@@ -1352,6 +1367,8 @@ static int __init lt_tracking_init(void)
 		 * the pool back.
 		 */
 		bitmap_fill(lt_bm[LT_DIRTY], ltram_nr_pages);
+		bitmap_zero(ltram_free_bitmap, ltram_nr_pages);
+		atomic64_set(&ltram_pages_in_use, ltram_nr_pages);
 		pr_warn("ltram: pool not scanned -- assuming all %lu sectors dirty\n",
 			ltram_nr_pages);
 	}
