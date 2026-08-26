@@ -1,0 +1,454 @@
+<title>Kernel, Module, Driver</title>
+<style>
+:root{
+  --ground:#EBEDF0; --surface:#FFFFFF; --surface-2:#F4F6F8; --surface-3:#ECEFF3;
+  --ink:#13161B; --ink-2:#576170; --ink-3:#8C95A3;
+  --rule:#D7DBE2; --rule-2:#E7EAEF; --code-bg:#F4F6F8; --code-ink:#22262D;
+  --good:#12695A; --good-wash:#E8F3F0; --good-edge:#B4D8CF;
+  --bad:#A3232C;  --bad-wash:#FAEFEF;  --bad-edge:#E5C3C3;
+  --warn:#8A5B08; --warn-wash:#FAF3E4; --warn-edge:#E3D2AC;
+  --accent:#2F5D8C; --accent-2:#20456A; --accent-wash:#EAF0F6; --accent-edge:#BFD2E4;
+  --font-body: Charter,"Bitstream Charter","Iowan Old Style","Source Serif 4",Georgia,"DejaVu Serif",serif;
+  --font-ui: ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --font-mono: ui-monospace,"SF Mono","JetBrains Mono","DejaVu Sans Mono",Menlo,Consolas,monospace;
+  --measure:37rem;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#0D0F13; --surface:#171A20; --surface-2:#1E222A; --surface-3:#232830;
+  --ink:#E4E7EC; --ink-2:#99A2B0; --ink-3:#6E7787;
+  --rule:#2A2F39; --rule-2:#222831; --code-bg:#11141A; --code-ink:#CDD3DC;
+  --good:#4CBFA6; --good-wash:#0F241F; --good-edge:#22493F;
+  --bad:#F0736F;  --bad-wash:#251618;  --bad-edge:#4A2A2C;
+  --warn:#D9A441; --warn-wash:#241D0F; --warn-edge:#4A3D22;
+  --accent:#6FA8DC; --accent-2:#9BC4EA; --accent-wash:#14202C; --accent-edge:#2C4459;
+}}
+:root[data-theme="dark"]{
+  --ground:#0D0F13; --surface:#171A20; --surface-2:#1E222A; --surface-3:#232830;
+  --ink:#E4E7EC; --ink-2:#99A2B0; --ink-3:#6E7787;
+  --rule:#2A2F39; --rule-2:#222831; --code-bg:#11141A; --code-ink:#CDD3DC;
+  --good:#4CBFA6; --good-wash:#0F241F; --good-edge:#22493F;
+  --bad:#F0736F;  --bad-wash:#251618;  --bad-edge:#4A2A2C;
+  --warn:#D9A441; --warn-wash:#241D0F; --warn-edge:#4A3D22;
+  --accent:#6FA8DC; --accent-2:#9BC4EA; --accent-wash:#14202C; --accent-edge:#2C4459;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{animation:none!important;transition:none!important}}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-body);
+  font-size:17px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:62rem;margin:0 auto;padding:0 1.1rem 5rem}
+.sheet{background:var(--surface);border-left:1px solid var(--rule);border-right:1px solid var(--rule)}
+@media (max-width:58rem){.sheet{border-left:0;border-right:0}}
+header.top{padding:2.6rem 2.6rem 2rem;border-bottom:2px solid var(--ink)}
+@media (max-width:46rem){header.top{padding:2rem 1.15rem 1.5rem}}
+.eyebrow{font-family:var(--font-mono);font-size:.71rem;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 .9rem}
+h1{font-family:var(--font-ui);font-weight:640;letter-spacing:-.028em;
+  font-size:clamp(1.9rem,5vw,2.9rem);line-height:1.05;margin:0 0 .9rem;text-wrap:balance}
+.deck{font-size:1.12rem;color:var(--ink-2);margin:0;max-width:41rem;line-height:1.55}
+.deck b{color:var(--ink);font-weight:640}
+.tabbar{position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--rule);
+  display:flex;gap:0;overflow-x:auto;scrollbar-width:thin;padding:0 2.6rem}
+@media (max-width:46rem){.tabbar{padding:0 .5rem}}
+.tabbar button{appearance:none;background:none;border:0;border-bottom:2px solid transparent;
+  font-family:var(--font-ui);font-size:.83rem;font-weight:560;color:var(--ink-2);
+  padding:.85rem .8rem;cursor:pointer;white-space:nowrap;display:flex;align-items:baseline;gap:.42rem}
+.tabbar button .n{font-family:var(--font-mono);font-size:.68rem;color:var(--ink-3)}
+.tabbar button:hover{color:var(--ink)}
+.tabbar button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+.tabbar button[aria-selected="true"] .n{color:var(--accent-2)}
+.tabbar button:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}
+.showall{margin-left:auto;align-self:center;padding-right:.4rem}
+.showall label{font-family:var(--font-mono);font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);display:flex;gap:.4rem;align-items:center;cursor:pointer}
+.panel{padding:2.2rem 2.6rem 1rem;display:none}
+.panel[data-open="1"]{display:block}
+@media (max-width:46rem){.panel{padding:1.6rem 1.15rem 1rem}}
+h2{font-family:var(--font-ui);font-weight:640;letter-spacing:-.02em;font-size:1.5rem;line-height:1.2;
+  margin:0 0 1rem;text-wrap:balance}
+h3{font-family:var(--font-ui);font-weight:630;font-size:1.12rem;letter-spacing:-.012em;
+  margin:2.2rem 0 .6rem;padding-top:1.2rem;border-top:1px solid var(--rule-2);text-wrap:balance}
+h3:first-of-type{border-top:0;padding-top:0;margin-top:1.5rem}
+h4{font-family:var(--font-ui);font-weight:620;font-size:1rem;margin:1.5rem 0 .45rem}
+p{margin:0 0 1.05rem;max-width:var(--measure)}
+ul,ol{margin:0 0 1.1rem;padding-left:1.35rem;max-width:var(--measure)}
+li{margin-bottom:.48rem} li::marker{color:var(--ink-3)}
+strong{font-weight:640}
+.lead{font-size:1.06rem;color:var(--ink-2);max-width:38rem}
+code{font-family:var(--font-mono);font-size:.85em;background:var(--code-bg);padding:.1em .34em;
+  border-radius:3px;color:var(--code-ink);border:1px solid var(--rule-2);white-space:nowrap}
+figure{margin:1.5rem 0 1.6rem;max-width:47rem}
+.cap{font-family:var(--font-mono);font-size:.68rem;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--ink-3);padding:.48rem .8rem;background:var(--surface-2);border:1px solid var(--rule);
+  border-bottom:0;border-radius:4px 4px 0 0;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.cap .rt{color:var(--accent)}
+pre{margin:0;background:var(--code-bg);border:1px solid var(--rule);border-radius:0 0 4px 4px;
+  padding:.95rem .9rem;overflow-x:auto;font-family:var(--font-mono);font-size:.79rem;
+  line-height:1.6;color:var(--code-ink);tab-size:4}
+pre code{background:none;border:0;padding:0;font-size:1em;white-space:pre}
+pre .c{color:var(--ink-3);font-style:italic}
+pre .hl{background:var(--accent-wash);display:inline-block;width:100%;
+  box-shadow:inset 3px 0 0 var(--accent);padding-left:.3rem;margin-left:-.3rem}
+pre .g{color:var(--good);font-weight:600}
+pre .b{color:var(--bad)}
+.tw{overflow-x:auto;margin:1.3rem 0;max-width:50rem}
+table{border-collapse:collapse;width:100%;font-family:var(--font-ui);font-size:.84rem}
+th,td{text-align:left;padding:.55rem .7rem;border-bottom:1px solid var(--rule-2);vertical-align:top}
+th{font-family:var(--font-mono);font-size:.65rem;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--ink-3);border-bottom:1px solid var(--rule);white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.box{margin:1.5rem 0;padding:1.05rem 1.2rem;border-radius:4px;background:var(--surface-2);
+  border:1px solid var(--rule);max-width:47rem}
+.box>:last-child{margin-bottom:0}
+.box p,.box ul,.box .tw{max-width:none}
+.box .lab{font-family:var(--font-mono);font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;
+  margin:0 0 .45rem;color:var(--ink-3)}
+.box--key{border-left:3px solid var(--accent);background:var(--accent-wash);border-color:var(--accent-edge)}
+.box--key .lab{color:var(--accent)}
+.box--good{background:var(--good-wash);border-color:var(--good-edge);border-left:3px solid var(--good)}
+.box--good .lab{color:var(--good)}
+.box--bad{background:var(--bad-wash);border-color:var(--bad-edge);border-left:3px solid var(--bad)}
+.box--bad .lab{color:var(--bad)}
+.box--warn{background:var(--warn-wash);border-color:var(--warn-edge);border-left:3px solid var(--warn)}
+.box--warn .lab{color:var(--warn)}
+footer.end{padding:1.6rem 2.6rem 2.2rem;border-top:1px solid var(--rule-2);
+  font-family:var(--font-ui);font-size:.77rem;color:var(--ink-3);line-height:1.6}
+@media (max-width:46rem){footer.end{padding:1.4rem 1.15rem 2rem}}
+</style>
+
+<div class="wrap"><div class="sheet">
+<header class="top">
+  <p class="eyebrow">LtRAM &middot; architecture note</p>
+  <h1>Kernel, Module, Driver</h1>
+  <p class="deck">Why the placement policy lives in <b>502 lines inside the kernel image</b> while
+  the code that actually touches the flash lives in a <b>6,937-line loadable module</b> &mdash;
+  and why that module is still an FPGA test harness. Short version: <b>both are the kernel.</b>
+  A module is not "outside" it.</p>
+</header>
+
+<nav class="tabbar" role="tablist">
+  <button role="tab" aria-selected="true"  data-p="1"><span class="n">1</span> It is all the kernel</button>
+  <button role="tab" aria-selected="false" data-p="2"><span class="n">2</span> What a driver is</button>
+  <button role="tab" aria-selected="false" data-p="3"><span class="n">3</span> What fulltest is</button>
+  <button role="tab" aria-selected="false" data-p="4"><span class="n">4</span> The seam</button>
+  <button role="tab" aria-selected="false" data-p="5"><span class="n">5</span> Why a module</button>
+  <button role="tab" aria-selected="false" data-p="6"><span class="n">6</span> Should it change</button>
+  <span class="showall"><label><input type="checkbox" id="all"> show all</label></span>
+</nav>
+
+<!-- ============================= 1 ============================= -->
+<section class="panel" data-p="1" data-open="1">
+<h2>A loadable module is kernel code</h2>
+<p class="lead">The word "module" suggests something outside the kernel, like a plugin or a
+library. It is not. A <code>.ko</code> runs in the same address space, at the same privilege
+level, with the same power to corrupt anything, as code compiled into the kernel image.</p>
+
+<h3>The only real difference is <em>when</em> it is linked</h3>
+<figure><div class="cap"><span>two paths into exactly the same place</span></div>
+<pre><code>  BUILT IN                              LOADABLE MODULE
+  --------                              ---------------
+  mm/ltram.c                            ltram-backend/nor_eci_fulltest.c
+  mm/ltram_policy.c                             |
+        |                                       | built separately,
+        | compiled and linked                   | against the same headers
+        | at BUILD time                         v
+        v                                nor_eci_fulltest_ltram.ko
+     vmlinuz                                    |
+        |                                       | linked at RUN time
+        | loaded by the bootloader              | by insmod
+        v                                       v
+  +-------------------------------------------------------------+
+  |            ONE kernel address space, EL1                    |
+  |   no syscalls between them -- a direct function call         |
+  +-------------------------------------------------------------+</code></pre></figure>
+
+<p>There is no boundary to cross at runtime. When <code>mm/ltram.c</code> calls the backend's
+<code>write_page</code>, that is an ordinary indirect call through a function pointer &mdash;
+the same cost as any other call in the kernel. Nothing is serialised, nothing is copied, no
+context switches.</p>
+
+<div class="box box--key">
+  <p class="lab">So the answer to "shouldn't it all be in the kernel?"</p>
+  <p><strong>It is.</strong> Every line discussed here is kernel code running at EL1. The
+  question is only whether a given file is linked into <code>vmlinuz</code> at build time or
+  loaded afterwards with <code>insmod</code> &mdash; which is a packaging and lifecycle
+  decision, not an architectural one.</p>
+</div>
+
+<h3>Where each piece lives today</h3>
+<div class="tw"><table>
+<thead><tr><th>file</th><th class="num">lines</th><th>linked</th><th>what it knows</th></tr></thead>
+<tbody>
+<tr><td><code>mm/ltram_policy.c</code></td><td class="num">1,241</td><td>build time</td><td>which pages to move, the page-state machine, the allocator</td></tr>
+<tr><td><code>mm/ltram.c</code></td><td class="num">502</td><td>build time</td><td>the zone, and how to call out to <em>a</em> backend</td></tr>
+<tr><td><code>include/linux/ltram.h</code></td><td class="num">153</td><td>build time</td><td>the contract between the two halves</td></tr>
+<tr><td><code>nor_eci_fulltest.c</code></td><td class="num"><strong>6,937</strong></td><td><strong>run time</strong></td><td>everything about <em>this</em> FPGA and <em>this</em> flash chip</td></tr>
+</tbody></table></div>
+<p><strong>Not one line of FPGA knowledge is in <code>mm/</code>.</strong> That is deliberate, and
+page 4 is about the seam that keeps it that way.</p>
+</section>
+
+<!-- ============================= 2 ============================= -->
+<section class="panel" data-p="2">
+<h2>What "driver" means, concretely</h2>
+<p class="lead">A driver is the code that knows how one specific piece of hardware behaves. Not
+"storage in general" &mdash; <em>this</em> chip, behind <em>this</em> FPGA, on <em>this</em>
+interconnect. It is where facts that are true of nothing else in the world get written down.</p>
+
+<h3>The facts that make it a driver</h3>
+<p>Every one of these is required to write a single page, and every one is specific to this
+board:</p>
+<div class="tw"><table>
+<thead><tr><th>fact</th><th>why it cannot live in mm/</th></tr></thead>
+<tbody>
+<tr><td>The descriptor is <code>(len&lt;&lt;40) | dma_addr</code>, stored to <code>io_win + sector*4096</code></td><td>A different FPGA build would encode it differently. The <em>address</em> of the store carries the destination</td></tr>
+<tr><td>Bit 40 selects node 1, bit 38 marks NOR traffic, bit 39 makes it an erase</td><td>An address-map convention of this platform's coherent interconnect</td></tr>
+<tr><td>An erase takes ~16.4 ms, floor 14.98 ms</td><td>A property of this flash die at this temperature</td></tr>
+<tr><td>Wait on the device's erase <em>counter</em>, never a fixed sleep</td><td>A dropped trigger is invisible to a sleep. Learned the hard way</td></tr>
+<tr><td><code>dc cvac</code> the source buffer before posting the descriptor</td><td>The FPGA reads host DRAM itself; the data must be at the point of coherency first</td></tr>
+<tr><td><code>inval_sector()</code> after the DMA</td><td>An FPGA-side program does not invalidate CPU caches, so the next read can be served stale</td></tr>
+<tr><td>Status word: bits [55:48] erases, bit 56 hw_busy, bits [60:58] scheduler state</td><td>A register layout invented for this shell</td></tr>
+</tbody></table></div>
+
+<div class="box box--bad">
+  <p class="lab">Each of these was a bug before it was a fact</p>
+  <p>The cache invalidation is the clearest example: it was missing from the migration path, and
+  the workload's digest changed at run 12 of 15. The erase-counter wait replaced a fixed
+  <code>msleep</code> that could not tell a completed erase from a dropped trigger. This is
+  <em>accumulated hardware knowledge</em>, and it is exactly the kind of thing that must be
+  isolated behind an interface rather than sprinkled through the memory manager.</p>
+</div>
+
+<h3>What the memory manager must NOT know</h3>
+<p><code>mm/ltram.c</code> has to remain true for any flash, behind any interconnect, on any
+board. If it knew that an erase takes 16.4 ms, or which address bit means "erase", then
+changing the FPGA would mean patching the memory manager &mdash; and during the FPGA campaign
+the bitstream changed <strong>169 times</strong>.</p>
+</section>
+
+<!-- ============================= 3 ============================= -->
+<section class="panel" data-p="3">
+<h2>What <code>nor_eci_fulltest.c</code> actually is</h2>
+<p class="lead">It is the FPGA bring-up harness. It was not written to be a driver; it was
+written to find out how the hardware behaves, over a campaign of 169 bitstreams. The LtRAM
+backend was <strong>added to it</strong>, in about 90 lines, because it already knew everything.</p>
+
+<div class="tw"><table>
+<thead><tr><th></th><th class="num">count</th></tr></thead>
+<tbody>
+<tr><td>lines of C</td><td class="num">6,937</td></tr>
+<tr><td>numbered self-tests (<code>test=1</code> … <code>test=44</code>)</td><td class="num">43</td></tr>
+<tr><td>module parameters</td><td class="num">80</td></tr>
+<tr><td>compiled size</td><td class="num">1.4 MB</td></tr>
+<tr><td><strong>lines that serve LtRAM</strong></td><td class="num"><strong>~90</strong></td></tr>
+</tbody></table></div>
+
+<h3>What those 43 tests are for</h3>
+<ul>
+<li><code>test=32</code> &mdash; erase, write and verify a run of sectors. The basic health check</li>
+<li><code>test=42</code> &mdash; a 7,012,352-word census: per-bit and per-region error accounting. This is what proved <code>169_phy200</code> good and <code>179/t51</code> bad</li>
+<li><code>test=33</code> &mdash; whole-device soak, all 65,536 sectors. 125,465 writes, 240,071 reads, zero failures</li>
+<li><code>test=37</code>, <code>test=44</code>, … &mdash; latency census, scheduler probes, the frequency ladder, the trail bracket</li>
+</ul>
+<p>Every hardware fact on page 2 came out of running these. They are the reason we can say the
+flash is sound rather than hoping it is.</p>
+
+<h3>How it becomes a backend instead</h3>
+<figure><div class="cap"><span>nor_eci_fulltest.c &mdash; ft_init()</span><span class="rt">provide_ops=1</span></div>
+<pre><code><span class="hl">if (provide_ops) {
+        int orc = ltram_register_flash_ops(&amp;ft_ltram_ops);
+        if (orc)
+                return orc;
+        pr_info("fulltest: LtRAM write backend REGISTERED -- no worker started, "
+                "this module now only serves mm/ltram.c\n");
+        return 0;
+}</span>
+
+worker = kthread_run(fulltest_thread, NULL, "nor_fulltest");   <span class="c">/* never reached */</span></code></pre></figure>
+
+<p><strong>It returns before starting the test worker.</strong> With <code>provide_ops=1</code>
+none of the 43 tests run, no test traffic competes for the bus, and the module exists purely to
+answer calls from <code>mm/ltram.c</code>. The other 6,800 lines are inert &mdash; loaded into
+memory, never executed.</p>
+
+<div class="box box--warn">
+  <p class="lab">And that is the awkward part</p>
+  <p>We ship 1.4 MB of test harness to obtain ~90 lines of driver. It works, it is safe, and the
+  inert code costs only memory &mdash; but it is not what anyone would design on purpose. Page 6
+  is about whether to fix it.</p>
+</div>
+</section>
+
+<!-- ============================= 4 ============================= -->
+<section class="panel" data-p="4">
+<h2>The seam: one struct, three function pointers</h2>
+<p class="lead">Everything the kernel knows about the flash hardware passes through a single
+structure. That is the whole interface &mdash; and its narrowness is a deliberate safety
+property, not an accident of layering.</p>
+
+<figure><div class="cap"><span>include/linux/ltram.h</span></div>
+<pre><code>struct ltram_flash_ops {
+        struct module *owner;
+
+        <span class="c">/* Erase and program one PAGE_SIZE region. MAY SLEEP. */</span>
+        int  (*write_page)(unsigned long dst_pfn, const void *src);
+
+        <span class="c">/* Erase without programming. OPTIONAL. */</span>
+        int  (*erase_page)(unsigned long pfn);
+
+        <span class="c">/* Is the device idle right now? OPTIONAL. */</span>
+        bool (*device_idle)(void);
+};</code></pre></figure>
+
+<p>The module fills this in and hands it over:</p>
+<figure><div class="cap"><span>the entire registration surface</span></div>
+<pre><code>static const struct ltram_flash_ops ft_ltram_ops = {
+        .owner      = THIS_MODULE,
+        .write_page = ft_ltram_write_page,
+};
+
+ltram_register_flash_ops(&amp;ft_ltram_ops);     <span class="c">/* on insmod  */</span>
+ltram_unregister_flash_ops(&amp;ft_ltram_ops);   <span class="c">/* on rmmod   */</span></code></pre></figure>
+
+<h3>"Optional" means the pointer may be NULL</h3>
+<p>The kernel checks before calling and degrades sensibly. No <code>erase_page</code> &rarr; the
+erase worker still recycles sectors, which is safe because <code>write_page</code> erases inline
+before every program. No <code>device_idle</code> &rarr; assume idle, which is correct only when
+nothing else drives the device. <strong>So the current backend, which implements neither, keeps
+working untouched.</strong></p>
+
+<h3>No backend at all is a feature</h3>
+<figure><div class="cap"><span>mm/ltram.c &mdash; ltram_write_page()</span></div>
+<pre><code>if (!ops) {
+        atomic64_inc(&amp;ltram_writes_failed);
+        return <span class="b">-ENODEV</span>;
+}</code></pre></figure>
+<div class="box box--good">
+  <p class="lab">The safety property</p>
+  <p>Until something registers, every attempt to write flash fails cleanly with
+  <code>-ENODEV</code>, the migration aborts, and <strong>the page stays in DRAM, intact</strong>.
+  A kernel with no backend cannot corrupt anything. That is why most of our tests deliberately run
+  with the module unloaded: it isolates the placement policy from the device entirely.</p>
+</div>
+
+<h3>The module cannot vanish mid-write</h3>
+<figure><div class="cap"><span>the pinning dance, in every wrapper</span></div>
+<pre><code>spin_lock(&amp;ltram_ops_lock);
+ops   = ltram_ops;
+owner = ops ? ops-&gt;owner : NULL;
+<span class="hl">if (ops &amp;&amp; owner &amp;&amp; !try_module_get(owner))    </span><span class="c">/* pin BEFORE dropping the lock */</span>
+<span class="hl">        ops = NULL;</span>
+spin_unlock(&amp;ltram_ops_lock);
+...
+rc = ops-&gt;write_page(dst_pfn, src);
+if (owner)
+        module_put(owner);</code></pre></figure>
+<p>A write sleeps for ~16.4 ms. Without the pin, an <code>rmmod</code> during that window would
+free the code being executed. The reference is taken before the lock is dropped, so there is no
+gap. <em>Running <code>rmmod</code> mid-migration is the leading explanation for the one
+unexplained hard reset this project has had.</em></p>
+</section>
+
+<!-- ============================= 5 ============================= -->
+<section class="panel" data-p="5">
+<h2>Why a module rather than built in</h2>
+<p class="lead">Mostly one reason: <strong>iteration speed during a hardware campaign.</strong>
+The rest follows from that.</p>
+
+<div class="tw"><table>
+<thead><tr><th></th><th>loadable module</th><th>built into vmlinuz</th></tr></thead>
+<tbody>
+<tr><td>change the driver</td><td><strong><code>rmmod</code> + <code>insmod</code>, seconds</strong></td><td>rebuild ~4 min, then a reboot</td></tr>
+<tr><td>available at boot</td><td>no &mdash; needs userspace to load it</td><td><strong>yes</strong></td></tr>
+<tr><td>tied to one kernel</td><td>yes, by <code>vermagic</code> and symbol CRCs</td><td>n/a, it is the kernel</td></tr>
+<tr><td>ships separately</td><td>yes</td><td>no</td></tr>
+<tr><td>can be absent</td><td><strong>yes &mdash; and that is the safety property</strong></td><td>no</td></tr>
+</tbody></table></div>
+
+<h3>The campaign made this decisive</h3>
+<p>The FPGA and the driver co-evolved across <strong>169 bitstreams</strong>. Many needed a driver
+change: a new status-word field, a different descriptor layout, a changed erase timing. If the
+driver had been built in, every one of those would have cost a full kernel rebuild and a
+reboot &mdash; on a board where the reboot is the slowest and least reliable step.</p>
+
+<div class="box box--key">
+  <p class="lab">The property we would lose</p>
+  <p>A built-in driver is <strong>always present</strong>, so there is no such thing as running
+  the placement policy without a device attached. Half the tests in this project depend on exactly
+  that: load no backend, and every flash write fails with <code>-ENODEV</code> while the policy,
+  the allocator and the state machine run at full speed with <em>nothing at risk</em>. That
+  separation is worth keeping even after the hardware settles.</p>
+</div>
+
+<h3>The cost we do pay</h3>
+<ul>
+<li><strong>A <code>.ko</code> is tied to one kernel.</strong> Every kernel rebuild needs the
+module rebuilt against it, or <code>insmod</code> refuses on <code>vermagic</code></li>
+<li><strong>Boot ordering.</strong> The boot-time read self-test cannot use the backend, because
+nothing is loaded yet &mdash; which is why it only reads, through its own mapping</li>
+<li><strong>1.4 MB of inert test code</strong> resident for ~90 lines of driver</li>
+</ul>
+</section>
+
+<!-- ============================= 6 ============================= -->
+<section class="panel" data-p="6">
+<h2>Should it become a real driver?</h2>
+<p class="lead">Eventually yes. Not now, and the reason is not laziness &mdash; it is that the
+test harness is currently the only thing that can tell us the hardware is sound.</p>
+
+<h3>What a clean driver would look like</h3>
+<figure><div class="cap"><span>hypothetical &mdash; nor_eci.ko, ~400 lines</span></div>
+<pre><code>map the three windows                    <span class="c">rd_win, io_win, er_win</span>
+write_page(pfn, src)                     <span class="c">cvac -&gt; descriptor -&gt; wait -&gt; inval</span>
+erase_page(pfn)                          <span class="c">trigger -&gt; wait on the erase counter</span>
+device_idle()                            <span class="c">read the status word, decode hw_busy / sch</span>
+register / unregister with mm/ltram.c
+
+<span class="c">and nothing else. No tests, no 80 module parameters, no worker thread.</span></code></pre></figure>
+
+<h3>Why not yet</h3>
+<div class="tw"><table>
+<thead><tr><th>obstacle</th><th>detail</th></tr></thead>
+<tbody>
+<tr><td><strong>Shared low-level helpers</strong></td><td><code>trigger_erase()</code>, <code>write_sector()</code>, <code>inval_sector()</code>, the status-word macros and the erase-completion wait are used by both the 43 tests and the backend. Extracting means moving them and rebuilding confidence in both</td></tr>
+<tr><td><strong>The tests are the validation</strong></td><td><code>test=42</code>'s census is how a bitstream is declared good. Splitting the driver out does not remove the need for the harness &mdash; it just means maintaining two things that share the same low-level code</td></tr>
+<tr><td><strong>The hardware is not finished</strong></td><td>The read-capture path is still unconstrained and there is an unexplained DQ5/DQ6 residual. While those are open, the harness is still being used as a harness</td></tr>
+<tr><td><strong>It buys nothing measurable</strong></td><td>The 1.4 MB is inert memory. There is no latency, correctness or maintainability crisis today</td></tr>
+</tbody></table></div>
+
+<div class="box box--good">
+  <p class="lab">When to do it</p>
+  <p><strong>When the bitstream stops changing.</strong> At that point the hardware facts are
+  frozen, the harness has done its job, and a ~400-line driver with a clear interface becomes
+  strictly better: smaller, reviewable, and plausibly upstreamable. Doing it earlier means
+  maintaining the extraction against a moving target, for no benefit anyone can measure.</p>
+</div>
+
+<h3>What would change, and what would not</h3>
+<p><strong>Nothing in <code>mm/</code>.</strong> The seam on page 4 is exactly what makes the
+swap cheap: a new module registers the same <code>struct ltram_flash_ops</code> and the memory
+manager cannot tell the difference. That is the point of having built the interface narrow in the
+first place &mdash; the policy has never known which device is underneath it, and it still
+would not.</p>
+</section>
+
+<footer class="end">
+LtRAM on Enzian &mdash; Cavium ThunderX CRB-2S, Xilinx VU9P, bitstream <code>169_phy200</code>.
+Sources: <code>linux/mm/ltram{,_policy}.c</code>, <code>linux/include/linux/ltram.h</code>,
+<code>ltram-backend/nor_eci_fulltest.c</code>. Line counts as of 2026-08-26.
+</footer>
+</div></div>
+
+<script>
+const tabs = [...document.querySelectorAll('.tabbar button')];
+const panels = [...document.querySelectorAll('.panel')];
+const all = document.getElementById('all');
+function show(p){
+  tabs.forEach(t => t.setAttribute('aria-selected', t.dataset.p === p));
+  panels.forEach(s => s.dataset.open = (all.checked || s.dataset.p === p) ? '1' : '0');
+  if (!all.checked) window.scrollTo({top:0, behavior:'instant'});
+}
+tabs.forEach(t => t.addEventListener('click', () => show(t.dataset.p)));
+all.addEventListener('change', () => show(tabs.find(t => t.getAttribute('aria-selected')==='true').dataset.p));
+</script>
