@@ -87,7 +87,33 @@ for t in $(seq 1 600); do
 done
 echo 0 | sudo -n tee $TP >/dev/null
 wait $SUDOPID; RC=$?
-sleep 5						# let the last frees settle
+
+# POLL for the release; do not assume a fixed delay is enough.
+#
+# The last few folios sit in per-CPU folio batches: taken off the LRU (so no lru
+# flag, and the batch holds the reference) and drained lazily when the batch
+# fills or something else drains it. They come back, just not instantly. A
+# fixed 5 s wait declared 10 of them a permanent leak on 2026-08-26 and cost
+# hours of hypotheses about refcounts and migration failure paths -- the give-away
+# was freed_via_backstop climbing between two reads of the same file.
+#
+# A test that fails on a healthy system is worse than no test.
+DRAIN=0
+: > "$OUT/drain.log"
+for i in $(seq 1 60); do
+        V=$(g "$(ps_)" valid)
+        echo "$i ${V:-READ_FAILED}" >> "$OUT/drain.log"
+        [ "${V:-x}" = "0" ] && { DRAIN=$i; break; }
+        sleep 1
+done
+# Say nothing alarming here. The loop only WAITS; whether anything is actually
+# stuck is decided below, from the authoritative post-loop read. An earlier
+# version shouted "this one is real" from here whenever the loop timed out --
+# including once when a single read came back empty and the pages had in fact
+# all been released, so the log and the verdict flatly contradicted each other.
+# drain.log records what each poll saw, so a future timeout is diagnosable.
+[ "$DRAIN" -gt 0 ] && say "all pages released after ${DRAIN}s" \
+                   || say "drain poll timed out; the verdict below is authoritative"
 ps_ > "$OUT/after.pagestate"; st > "$OUT/after.stats"
 RDIG=$(awk '/^DIGEST/{print $2}' "$OUT/run.log")
 
@@ -116,10 +142,10 @@ echo "  invariant $INV"; [ "$INV" = "ok" ] || FAIL=1
 echo
 echo "-- release at exit: every page the workload held must be released --"
 echo "  VALID while it held        ${PEAK:-?}"
-echo "  VALID after it exited      $V"
+echo "  VALID after it exited      $V   (drain poll: ${DRAIN}s)"
 if [ "${V:-1}" = "0" ]; then echo "  ALL RELEASED"
-else echo "  !! $V pages never released. The process is gone, so nothing can ever"
-     echo "     free them: a reference was taken and not dropped. Unreclaimable."; FAIL=1; fi
+else echo "  !! $V pages still VALID after 60 s of polling. Not a drain delay:"
+     echo "     a reference was taken and never dropped."; FAIL=1; fi
 echo
 echo "-- page accounting: every promoted page is valid, or was freed --"
 echo "  moved_to_ltram      $TOL"
