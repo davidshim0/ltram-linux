@@ -1,0 +1,123 @@
+#!/bin/bash
+# ltram-test.sh -- the one test. Replaces check1a/station4/5/6/7.
+#
+# THERE IS NO --protect-weights ANYWHERE IN THIS FILE, and there never will be.
+# It mprotects the weights PROT_READ, so they arrive ALREADY write-protected and
+# are promoted on first sighting -- which means the arm -> wait -> promote cycle,
+# the entire detection mechanism, never runs. It hid that from three separate
+# runs before anyone noticed. The policy reads PTE state and has never looked at
+# VMA flags, so the hint proves nothing it does not also conceal.
+#
+#   ./ltram-test.sh            no backend. Policy, allocator and state machine
+#                              at full speed with NOTHING at risk: every flash
+#                              write fails -ENODEV, so no sector is ever
+#                              programmed and no page can reach DIRTY.
+#   ./ltram-test.sh --flash    backend loaded. Pages genuinely land on NOR, and
+#                              at exit they go VALID -> DIRTY.
+set -u
+N=4096; RUNS=15; ITERS=60; BATCH=32; HOLD=30; USE_FLASH=0
+while [ $# -gt 0 ]; do case "$1" in
+  --flash) USE_FLASH=1;; --n) N=$2; shift;; --runs) RUNS=$2; shift;;
+  --iters) ITERS=$2; shift;; --batch) BATCH=$2; shift;;
+  *) echo "usage: $0 [--flash] [--n N] [--runs R] [--iters K] [--batch B]"; exit 2;;
+esac; shift; done
+
+MM=$HOME/matmul; KO=$HOME/nor_eci/nor_eci_fulltest_ltram.ko
+S=/sys/kernel/ltram/stats; P=/sys/kernel/debug/ltram/pagestate
+TP=/sys/kernel/ltram/target_pid; PB=/sys/module/ltram_policy/parameters/promote_batch
+OUT=/scratch/hushim/ltram-$(date +%m%d-%H%M%S); mkdir -p "$OUT" || exit 9
+say(){ echo "[$(date +%H:%M:%S)] $*"; }
+st(){ sudo -n cat $S; }
+ps_(){ sudo -n cat $P; }
+g(){ awk -v k="^$2" '$0~k{print $2}' <<<"$1"; }
+cleanup(){ echo 0 | sudo -n tee $TP >/dev/null 2>&1; }
+trap cleanup EXIT INT TERM
+
+say "=== preflight ==="; uname -r
+[ -e $TP ] || { say "!! not an LtRAM kernel"; exit 3; }
+[ "$(cat $TP)" = "0" ] || { say "!! target_pid already set"; exit 3; }
+pgrep -x matmul >/dev/null && { say "!! matmul already running"; exit 3; }
+A=$(df -m / | awk 'NR==2{print $4}'); [ "${A:-0}" -lt 100 ] && { say "!! root has ${A} MB free"; exit 3; }
+say "weights $((N*N*4/1048576)) MiB = $((N*N*4/4096)) pages   flash=$USE_FLASH   batch=$BATCH"
+say "output -> $OUT"
+
+if [ $USE_FLASH = 1 ]; then
+        lsmod | grep -q nor_eci || { say "loading backend"; sudo -n insmod $KO provide_ops=1 test=0 || exit 5; sleep 2; }
+        sudo -n dmesg | grep -iE "REGISTERED|STATUS WORD" | tail -2
+else
+        lsmod | grep -q nor_eci && { say "!! backend loaded but --flash not given; rmmod first"; exit 3; }
+fi
+echo $BATCH | sudo -n tee $PB >/dev/null
+
+# --------------------------------------------------------------- control
+say "=== control: DRAM only, policy detached ==="
+sudo -n $MM --n $N --iters $ITERS --runs 3 --verify --print-ranges > "$OUT/control.log" 2>&1
+CDIG=$(awk '/^DIGEST/{print $2}' "$OUT/control.log")
+say "control digest ${CDIG:-NONE}  mean $(awk '/^RESULT/{print $3}' "$OUT/control.log") s"
+[ -n "$CDIG" ] || { say "!! control failed"; tail -20 "$OUT/control.log"; exit 4; }
+
+# --------------------------------------------------------------- measured
+ps_ > "$OUT/before.pagestate"; st > "$OUT/before.stats"
+say "=== measured: same workload, policy attached ==="
+sudo -n $MM --n $N --iters $ITERS --runs $RUNS --verify --print-ranges --phys --hold $HOLD \
+     > "$OUT/run.log" 2>&1 &
+SUDOPID=$!
+for i in $(seq 1 120); do grep -q "^RANGE result" "$OUT/run.log" 2>/dev/null && break; sleep 1; done
+PID=$(pgrep -x matmul | head -1)
+[ -n "${PID:-}" ] || { say "!! workload died"; tail -20 "$OUT/run.log"; exit 6; }
+echo $PID | sudo -n tee $TP >/dev/null; say "attached $PID"
+
+echo "# t valid dirty free erasing moved_to_ltram moved_to_dram erases_done" > "$OUT/curve"
+for t in $(seq 1 600); do
+        [ -d /proc/$PID ] || { say "workload exited"; break; }
+        PS=$(ps_); SS=$(st)
+        echo "$((t*5)) $(g "$PS" valid) $(g "$PS" dirty) $(g "$PS" free) $(g "$PS" erasing) $(g "$SS" moved_to_ltram) $(g "$SS" moved_to_dram) $(g "$SS" erases_done)" >> "$OUT/curve"
+        [ $((t % 12)) -eq 0 ] && say "  t+$((t*5))s  valid $(g "$PS" valid)  dirty $(g "$PS" dirty)  free $(g "$PS" free)  to_ltram $(g "$SS" moved_to_ltram)"
+        sleep 5
+done
+echo 0 | sudo -n tee $TP >/dev/null
+wait $SUDOPID; RC=$?
+sleep 5						# let the last frees settle
+ps_ > "$OUT/after.pagestate"; st > "$OUT/after.stats"
+RDIG=$(awk '/^DIGEST/{print $2}' "$OUT/run.log")
+
+# --------------------------------------------------------------- assertions
+PS=$(cat "$OUT/after.pagestate"); SS=$(cat "$OUT/after.stats")
+V=$(g "$PS" valid); D=$(g "$PS" dirty); F=$(g "$PS" free)
+FB=$(g "$PS" free_from_bucketlist); INV=$(awk '/^invariant/{print $2}' <<<"$PS")
+E=$(awk '/^erasing/{print ($2=="idle")?0:1}' <<<"$PS")
+TOL=$(g "$SS" moved_to_ltram); BS=$(g "$SS" freed_via_backstop); HK=$(g "$SS" freed_via_hook)
+SUM=$((V + D + F + E)); ACC=$((V + BS + HK))
+FAIL=0
+{
+echo "================= LTRAM TEST ================="
+echo "N=$N pages=$((N*N*4/4096))  runs=$RUNS  batch=$BATCH  flash=$USE_FLASH  exit=$RC"
+echo
+echo "-- correctness --"
+echo "  control digest $CDIG"
+echo "  run     digest $RDIG"
+[ "$CDIG" = "$RDIG" ] && echo "  DIGEST MATCHES" || { echo "  !! DIGEST MISMATCH -- data was corrupted"; FAIL=1; }
+echo
+echo "-- state machine --"
+echo "  valid $V  dirty $D  free $F  erasing $E"
+echo "  sum $SUM (want 65536)"; [ "$SUM" = "65536" ] || { echo "  !! a page was lost from every state"; FAIL=1; }
+echo "  free_from_bucketlist $FB (want $F)"; [ "$FB" = "$F" ] || { echo "  !! bucket lists disagree with the free count"; FAIL=1; }
+echo "  invariant $INV"; [ "$INV" = "ok" ] || FAIL=1
+echo
+echo "-- page accounting: every promoted page is valid, or was freed --"
+echo "  moved_to_ltram      $TOL"
+echo "  still valid         $V"
+echo "  freed_via_backstop  $BS   (batch path: process exit, munmap, reclaim)"
+echo "  freed_via_hook      $HK   (single-page path: folio_put -> __folio_put_small)"
+echo "  valid+backstop+hook $ACC  (want $TOL)"
+[ "$ACC" = "$TOL" ] && echo "  ACCOUNTING CLOSES" || { echo "  !! $((TOL-ACC)) promoted pages are unaccounted"; FAIL=1; }
+[ "$V" -gt 0 ] && echo "  NOTE: $V pages are still VALID with no owner process -- a reference"
+[ "$V" -gt 0 ] && echo "        that was taken and never dropped. Not lost, but unreclaimable."
+echo
+echo "-- timings --"; grep "^  run" "$OUT/run.log" | tail -4
+echo
+[ $FAIL = 0 ] && echo "VERDICT: PASS" || echo "VERDICT: FAIL"
+echo "=============================================="
+} | tee "$OUT/VERDICT.txt"
+sync; say "done -> $OUT"
+exit $FAIL

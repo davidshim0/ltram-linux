@@ -102,7 +102,7 @@ static unsigned long *ltram_free_bitmap;	/* 1 = free */
 static unsigned long ltram_nr_pages;
 static DEFINE_SPINLOCK(ltram_alloc_lock);
 static atomic64_t stat_moved_to_dram;
-static atomic64_t stat_freed_via_backstop;
+static atomic64_t stat_freed_via_backstop, stat_freed_via_hook;
 static atomic64_t ltram_pages_in_use;
 
 
@@ -498,6 +498,7 @@ static void ltram_put_new_folio(struct folio *dst, unsigned long private)
  */
 void ltram_free_folio(struct folio *folio)
 {
+	atomic64_inc(&stat_freed_via_hook);
 	ltram_free_page_back(&folio->page, true);
 }
 
@@ -923,6 +924,7 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		"lru_refused          %lld\n"
 		"write_protected      %lld\n"
 		"freed_via_backstop   %lld\n"
+		"freed_via_hook       %lld\n"
 		"skipped_file_backed  %lld\n"
 		"sweeps               %lld\n"
 		"scan_cursor          0x%lx\n"
@@ -936,7 +938,8 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		atomic64_read(&stat_was_written),
 		atomic64_read(&stat_dirty_but_readonly), atomic64_read(&stat_chosen),
 		atomic64_read(&stat_lru_refused), atomic64_read(&stat_write_protected),
-		atomic64_read(&stat_freed_via_backstop), atomic64_read(&stat_skipped_file_backed),
+		atomic64_read(&stat_freed_via_backstop), atomic64_read(&stat_freed_via_hook),
+		atomic64_read(&stat_skipped_file_backed),
 		atomic64_read(&stat_sweeps), scan_cursor,
 		atomic64_read(&stat_erases_done), atomic64_read(&stat_erases_failed),
 		atomic64_read(&stat_erase_deferred));
