@@ -420,6 +420,27 @@ static unsigned long filler_base  = 0;     // test=23: where the intervening wri
 static unsigned long other_sector = 1000;  // test=21: Y = X + this
 static unsigned int  fail_writes = 0;  // 1 = make write_page() return -EIO, for step 5's negative test
 static unsigned int  provide_ops = 0;  // 1 = register the LtRAM write backend and idle
+/*
+ * 1 = write_page() erases inline before programming, as it always has.
+ * 0 = it does NOT, and TRUSTS the caller to hand it an already-erased sector.
+ *
+ * The erase is ~16.4 ms against ~1.2 ms of DMA -- 93% of a promotion's cost, on
+ * the critical path. mm/ltram_policy.c's erase worker blanks sectors in the
+ * background so a promotion pays only the DMA. Turning this off is what
+ * collects that, and it is the one change here that can destroy data: NOR
+ * programs by clearing bits, so writing a sector that was not erased yields the
+ * AND of old and new, silently.
+ *
+ * Default ON. Turn it off only once the state machine has been trusted, and
+ * keep verify_erased on for the first runs after.
+ */
+static unsigned int  inline_erase = 1;
+/*
+ * 1 = read the first words of a sector before programming and refuse if they
+ * are not 0xFFFFFFFF. ~40 ns/word. Cheap insurance against exactly the failure
+ * above while inline_erase=0 is new.
+ */
+static unsigned int  verify_erased = 1;
 static unsigned int  cvm_ok   = 0;     // test=17 is DISABLED until this is 1 — see the SError note
 module_param(test, uint, 0444);
 module_param(start_sector, ulong, 0444);
@@ -438,6 +459,8 @@ module_param(skip_fill, uint, 0444);
 module_param(iters, uint, 0444);
 module_param(cvm_ok, uint, 0444);
 module_param(provide_ops, uint, 0444);
+module_param(inline_erase, uint, 0644);
+module_param(verify_erased, uint, 0644);
 module_param(fail_writes, uint, 0644);
 module_param(other_sector, ulong, 0444);
 module_param(filler_base, ulong, 0444);
@@ -6719,12 +6742,34 @@ static int ft_ltram_write_page(unsigned long dst_pfn, const void *src)
 
     /* NOR must be erased before it can be programmed. Wait on the FPGA's erase
      * COUNTER rather than a fixed sleep -- a dropped trigger is invisible to a
-     * sleep and has bitten this project before. */
-    er0 = ST_ERASES(readq(io_win));
-    trigger_erase(sec);
-    for (tr = 0; tr < 2000; tr++) {                 /* erase is ~16.4 ms; 2 s ceiling */
-        if (ST_DELTA(ST_ERASES(readq(io_win)), er0, 0xFF) >= 1) break;
-        msleep(1);
+     * sleep and has bitten this project before.
+     *
+     * Skipped when inline_erase=0: the policy's background worker has already
+     * blanked this sector, which is the whole point of the state machine. */
+    tr = 0;
+    if (inline_erase) {
+        er0 = ST_ERASES(readq(io_win));
+        trigger_erase(sec);
+        for (tr = 0; tr < 2000; tr++) {             /* erase is ~16.4 ms; 2 s ceiling */
+            if (ST_DELTA(ST_ERASES(readq(io_win)), er0, 0xFF) >= 1) break;
+            msleep(1);
+        }
+    } else if (verify_erased) {
+        /* Trust, but read four words back. A sector that is not blank would be
+         * programmed to the AND of old and new, with no error anywhere. */
+        u32 w0, i2;
+        int bad = 0;
+        for (i2 = 0; i2 < 4; i2++) {
+            w0 = readl(rd_win + sec * SECT_SZ + 4 * i2);
+            if (w0 != 0xFFFFFFFFu) { bad = 1; break; }
+        }
+        if (bad) {
+            chase_fill = saved;
+            mutex_unlock(&ltram_wp_lock);
+            pr_err("fulltest: sector %llu NOT ERASED (word %u = 0x%08x) -- refusing to program\n",
+                   sec, i2, w0);
+            return -EIO;
+        }
     }
     if (tr >= 2000) {
         chase_fill = saved;
@@ -6769,9 +6814,68 @@ static int ft_ltram_write_page(unsigned long dst_pfn, const void *src)
     return 0;
 }
 
+/*
+ * Erase one sector without programming it. Same wait-on-the-counter discipline
+ * as the inline path: a dropped trigger is invisible to a sleep.
+ *
+ * Takes the same mutex as write_page, so an erase and a program can never be in
+ * flight together -- the device does one at a time and the shared dma_buf is
+ * not reentrant.
+ */
+static int ft_ltram_erase_page(unsigned long pfn)
+{
+    u64 pa = (u64)pfn << PAGE_SHIFT, sec;
+    u32 er0;
+    int tr;
+
+    if (pa < RD_BASE || pa >= RD_BASE + TOTAL_SECT * SECT_SZ) {
+        pr_err("fulltest: erase_page pfn %lu outside the window\n", pfn);
+        return -EINVAL;
+    }
+    sec = (pa - RD_BASE) / SECT_SZ;
+
+    mutex_lock(&ltram_wp_lock);
+    er0 = ST_ERASES(readq(io_win));
+    trigger_erase(sec);
+    for (tr = 0; tr < 2000; tr++) {
+        if (ST_DELTA(ST_ERASES(readq(io_win)), er0, 0xFF) >= 1) break;
+        msleep(1);
+    }
+    if (tr >= 2000) {
+        mutex_unlock(&ltram_wp_lock);
+        pr_err("fulltest: erase_page sector %llu never retired\n", sec);
+        return -EIO;
+    }
+    /* The CPU may hold lines for this sector from before the erase. An
+     * FPGA-side erase does not invalidate them, and a reader would see the old
+     * contents of a sector that is now blank. */
+    inval_sector(sec);
+    mutex_unlock(&ltram_wp_lock);
+    return 0;
+}
+
+/*
+ * Is the device idle right now? HW_BUSY is the NOR controller mid-operation;
+ * sch_state is the scheduler FSM, where 0 = IDLE (1=CMD 2=WRDATA 3=RDDATA
+ * 4=DONE, per nor_read_subsystem.v). RDDATA is why this can see read traffic at
+ * all: reads never reach the driver, being plain loads through the cacheable
+ * window, so this register is the only visibility there is.
+ *
+ * ONE SAMPLE ONLY. It can land in the gap between two reads; the caller takes
+ * several before committing to a 16.4 ms erase.
+ */
+static bool ft_ltram_device_idle(void)
+{
+    u64 w = readq(io_win);
+
+    return !ST_HW_BUSY(w) && !ST_ER_INFL(w) && ST_SCH(w) == 0;
+}
+
 static const struct ltram_flash_ops ft_ltram_ops = {
     .owner      = THIS_MODULE,
-    .write_page = ft_ltram_write_page,
+    .write_page  = ft_ltram_write_page,
+    .erase_page  = ft_ltram_erase_page,
+    .device_idle = ft_ltram_device_idle,
 };
 
 static int __init ft_init(void)
