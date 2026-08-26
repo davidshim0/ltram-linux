@@ -43,6 +43,51 @@ static size_t N = 8192;          /* W is N*N floats: 8192 -> 256 MiB, the window
 static int    ITERS = 100;
 static int    RUNS = 10;
 static int    do_verify = 0, do_protect = 0, do_ranges = 0, do_phys = 0, hold_secs = 0;
+static size_t flush_mb = 0;             /* 0 = off; LLC scrub between runs */
+static unsigned char *scrub_buf = NULL;
+static size_t scrub_bytes = 0;
+
+/*
+ * Evict the last-level cache by capacity.
+ *
+ * This machine has no private L2: 16 MiB is the LLC and it is shared by all 48
+ * cores (DESIGN-DECISIONS 0.0). Without this, every run inherits a slice of the
+ * previous run's residency and the timings measure a warm cache -- which is
+ * fine for a steady-state control and useless for watching a working set move
+ * between two tiers with different latencies.
+ *
+ * Capacity eviction rather than `dc civac`: one dependent-free read per 128 B
+ * line over 4x the LLC steamrolls every set, needs no privilege, and does not
+ * depend on which cache maintenance instructions EL0 is allowed to issue.
+ *
+ * CALLED OUTSIDE THE TIMED REGION -- see the run loop. The scrub is not part of
+ * the measurement, only of the wall clock.
+ */
+static void cache_scrub(void)
+{
+    volatile unsigned long sink = 0;
+    size_t i;
+    if (!scrub_buf) return;
+    for (i = 0; i < scrub_bytes; i += 128) sink += scrub_buf[i];
+    (void)sink;
+
+    /*
+     * Then DIRTY one word per page, so the scrub buffer can never be mistaken
+     * for the thing under study.
+     *
+     * It is anonymous, and after its memset it is read-mostly -- which makes it
+     * a perfect promotion candidate. mmap hands out descending addresses, so it
+     * lands BELOW the weights, and the scanner walks from address 0: on
+     * 2026-08-20 it promoted all 16,384 pages of the scrub buffer to flash
+     * before it ever reached the weights, burning 457 s and 16,384 erases on
+     * the instrument rather than the subject.
+     *
+     * One store per page keeps pte_write() true, so the policy rejects and
+     * re-arms it every pass and never selects it. 16,384 stores, immeasurable
+     * next to the read sweep above, and still outside the timed region.
+     */
+    for (i = 0; i < scrub_bytes; i += 4096) scrub_buf[i]++;
+}
 static uint64_t SEED = 20260818;
 
 static float *W, *x, *y;
@@ -479,10 +524,10 @@ int main(int argc, char **argv)
         {"n",1,0,'n'}, {"iters",1,0,'i'}, {"runs",1,0,'r'},
         {"verify",0,0,'V'}, {"protect-weights",0,0,'P'},
         {"print-ranges",0,0,'R'}, {"phys",0,0,'A'},
-        {"hold",1,0,'H'}, {"seed",1,0,'S'}, {0,0,0,0}
+        {"hold",1,0,'H'}, {"seed",1,0,'S'}, {"flush",1,0,'F'}, {0,0,0,0}
     };
     int c;
-    while ((c = getopt_long(argc, argv, "n:i:r:VPRAH:S:", lo, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "n:i:r:VPRAH:S:F:", lo, NULL)) != -1) {
         switch (c) {
         case 'n': N = strtoul(optarg, NULL, 0); break;
         case 'i': ITERS = atoi(optarg); break;
@@ -493,11 +538,12 @@ int main(int argc, char **argv)
         case 'A': do_phys = 1; break;
         case 'H': hold_secs = atoi(optarg); break;
         case 'S': SEED = strtoull(optarg, NULL, 0); break;
+        case 'F': flush_mb = strtoul(optarg, NULL, 0); break;
         default:
             fprintf(stderr,
               "usage: %s [--n DIM] [--iters K] [--runs R] [--verify]\n"
               "          [--protect-weights] [--print-ranges] [--phys]\n"
-              "          [--hold SECS] [--seed S]\n", argv[0]);
+              "          [--hold SECS] [--seed S] [--flush MB]\n", argv[0]);
             return 2;
         }
     }
@@ -509,6 +555,15 @@ int main(int argc, char **argv)
     W = alloc_region(Wbytes);
     x = alloc_region(xbytes);
     y = alloc_region(ybytes);
+
+    if (flush_mb) {
+        scrub_bytes = flush_mb << 20;
+        scrub_buf = mmap(NULL, scrub_bytes, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (scrub_buf == MAP_FAILED) { perror("mmap scrub"); return 1; }
+        memset(scrub_buf, 1, scrub_bytes);   /* fault it in now, not mid-run */
+        printf("  cache scrub  %zu MiB between runs (LLC is 16 MiB shared)\n", flush_mb);
+    }
 
     rng_s = SEED ? SEED : 1;
     for (size_t i = 0; i < N * N; i++) W[i] = rnd();
@@ -539,8 +594,17 @@ int main(int argc, char **argv)
     double *t = calloc(RUNS, sizeof(double));
     char digest[65] = "", d2[65];
 
+    struct timespec rt;
+    clock_gettime(CLOCK_REALTIME, &rt);
+    /* Absolute epoch of the run loop's origin, so a separate sampler can line
+     * its promotion curve up against these timings with no guesswork about how
+     * long the fill took. */
+    printf("TSTART %.3f\n", rt.tv_sec + rt.tv_nsec * 1e-9);
+    fflush(stdout);
+    double t_start = now();   /* wall origin for POINT lines */
     for (int r = 0; r < RUNS; r++) {
         memset(y, 0, ybytes);
+        cache_scrub();          /* BEFORE t0: excluded from the measurement */
         double t0 = now();
         for (int it = 0; it < ITERS; it++) {
             /* y accumulates every iteration: continuously written.
@@ -568,6 +632,9 @@ int main(int argc, char **argv)
             }
         }
         printf("  run %2d/%d  %8.3f s\n", r + 1, RUNS, t[r]);
+        /* Machine-readable, with the wall offset so a run can be lined up
+         * against the promotion curve sampled by the driving script. */
+        printf("POINT %d %.6f %.3f\n", r + 1, t[r], now() - t_start);
         fflush(stdout);
         if (do_phys) {
             char tag[16];
