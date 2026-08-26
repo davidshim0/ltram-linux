@@ -29,7 +29,10 @@ OUT=/scratch/hushim/ltram-$(date +%m%d-%H%M%S); mkdir -p "$OUT" || exit 9
 say(){ echo "[$(date +%H:%M:%S)] $*"; }
 st(){ sudo -n cat $S; }
 ps_(){ sudo -n cat $P; }
-g(){ awk -v k="^$2" '$0~k{print $2}' <<<"$1"; }
+# EXACT first-field match. A regex of ^key also matches free_buckets,
+# free_from_bucketlist and valid_detail, which turns every assertion's
+# arithmetic into multi-line garbage.
+g(){ awk -v k="$2" '$1==k{print $2; exit}' <<<"$1"; }
 cleanup(){ echo 0 | sudo -n tee $TP >/dev/null 2>&1; }
 trap cleanup EXIT INT TERM
 
@@ -73,6 +76,13 @@ for t in $(seq 1 600); do
         PS=$(ps_); SS=$(st)
         echo "$((t*5)) $(g "$PS" valid) $(g "$PS" dirty) $(g "$PS" free) $(g "$PS" erasing) $(g "$SS" moved_to_ltram) $(g "$SS" moved_to_dram) $(g "$SS" erases_done)" >> "$OUT/curve"
         [ $((t % 12)) -eq 0 ] && say "  t+$((t*5))s  valid $(g "$PS" valid)  dirty $(g "$PS" dirty)  free $(g "$PS" free)  to_ltram $(g "$SS" moved_to_ltram)"
+        # The workload holds at the end, so this catches the LAST sample before
+        # it exits -- the moment every flash page it owns is still VALID. That
+        # number is what must become 0.
+        if grep -q "^holding" "$OUT/run.log" 2>/dev/null && [ -z "${PEAK:-}" ]; then
+                PEAK=$(g "$PS" valid); ps_ > "$OUT/atexit.pagestate"
+                say "  workload is holding: $PEAK pages VALID, all of which must be released"
+        fi
         sleep 5
 done
 echo 0 | sudo -n tee $TP >/dev/null
@@ -103,6 +113,13 @@ echo "  valid $V  dirty $D  free $F  erasing $E"
 echo "  sum $SUM (want 65536)"; [ "$SUM" = "65536" ] || { echo "  !! a page was lost from every state"; FAIL=1; }
 echo "  free_from_bucketlist $FB (want $F)"; [ "$FB" = "$F" ] || { echo "  !! bucket lists disagree with the free count"; FAIL=1; }
 echo "  invariant $INV"; [ "$INV" = "ok" ] || FAIL=1
+echo
+echo "-- release at exit: every page the workload held must be released --"
+echo "  VALID while it held        ${PEAK:-?}"
+echo "  VALID after it exited      $V"
+if [ "${V:-1}" = "0" ]; then echo "  ALL RELEASED"
+else echo "  !! $V pages never released. The process is gone, so nothing can ever"
+     echo "     free them: a reference was taken and not dropped. Unreclaimable."; FAIL=1; fi
 echo
 echo "-- page accounting: every promoted page is valid, or was freed --"
 echo "  moved_to_ltram      $TOL"
