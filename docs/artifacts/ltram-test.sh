@@ -15,11 +15,11 @@
 #   ./ltram-test.sh --flash    backend loaded. Pages genuinely land on NOR, and
 #                              at exit they go VALID -> DIRTY.
 set -u
-N=4096; RUNS=15; ITERS=60; BATCH=32; HOLD=30; USE_FLASH=0
+N=4096; RUNS=15; ITERS=60; BATCH=32; HOLD=30; USE_FLASH=0; FLUSH=0
 while [ $# -gt 0 ]; do case "$1" in
   --flash) USE_FLASH=1;; --n) N=$2; shift;; --runs) RUNS=$2; shift;;
-  --iters) ITERS=$2; shift;; --batch) BATCH=$2; shift;;
-  *) echo "usage: $0 [--flash] [--n N] [--runs R] [--iters K] [--batch B]"; exit 2;;
+  --iters) ITERS=$2; shift;; --batch) BATCH=$2; shift;; --flush) FLUSH=$2; shift;;
+  *) echo "usage: $0 [--flash] [--n N] [--runs R] [--iters K] [--batch B] [--flush MB]"; exit 2;;
 esac; shift; done
 
 MM=$HOME/matmul; KO=$HOME/nor_eci/nor_eci_fulltest_ltram.ko
@@ -41,7 +41,7 @@ say "=== preflight ==="; uname -r
 [ "$(cat $TP)" = "0" ] || { say "!! target_pid already set"; exit 3; }
 pgrep -x matmul >/dev/null && { say "!! matmul already running"; exit 3; }
 A=$(df -m / | awk 'NR==2{print $4}'); [ "${A:-0}" -lt 100 ] && { say "!! root has ${A} MB free"; exit 3; }
-say "weights $((N*N*4/1048576)) MiB = $((N*N*4/4096)) pages   flash=$USE_FLASH   batch=$BATCH"
+say "weights $((N*N*4/1048576)) MiB = $((N*N*4/4096)) pages   flash=$USE_FLASH   batch=$BATCH   scrub=${FLUSH}MB"
 say "output -> $OUT"
 
 if [ $USE_FLASH = 1 ]; then
@@ -54,7 +54,11 @@ echo $BATCH | sudo -n tee $PB >/dev/null
 
 # --------------------------------------------------------------- control
 say "=== control: DRAM only, policy detached ==="
-sudo -n $MM --n $N --iters $ITERS --runs 3 --verify --print-ranges > "$OUT/control.log" 2>&1
+FL=""; [ "$FLUSH" != 0 ] && FL="--flush $FLUSH"
+# The scrub MUST be identical on both sides. A control that keeps its weights in
+# LLC while the measured run is forced cold is not a comparison, it is two
+# different experiments.
+sudo -n $MM --n $N --iters $ITERS --runs 3 $FL --verify --print-ranges > "$OUT/control.log" 2>&1
 CDIG=$(awk '/^DIGEST/{print $2}' "$OUT/control.log")
 say "control digest ${CDIG:-NONE}  mean $(awk '/^RESULT/{print $3}' "$OUT/control.log") s"
 [ -n "$CDIG" ] || { say "!! control failed"; tail -20 "$OUT/control.log"; exit 4; }
@@ -62,7 +66,7 @@ say "control digest ${CDIG:-NONE}  mean $(awk '/^RESULT/{print $3}' "$OUT/contro
 # --------------------------------------------------------------- measured
 ps_ > "$OUT/before.pagestate"; st > "$OUT/before.stats"
 say "=== measured: same workload, policy attached ==="
-sudo -n $MM --n $N --iters $ITERS --runs $RUNS --verify --print-ranges --phys --hold $HOLD \
+sudo -n $MM --n $N --iters $ITERS --runs $RUNS $FL --verify --print-ranges --phys --hold $HOLD \
      > "$OUT/run.log" 2>&1 &
 SUDOPID=$!
 for i in $(seq 1 120); do grep -q "^RANGE result" "$OUT/run.log" 2>/dev/null && break; sleep 1; done
