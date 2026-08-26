@@ -103,6 +103,21 @@ static unsigned long ltram_nr_pages;
 static DEFINE_SPINLOCK(ltram_alloc_lock);
 static atomic64_t stat_moved_to_dram;
 static atomic64_t stat_freed_via_backstop, stat_freed_via_hook;
+/*
+ * Destinations handed to migrate_pages(), and destinations it handed back.
+ *
+ * A flash page allocated as a migration destination is released either by
+ * migrate_pages() calling put_new_folio on failure, or by the folio's last
+ * reference going away after a successful migration. If dst_allocated exceeds
+ * dst_released + moved_to_ltram, a failure path returned WITHOUT releasing the
+ * destination, and that page is stranded: refcount 1, no mapping, no LRU, never
+ * freed by anything.
+ *
+ * Eight such pages were found on 2026-08-26, at consecutive pfns immediately
+ * after the last correctly-released one -- the signature of a batch in flight.
+ * This pair turns that from an inference into an equation.
+ */
+static atomic64_t stat_dst_allocated, stat_dst_released;
 static atomic64_t ltram_pages_in_use;
 
 
@@ -479,11 +494,14 @@ static struct folio *ltram_get_new_folio(struct folio *src, unsigned long privat
 		return NULL;
 
 	p = ltram_alloc_page();
+	if (p)
+		atomic64_inc(&stat_dst_allocated);
 	return p ? page_folio(p) : NULL;
 }
 
 static void ltram_put_new_folio(struct folio *dst, unsigned long private)
 {
+	atomic64_inc(&stat_dst_released);
 	ltram_free_page_back(&dst->page, false);	/* never programmed */
 }
 
@@ -925,6 +943,8 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		"write_protected      %lld\n"
 		"freed_via_backstop   %lld\n"
 		"freed_via_hook       %lld\n"
+		"dst_allocated        %lld\n"
+		"dst_released         %lld\n"
 		"skipped_file_backed  %lld\n"
 		"sweeps               %lld\n"
 		"scan_cursor          0x%lx\n"
@@ -939,6 +959,7 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		atomic64_read(&stat_dirty_but_readonly), atomic64_read(&stat_chosen),
 		atomic64_read(&stat_lru_refused), atomic64_read(&stat_write_protected),
 		atomic64_read(&stat_freed_via_backstop), atomic64_read(&stat_freed_via_hook),
+		atomic64_read(&stat_dst_allocated), atomic64_read(&stat_dst_released),
 		atomic64_read(&stat_skipped_file_backed),
 		atomic64_read(&stat_sweeps), scan_cursor,
 		atomic64_read(&stat_erases_done), atomic64_read(&stat_erases_failed),
