@@ -1,0 +1,45 @@
+============ STATION 7: COST OF LIVING ON NOR ============
+N=4096  64 MiB = 16384 pages   runs=1500   promote_batch=128   flush=64 MiB
+
+DRAM baseline : 0.107 s mean   digest b1b51e524df78620caf52dd3832fedd2e74c43a1c598a876dbaf30eb92633d4f
+NOR run       : 0.445 s mean   digest b1b51e524df78620caf52dd3832fedd2e74c43a1c598a876dbaf30eb92633d4f   exit 0
+DIGEST MATCHES -- timings are meaningful
+
+-- phase A (DRAM), first and last 3 --
+POINT 1 0.107448 0.164
+POINT 2 0.107433 0.328
+POINT 3 0.107457 0.492
+POINT 1498 0.107384 245.669
+POINT 1499 0.107427 245.833
+POINT 1500 0.107493 245.997
+-- phase B (NOR), first 3 / slowest 3 / last 3 --
+POINT 1 0.107412 0.164
+POINT 2 0.107377 0.328
+POINT 3 0.107407 0.492
+POINT 666 2.970906 895.371
+POINT 661 2.936267 881.158
+POINT 656 2.908202 867.080
+POINT 1498 0.513789 1713.063
+POINT 1499 0.513613 1714.034
+POINT 1500 0.514686 1715.006
+
+-- final residency --
+1787260247.231262485 16384 32792 49889 7535 49889
+-- counters --
+policy            clean-run
+target_pid        0
+scanned           225367
+promoted          49889
+promote_failed    0
+demoted           7542
+pages_in_use      0
+pages_total       65536
+rej_writable      50382
+rej_runs_short    124638
+stale_dirty       174985
+sel_isolated      49889
+sel_isolate_fail  458
+rearmed           50382
+late_free         42356
+rej_not_anon      304350
+==========================================================
