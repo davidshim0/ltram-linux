@@ -329,6 +329,21 @@ is committed. Not quiet &rarr; back to DIRTY, <code>erase_deferred++</code>, nev
 read stream.</p>
 
 <h3>Lazy erase is correct, and it invalidates an obvious assertion</h3>
+<div class="box box--bad">
+  <p class="lab">The hysteresis was a comment, not code &mdash; found 26 Aug</p>
+  <p>The gate tested <code>erase_high_water</code> and nothing else.
+  <code>erase_low_water</code> was declared, exposed as a module parameter and
+  documented, but <strong>never read</strong> &mdash; so the code did precisely what its own
+  comment said it was avoiding: at the mark, each allocation drops <code>free</code> below it,
+  one sector is erased, <code>free</code> rises back, and the engine stops. One erase per
+  allocation, with the <code>erase_batch</code> drain defeated every time.</p>
+  <p>It hid because <strong><code>free</code> has never come near the mark</strong> &mdash; the
+  largest run so far promoted 8,846 of 65,536 pages and left <code>free</code> at 56,690.
+  Now latched: on below the low mark, off at the high one, holding state in between. The
+  &ldquo;off&rdquo; test runs first, so a nonsensical <code>low &gt; high</code> set through
+  sysfs degrades to the old single threshold rather than latching on forever.</p>
+</div>
+
 <div class="box box--warn">
   <p class="lab">DIRTY does not drain, and should not</p>
   <p>Erasing starts only below <code>erase_low_water</code> and continues to
@@ -339,6 +354,24 @@ read stream.</p>
   <p><strong>So &ldquo;free returns to 65,536&rdquo; is the wrong success criterion</strong> once a
   backend is loaded. The right one is the four states summing to 65,536. An earlier test asserted
   the former and would have failed on correct behaviour.</p>
+</div>
+
+<h3>Making the gate visible</h3>
+<p>&ldquo;Gated because <code>free</code> is above the high mark&rdquo; and &ldquo;the worker is
+wedged&rdquo; produced <strong>identical output</strong> &mdash; both just
+<code>erases_done 0</code> &mdash; and the first is the design working. That ambiguity is what
+hid the bug above, so <code>pagestate</code> now says which it is:</p>
+<figure><div class="cap"><span>/sys/kernel/debug/ltram/pagestate</span></div>
+<pre><code>erase_engine         off   (on below 2048 free, off at 8192)</code></pre></figure>
+<div class="box box--warn">
+  <p class="lab">The current test cannot exercise the erase engine</p>
+  <p>At default watermarks the engine only opens below 2,048 free, so a test would have to
+  promote <strong>~57,000 of the 65,536 pages</strong> to reach it. The watermarks are
+  <code>module_param(&hellip;, 0644)</code> on built-in code, so they are live at
+  <code>/sys/module/ltram_policy/parameters/</code> and can be raised to force the engine on
+  against a pool of DIRTY pages that already exists &mdash; no reboot, no larger workload.
+  That is a prerequisite for <code>inline_erase=0</code> meaning anything: trusting a
+  pre-erased pool requires the pool to have been erased.</p>
 </div>
 
 <h2 id="invariant">1.6 &middot; The invariant, and the four guards</h2>
@@ -608,8 +641,10 @@ separation is why most testing is done that way.</p>
   <li><strong>Step 5's negative test has never run.</strong> Without it, hook placement is argued
   from code reading &mdash; the positive path passes whether or not the hook precedes
   <code>folio_migrate_mapping()</code></li>
-  <li><strong><code>erases_done</code> is still 0.</strong> The worker, watermark and idle gate are
-  compiled and, as of this writing, unexercised against real erases</li>
+  <li><strong><code>erases_done</code> is still 0</strong> &mdash; correctly, the engine has never
+  been ungated. The worker, the watermarks and the idle gate are compiled and, as of this
+  writing, <em>unexercised against a real erase</em>. Every claim about erase throughput here
+  is arithmetic on the device's 16.4 ms figure, not a measurement of this code path</li>
   </ul>
 </div>
 
