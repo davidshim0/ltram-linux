@@ -81,7 +81,7 @@ struct ltram_flash_ops {
 	 *
 	 * Returns 0 on success, negative errno on failure.
 	 */
-	int (*write_page)(unsigned long dst_pfn, const void *src);
+	int (*write_page)(unsigned long dst_pfn, unsigned long src_pfn);
 
 	/*
 	 * Erase one PAGE_SIZE sector, WITHOUT programming it. Optional; when
@@ -109,7 +109,7 @@ struct ltram_flash_ops {
 int  ltram_register_flash_ops(const struct ltram_flash_ops *ops);
 void ltram_unregister_flash_ops(const struct ltram_flash_ops *ops);
 bool ltram_have_flash_ops(void);
-int  ltram_write_page(unsigned long dst_pfn, const void *src);
+int  ltram_write_page(unsigned long dst_pfn, unsigned long src_pfn);
 int  ltram_erase_page(unsigned long pfn);
 bool ltram_device_idle(void);
 bool ltram_have_erase_op(void);
@@ -139,7 +139,7 @@ static inline bool pfn_is_ltram(unsigned long pfn) { return false; }
 static inline void ltram_declare_node(void) { }
 static inline void ltram_note_stray_alloc(unsigned long pfn, const char *w) { }
 static inline bool ltram_have_flash_ops(void) { return false; }
-static inline int ltram_write_page(unsigned long p, const void *s) { return -ENODEV; }
+static inline int ltram_write_page(unsigned long d, unsigned long s) { return -ENODEV; }
 static inline int ltram_erase_page(unsigned long p) { return -ENODEV; }
 static inline bool ltram_device_idle(void) { return true; }
 static inline bool ltram_have_erase_op(void) { return false; }

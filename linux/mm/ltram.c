@@ -256,7 +256,7 @@ bool ltram_device_idle(void)
 }
 EXPORT_SYMBOL_GPL(ltram_device_idle);
 
-int ltram_write_page(unsigned long dst_pfn, const void *src)
+int ltram_write_page(unsigned long dst_pfn, unsigned long src_pfn)
 {
 	const struct ltram_flash_ops *ops;
 	struct module *owner;
@@ -279,7 +279,7 @@ int ltram_write_page(unsigned long dst_pfn, const void *src)
 		return -ENODEV;
 	}
 
-	rc = ops->write_page(dst_pfn, src);
+	rc = ops->write_page(dst_pfn, src_pfn);
 
 	if (owner)
 		module_put(owner);
@@ -321,10 +321,16 @@ int ltram_copy_to_flash(struct folio *dst, struct folio *src)
 		return -EINVAL;
 
 	for (i = 0; i < nr; i++) {
-		void *from = kmap_local_folio(src, i * PAGE_SIZE);
-		int rc = ltram_write_page(folio_pfn(dst) + i, from);
+		/*
+		 * The PFN, not a mapping. The backend hands this straight to the
+		 * DMA engine as the source address, so nothing here dereferences
+		 * it and the kmap that used to wrap this loop is gone. Deriving a
+		 * physical address from kmap_local_folio() would have worked on
+		 * arm64, where it degenerates to the linear map, and been wrong
+		 * anywhere with highmem.
+		 */
+		int rc = ltram_write_page(folio_pfn(dst) + i, folio_pfn(src) + i);
 
-		kunmap_local(from);
 		if (rc) {
 			pr_warn_ratelimited("ltram: flash write failed at page %ld/%ld of folio pfn %lu (%d) -- migration aborted\n",
 					    i, nr, folio_pfn(dst), rc);
@@ -463,7 +469,7 @@ static ssize_t ltram_write_test(struct file *f, const char __user *ubuf,
 	for (i = 0; i < PAGE_SIZE / 4; i++)
 		page[i] = pat;
 
-	rc = ltram_write_page(pfn, page);
+	rc = ltram_write_page(pfn, PFN_DOWN(__pa(page)));
 	free_page((unsigned long)page);
 
 	pr_info("ltram: write_test pfn %lu pattern %08x -> %d\n", pfn, pat, rc);

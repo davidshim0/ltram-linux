@@ -810,6 +810,7 @@ static u32 hardpat(u64 b, u32 k)
     }
 }
 
+static int write_sector_from(u64 sect, u64 src_pa);
 static int write_sector(u64 sect);
 
 // ---- per-command latency census -----------------------------------------------
@@ -1015,20 +1016,37 @@ static void op_census(void)
 }
 
 
-static int write_sector(u64 sect)
+/*
+ * src_pa is where the ENGINE fetches from. Every one of the 43 tests passes
+ * dma_h, the shared bounce buffer, and gets the behaviour it always had. The
+ * LtRAM write path passes the source page's own physical address instead, which
+ * is the whole point: a promotion should not copy 4 KB through a staging buffer
+ * on a system whose thesis is that data movement is the cost.
+ */
+static int write_sector_from(u64 sect, u64 src_pa)
 {
     u64 base = sect * SECT_SZ, desc, st_snap;
     unsigned long a, e;
     u32 got = 0, beats0, pages0; int tries; unsigned int i; u64 wr_t0;
 
-    /* chase_fill: test=43 pre-fills dma_buf with a pointer-chase image and needs
-     * write_sector to ship it verbatim instead of generating a pattern. */
-    if (!chase_fill)
-    for (i = 0; i < SECT_SZ / 4; i++)
-        ((u32 *)dma_buf)[i] = use_hardpat ? hardpat(base + 4ULL * i, cur_patid)
-                                          : (PAT(base + 4ULL * i) ^ cur_seed);
-    a = (unsigned long)dma_buf; e = a + SECT_SZ;
-    for (a &= ~63UL; a < e; a += 64) asm volatile("dc cvac, %0" :: "r"(a) : "memory");
+    if (src_pa == (u64)dma_h) {
+        /* chase_fill: test=43 pre-fills dma_buf with a pointer-chase image and needs
+         * write_sector to ship it verbatim instead of generating a pattern. */
+        if (!chase_fill)
+        for (i = 0; i < SECT_SZ / 4; i++)
+            ((u32 *)dma_buf)[i] = use_hardpat ? hardpat(base + 4ULL * i, cur_patid)
+                                              : (PAT(base + 4ULL * i) ^ cur_seed);
+        a = (unsigned long)dma_buf; e = a + SECT_SZ;
+        for (a &= ~63UL; a < e; a += 64) asm volatile("dc cvac, %0" :: "r"(a) : "memory");
+    }
+    /*
+     * DELIBERATELY no cache maintenance on an external source. Whether the
+     * engine's coherent read picks up lines the CPU has dirtied is the open
+     * question, and writing back here would hide the answer. If the test says it
+     * does not snoop, the fix is a cvm_wbi_l2_pa() sweep over src_pa, ~134 ns
+     * for 32 lines. dc cvac cannot do it: PoC is L1D on this part, so civac and
+     * cvac are both no-ops at every level.
+     */
     wmb();
 
     /* Snapshot the free-running counters BEFORE issuing, so the wait below is a
@@ -1040,7 +1058,16 @@ static int write_sector(u64 sect)
 
     wr_t0 = ktime_get_ns();
     ws_t_issue = wr_t0;
-    desc = ((SECT_SZ & 0xFFFFFF) << 40) | ((u64)dma_h & 0xFFFFFFFFFFULL);
+    /*
+     * write_manager pairs 128 B slots into 256 B pages, advancing emit_ptr by two.
+     * A descriptor whose length is an ODD number of 128 B lines leaves a dangling
+     * slot, the next descriptor's first line pairs with it, and you get
+     * err_addr_order and one 256 B page assembled from two different sectors.
+     * Every descriptor here is SECT_SZ, so the constraint holds. It would stop
+     * holding the moment anything writes a partial page.
+     */
+    BUILD_BUG_ON(SECT_SZ % 256);
+    desc = ((SECT_SZ & 0xFFFFFF) << 40) | (src_pa & 0xFFFFFFFFFFULL);
     writeq(desc, io_win + base);                    // descriptor at io+dst
     wmb();
     for (tries = 0; tries < 200000; tries++) {      // 2s ceiling
@@ -1114,6 +1141,12 @@ static int write_sector(u64 sect)
     /* NOTE: returns 0 even on a beat timeout, so a long soak is not aborted by one
      * stalled sector -- but st_wait_timeouts is non-zero and the census says so. */
     return 0;
+}
+
+/* Every existing test ships the shared bounce buffer. Unchanged behaviour. */
+static int write_sector(u64 sect)
+{
+    return write_sector_from(sect, (u64)dma_h);
 }
 
 // verify the written pattern with retries: bytes-complete only means the FPGA pulled
@@ -6706,7 +6739,7 @@ out:
  * =================================================================== */
 static DEFINE_MUTEX(ltram_wp_lock);
 
-static int ft_ltram_write_page(unsigned long dst_pfn, const void *src)
+static int ft_ltram_write_page(unsigned long dst_pfn, unsigned long src_pfn)
 {
     u64 pa = (u64)dst_pfn << PAGE_SHIFT;
     u64 sec;
@@ -6736,9 +6769,20 @@ static int ft_ltram_write_page(unsigned long dst_pfn, const void *src)
      * which is a single shared bounce buffer. */
     mutex_lock(&ltram_wp_lock);
 
-    memcpy(dma_buf, src, SECT_SZ);
+    /*
+     * ZERO COPY. The engine fetches the source page directly; there is no staging
+     * buffer and no memcpy. On a system whose whole claim is that data movement is
+     * the cost, copying 4 KB through a bounce buffer on every promotion was the
+     * wrong shape regardless of what it benchmarked at.
+     *
+     * The mutex still serialises. Not for the buffer any more, but because the
+     * AXI-Lite write channel back-pressures while a transfer is active
+     * (s_axi_awready <= not active), so a second descriptor stalls the issuing
+     * core inside the wmb() after writeq -- dsb st, not preemptible, potentially
+     * for the rest of the previous transfer. Never take a SPINLOCK across this.
+     */
     saved = chase_fill;
-    chase_fill = 1;                 /* ship dma_buf verbatim, do not pattern it */
+    chase_fill = 1;                 /* do not let write_sector_from pattern anything */
 
     /* NOR must be erased before it can be programmed. Wait on the FPGA's erase
      * COUNTER rather than a fixed sleep -- a dropped trigger is invisible to a
@@ -6778,7 +6822,7 @@ static int ft_ltram_write_page(unsigned long dst_pfn, const void *src)
         return -EIO;
     }
 
-    rc = write_sector(sec);
+    rc = write_sector_from(sec, (u64)src_pfn << PAGE_SHIFT);
 
     /*
      * DROP THE CPU'S STALE COPIES OF THIS SECTOR BEFORE ANYONE CAN READ IT.
