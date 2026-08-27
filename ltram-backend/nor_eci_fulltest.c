@@ -439,26 +439,20 @@ static unsigned int  zc_pages = 1;   /* source region size, in pages */
 static unsigned int  zc_probe = 0;   /* which page of that region to ship */
 static unsigned int  zc_evict = 0;   /* 1 = CVM the source before the DMA (control) */
 /*
- * Write back the source page before every LtRAM promotion. Default ON, because
- * without it the first successfully promoted page kills the process.
+ * Write back the source page before every LtRAM promotion. Default OFF.
  *
- * 2026-08-27: zc_flush_src=0 segfaulted matmul after exactly one promotion,
- * 9 runs in. With it, 16,435 pages promoted and the digest matched. The
- * plateau is 0.253 s either way, so the ~134 ns this costs against a 1326 us
- * write is not measurable.
+ * This was briefly defaulted ON after zc_flush_src=0 segfaulted matmul and the
+ * next run with it set passed. That inference was wrong. The crash was sector 0
+ * holding data test=45 had programmed directly, outside the state machine,
+ * while the kernel still believed it blank -- so with inline_erase=0 the first
+ * promotion programmed onto a written sector and got the AND of the two. The
+ * following run passed because that sector had gone DIRTY in the crash, not
+ * because of the flush. zc_flush_src=0 then passed cleanly with 16,434 pages.
  *
- * test=45 predicted the opposite and was wrong as a prediction. It writes a
- * freshly allocated KERNEL page and ships it from the same thread microseconds
- * later, and reported that the engine snoops the dirty line -- which it does,
- * for that page, under those conditions. A migration source is a USER page,
- * written by userspace on another core, unmapped by try_to_migrate(), and
- * shipped by the scanner kthread. The microbenchmark controlled none of those
- * differences, so it measured a narrower thing than the name suggested.
- *
- * Which of those differences matters is not established. Do not remove this
- * flush on the strength of test=45 alone.
+ * Kept as an escape hatch. test=45 says the engine snoops, and the integrated
+ * test has not contradicted it once the sector-0 poisoning is accounted for.
  */
-static unsigned int  zc_flush_src = 1;
+static unsigned int  zc_flush_src = 0;
 static unsigned int  inline_erase = 1;
 /*
  * 1 = read the first words of a sector before programming and refuse if they
@@ -3417,6 +3411,31 @@ static int fulltest_thread(void *unused)
         if (bad == 0 && zc_evict)
             pr_info("fulltest: ## ZC   control case: the source was flushed on purpose, so "
                     "this only proves the DMA and the read-back path work.\n");
+        /*
+         * LEAVE THE SECTOR ERASED. This test programs through
+         * write_sector_from(), which the kernel's state machine never sees, so
+         * on exit mm/ltram_policy.c still believes this sector is blank and
+         * free. With inline_erase=0 the next promotion to land here programs
+         * onto written flash and gets the AND of both, and the process reading
+         * that page dies. That is exactly what happened on 2026-08-27: one
+         * promotion, then SIGSEGV, and it cost an evening because it looked
+         * like a coherence bug.
+         */
+        {
+            u32 e0 = ST_ERASES(readq(io_win));
+            int t2;
+
+            cvm_evict_sector(sec);
+            trigger_erase(sec);
+            for (t2 = 0; t2 < 2000; t2++) {
+                if (ST_DELTA(ST_ERASES(readq(io_win)), e0, 0xFF) >= 1) break;
+                msleep(1);
+            }
+            cvm_evict_sector(sec);
+            pr_info("fulltest: ## ZC   sector %llu left %s\n", sec,
+                    t2 < 2000 ? "ERASED (the kernel still thinks it is blank, and now it is)"
+                              : "PROGRAMMED -- ERASE FAILED. Reboot before running the policy.");
+        }
 zc_out:
         for (i = 0; i < zc_pages; i++) if (pg[i]) __free_page(pg[i]);
         kvfree(pg);
