@@ -32,3 +32,4 @@ workloads/basic_tests/cow_to_dram
 # repository as a gitlink rather than a directory, so ".step-worktrees/" would not
 # match and it would be staged as a broken submodule pointer.
 .step-worktrees
+.claude/sekekama/
