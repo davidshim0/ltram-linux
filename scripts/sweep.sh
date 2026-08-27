@@ -101,7 +101,10 @@ for N in $NS; do
         # pool is 65,536 sectors, so without this the sweep runs out of clean
         # sectors somewhere around the 128 MiB point and every later size
         # quietly measures partial residency.
-        CLEAN=$(g "$(sudo -n cat $P)" clean)
+        # "clean" on the renamed kernel, "free" before it. Reading the wrong
+        # one returns empty, which reads as 0, which drains after every size.
+        PS_NOW=$(sudo -n cat $P)
+        CLEAN=$(g "$PS_NOW" clean); [ -z "$CLEAN" ] && CLEAN=$(g "$PS_NOW" free)
         if [ "${CLEAN:-0}" -lt 40000 ]; then
             say "  clean=$CLEAN, draining before the next size"
             echo 65536 | sudo -n tee $HW >/dev/null; echo 65535 | sudo -n tee $LW >/dev/null
