@@ -110,6 +110,7 @@ int  ltram_register_flash_ops(const struct ltram_flash_ops *ops);
 void ltram_unregister_flash_ops(const struct ltram_flash_ops *ops);
 bool ltram_have_flash_ops(void);
 int  ltram_write_page(unsigned long dst_pfn, unsigned long src_pfn);
+void ltram_record_promotion(unsigned long dst_pfn, unsigned long src_pfn);
 int  ltram_erase_page(unsigned long pfn);
 bool ltram_device_idle(void);
 bool ltram_have_erase_op(void);
@@ -140,6 +141,7 @@ static inline void ltram_declare_node(void) { }
 static inline void ltram_note_stray_alloc(unsigned long pfn, const char *w) { }
 static inline bool ltram_have_flash_ops(void) { return false; }
 static inline int ltram_write_page(unsigned long d, unsigned long s) { return -ENODEV; }
+static inline void ltram_record_promotion(unsigned long d, unsigned long s) { }
 static inline int ltram_erase_page(unsigned long p) { return -ENODEV; }
 static inline bool ltram_device_idle(void) { return true; }
 static inline bool ltram_have_erase_op(void) { return false; }

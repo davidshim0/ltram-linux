@@ -280,6 +280,8 @@ int ltram_write_page(unsigned long dst_pfn, unsigned long src_pfn)
 	}
 
 	rc = ops->write_page(dst_pfn, src_pfn);
+	if (!rc)
+		ltram_record_promotion(dst_pfn, src_pfn);
 
 	if (owner)
 		module_put(owner);
