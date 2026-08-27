@@ -1210,6 +1210,20 @@ static inline void cvm_wbi_l2_pa(u64 pa)
     asm volatile("sys #0, c11, c1, #2, %0" :: "r"(pa) : "memory");
 }
 
+/*
+ * L2 invalidate with NO writeback. This DISCARDS dirty lines, which is a
+ * catastrophe on live data and is why the note above says never to use it.
+ *
+ * It is the right tool for exactly one job: asking whether a dirty line had
+ * already reached DRAM. Throw the cached copy away, then read. What comes back
+ * is what DRAM held. Only ever point this at a scratch page you are about to
+ * free.
+ */
+static inline void cvm_inv_l2_pa(u64 pa)
+{
+    asm volatile("sys #0, c11, c1, #1, %0" :: "r"(pa) : "memory");
+}
+
 static u64 lat_pass(unsigned long base, u64 size, u64 reps, int do_civac)
 {
     volatile u64 sink = 0;
@@ -3325,6 +3339,46 @@ static int fulltest_thread(void *unused)
                 pr_info("fulltest: ## ZC   word %4u  Y=%08x X=%08x got=%08x\n", w, y, x, got);
         }
 
+        /*
+         * Was Y ever in DRAM? Until now the answer was "probably not, but a
+         * writeback before the DMA would look exactly like a snoop". Settle it:
+         * discard the cached copy WITHOUT writing it back, push the line out of
+         * L1D by capacity, and read what DRAM actually holds.
+         *
+         * X here proves Y never reached DRAM at any point up to now, the DMA
+         * included, so a correct read above can only have been a snoop.
+         * Y means it had been written back and the pass is ambiguous.
+         *
+         * Dropping the L1 copy is only harmless if it is clean, which it is if
+         * L1D is write-through as "PoC is L1D" implies. If L1D is write-back this
+         * reports Y, which tells us that inference is wrong.
+         */
+        if (!zc_evict) {
+            u64 pa = page_to_phys(pg[zc_probe]);
+            const u32 *v = page_address(pg[zc_probe]);
+            u32 *thrash = kvmalloc(64 * 1024, GFP_KERNEL);
+            u32 d0;
+            u64 off;
+
+            for (off = 0; off < PAGE_SIZE; off += 128)
+                cvm_inv_l2_pa(pa + off);
+            asm volatile("dsb sy" ::: "memory");
+
+            if (thrash) {                       /* evict from the 32 KiB L1D */
+                volatile u32 sink = 0;
+                for (off = 0; off < 64 * 1024 / 4; off += 16) sink += thrash[off];
+                (void)sink;
+                asm volatile("dsb sy" ::: "memory");
+                kvfree(thrash);
+            }
+
+            d0 = v[0];
+            pr_info("fulltest: ## ZC   DRAM check: word 0 reads %08x -> %s\n", d0,
+                    d0 == 0x5EED0000u + (zc_probe << 12)     ? "X. Y NEVER reached DRAM, so a pass above WAS a snoop" :
+                    d0 == 0xA5A50000u + (zc_probe << 12)     ? "Y. it had been written back; a pass above is ambiguous" :
+                                                               "neither X nor Y -- the discard or the eviction did not work");
+        }
+
         pr_info("fulltest: ## ZC[%u] pages=%u probe=%u evict=%u src_pa=0x%llx sector=%llu\n",
                 run_tag, zc_pages, zc_probe, zc_evict, src_pa, sec);
         pr_info("fulltest: ## ZC   %u/%u wrong  (X/stale %u, erased %u, other %u) -> %s\n",
@@ -3333,10 +3387,9 @@ static int fulltest_thread(void *unused)
                 stale == bad  ? "NOT SNOOPED: the engine read X, the flushed DRAM copy" :
                 ffs   == bad  ? "NOT WRITTEN: the sector never received data" :
                                 "MIXED -- something else is wrong");
-        if (bad == 0)
-            pr_info("fulltest: ## ZC   caveat: a Y that reached DRAM before the DMA is "
-                    "indistinguishable from a snoop. zc_pages=1 minimises that window; "
-                    "at zc_pages=2048 page 0 sat through 8 MB of later writes.\n");
+        if (bad == 0 && zc_evict)
+            pr_info("fulltest: ## ZC   control case: the source was flushed on purpose, so "
+                    "this only proves the DMA and the read-back path work.\n");
 zc_out:
         for (i = 0; i < zc_pages; i++) if (pg[i]) __free_page(pg[i]);
         kvfree(pg);
