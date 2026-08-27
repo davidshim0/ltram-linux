@@ -1240,6 +1240,162 @@ static int lt_state_show(struct seq_file *m, void *v)
 DEFINE_SHOW_ATTRIBUTE(lt_state);
 
 /*
+ * Erase-count persistence.
+ *
+ * The counts survive nothing on their own. lt_ec is allocated zeroed at every
+ * boot while the flash keeps its wear, and the boot scan cannot help: it
+ * recovers which sectors are BLANK by reading them, but no sector records how
+ * many times it has been erased. That history has to be handed back to us.
+ *
+ * A plain binary blob, header then one u32 per page, 256 KB for a 256 MiB
+ * window. A userspace unit reads it before shutdown and writes it back after
+ * boot. Unclean shutdown loses whatever accumulated since the last save, which
+ * makes every count a LOWER BOUND rather than exact. That is the right
+ * direction to be wrong in: undercounting sends a write to a sector we thought
+ * was fresher than it is, which costs wear. Overcounting would make us avoid
+ * good sectors and crowd the ones we believe are fresh, which is the failure
+ * this whole mechanism exists to prevent.
+ *
+ * The counts are "erases since counting began", not the device's history. This
+ * chip took heavy unknown wear during FPGA bring-up, before any of this
+ * existed, and nothing can recover that.
+ */
+#define LT_EC_MAGIC	0x4C544543u		/* "LTEC" */
+#define LT_EC_VERSION	1u
+
+struct lt_ec_hdr {
+	u32 magic;
+	u32 version;
+	u32 nr_pages;
+	u32 reserved;
+};
+
+/*
+ * No lock on either side. Each count is a naturally aligned u32, so no single
+ * value can be torn; what a reader gets is a snapshot that may disagree with
+ * itself by a few erases across pages. For a wear estimate that is noise, and
+ * it is worth far more than holding ltram_alloc_lock with interrupts off while
+ * copying 256 KB.
+ */
+/*
+ * Restoring counts changes which bucket every free page belongs in, so the
+ * lists have to be rebuilt from scratch. FREE is derived here the same way
+ * lt_check_fast() derives it, as ~(VALID | DIRTY) less whatever is erasing,
+ * because a rebuild that disagreed with the checker would trip the very
+ * assertion it is meant to keep true.
+ *
+ * 65,536 iterations under the lock with interrupts off, roughly a hundred
+ * microseconds, once, at restore time.
+ */
+static void lt_rebuild_buckets(void)
+{
+	unsigned long flags, i;
+	unsigned int b;
+
+	spin_lock_irqsave(&ltram_alloc_lock, flags);
+	for (b = 0; b < LT_EC_BUCKETS; b++)
+		INIT_LIST_HEAD(&lt_free_by_ec[b]);
+	lt_free_count = 0;
+
+	for (i = 0; i < ltram_nr_pages; i++) {
+		if (test_bit(i, lt_bm[LT_VALID]) || test_bit(i, lt_bm[LT_DIRTY]))
+			continue;
+		if (lt_erasing == i)
+			continue;
+		INIT_LIST_HEAD(&lt_node[i]);
+		list_add_tail(&lt_node[i], &lt_free_by_ec[lt_bucket_of(lt_ec[i])]);
+		lt_free_count++;
+	}
+	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
+	pr_info("ltram: erase counts restored, %lu free pages rebucketed\n",
+		lt_free_count);
+}
+
+static ssize_t lt_ec_read(struct file *f, char __user *ubuf, size_t len,
+			  loff_t *ppos)
+{
+	struct lt_ec_hdr h = { LT_EC_MAGIC, LT_EC_VERSION,
+			       (u32)ltram_nr_pages, 0 };
+	size_t body = ltram_nr_pages * sizeof(*lt_ec);
+	loff_t off;
+
+	if (!lt_ready || !lt_ec)
+		return -ENODEV;
+
+	if (*ppos < (loff_t)sizeof(h))
+		return simple_read_from_buffer(ubuf, len, ppos, &h, sizeof(h));
+
+	off = *ppos - sizeof(h);
+	if (off >= (loff_t)body)
+		return 0;
+	if (len > body - off)
+		len = body - off;
+	if (copy_to_user(ubuf, (char *)lt_ec + off, len))
+		return -EFAULT;
+	*ppos += len;
+	return len;
+}
+
+static ssize_t lt_ec_write(struct file *f, const char __user *ubuf, size_t len,
+			   loff_t *ppos)
+{
+	size_t body = ltram_nr_pages * sizeof(*lt_ec);
+	loff_t off;
+
+	if (!lt_ready || !lt_ec)
+		return -ENODEV;
+
+	/*
+	 * The header is checked on the first write and gates everything after
+	 * it. A blob from a different window size would otherwise be pasted
+	 * over the live array and quietly corrupt every bucket assignment.
+	 */
+	if (*ppos < (loff_t)sizeof(struct lt_ec_hdr)) {
+		struct lt_ec_hdr h;
+
+		if (*ppos != 0 || len < sizeof(h))
+			return -EINVAL;
+		if (copy_from_user(&h, ubuf, sizeof(h)))
+			return -EFAULT;
+		if (h.magic != LT_EC_MAGIC || h.version != LT_EC_VERSION ||
+		    h.nr_pages != ltram_nr_pages) {
+			pr_warn("ltram: erase-count blob rejected: magic %08x ver %u pages %u; this kernel wants %08x %u %lu\n",
+				h.magic, h.version, h.nr_pages,
+				LT_EC_MAGIC, LT_EC_VERSION, ltram_nr_pages);
+			return -EINVAL;
+		}
+		*ppos = sizeof(h);
+		return sizeof(h);
+	}
+
+	off = *ppos - sizeof(struct lt_ec_hdr);
+	if (off >= (loff_t)body)
+		return -ENOSPC;
+	if (len > body - off)
+		len = body - off;
+	if (copy_from_user((char *)lt_ec + off, ubuf, len))
+		return -EFAULT;
+	*ppos += len;
+
+	/*
+	 * Restoring counts moves pages between buckets, so the free lists have
+	 * to be rebuilt or lt_pop_free() keeps handing out by the old order and
+	 * lt_check_fast() reports LT_ERR_BUCKET_MEMBER. Done once, when the
+	 * last byte lands.
+	 */
+	if (off + len == body)
+		lt_rebuild_buckets();
+	return len;
+}
+
+static const struct file_operations lt_ec_fops = {
+	.owner	= THIS_MODULE,
+	.read	= lt_ec_read,
+	.write	= lt_ec_write,
+	.llseek	= default_llseek,
+};
+
+/*
  * Read the array and sort it into FREE and DIRTY, rather than assuming either.
  *
  * The page state lives in RAM, so a reboot loses it while the flash keeps every
@@ -1377,6 +1533,10 @@ static int __init lt_tracking_init(void)
 	if (ltram_debugfs_dir)
 		debugfs_create_file("pagestate", 0444, ltram_debugfs_dir,
 				    NULL, &lt_state_fops);
+		/* 0600: it is the device's wear history, and writing it
+		 * rewrites the allocator's idea of which sector to use next. */
+		debugfs_create_file("erase_counts", 0600, ltram_debugfs_dir,
+				    NULL, &lt_ec_fops);
 	queue_delayed_work(system_unbound_wq, &lt_erase_work,
 			   msecs_to_jiffies(erase_poll_ms));
 	pr_info("ltram: page states armed, %lu pages, erase worker running\n",
