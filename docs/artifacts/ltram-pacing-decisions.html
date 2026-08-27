@@ -1,0 +1,450 @@
+<title>Erase and Scan Pacing</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@400;600&display=swap">
+<style>
+:root{
+  --ground:#E9EBEC; --sheet:#FFFFFF; --sunk:#F1F3F4; --sunk2:#E4E8EA;
+  --ink:#14181B; --ink2:#4E585F; --ink3:#828E96;
+  --rule:#D3D9DC; --rule2:#E5E9EB;
+  --code-bg:#F0F3F4; --code-ink:#1E2529;
+  --decided:#0B6A6F; --decided-wash:#E3F1F1; --decided-edge:#A9D4D5;
+  --shipped:#2C6E3F; --shipped-wash:#E6F1E8; --shipped-edge:#B3D4BC;
+  --open:#96631A;   --open-wash:#F7F0E2;    --open-edge:#DFCCA4;
+  --against:#9E2F33; --against-wash:#F8EDED; --against-edge:#E0BEBF;
+  --f-sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
+  --f-serif:"IBM Plex Serif",Charter,Georgia,"DejaVu Serif",serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono","DejaVu Sans Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#0C1013; --sheet:#151A1E; --sunk:#1C2328; --sunk2:#222A30;
+  --ink:#E3E8EA; --ink2:#9BA7AE; --ink3:#6D7A82;
+  --rule:#283137; --rule2:#20282D;
+  --code-bg:#10161A; --code-ink:#CBD4D9;
+  --decided:#4FBDC0; --decided-wash:#0E2527; --decided-edge:#1F464A;
+  --shipped:#6BBF83; --shipped-wash:#10240F; --shipped-edge:#254A2C;
+  --open:#D7A64A;     --open-wash:#241E10;    --open-edge:#4A3E22;
+  --against:#EE7A7D; --against-wash:#251618;  --against-edge:#4A2A2E;
+}}
+:root[data-theme="dark"]{
+  --ground:#0C1013; --sheet:#151A1E; --sunk:#1C2328; --sunk2:#222A30;
+  --ink:#E3E8EA; --ink2:#9BA7AE; --ink3:#6D7A82;
+  --rule:#283137; --rule2:#20282D;
+  --code-bg:#10161A; --code-ink:#CBD4D9;
+  --decided:#4FBDC0; --decided-wash:#0E2527; --decided-edge:#1F464A;
+  --shipped:#6BBF83; --shipped-wash:#10240F; --shipped-edge:#254A2C;
+  --open:#D7A64A;   --open-wash:#241E10;    --open-edge:#4A3E22;
+  --against:#EE7A7D; --against-wash:#251618;  --against-edge:#4A2A2E;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--f-serif);
+  font-size:16.5px;line-height:1.62;-webkit-font-smoothing:antialiased}
+.wrap{max-width:62rem;margin:0 auto;padding:0 1rem 5rem}
+.sheet{background:var(--sheet);border-left:1px solid var(--rule);border-right:1px solid var(--rule)}
+@media (max-width:58rem){.sheet{border:0}}
+header.top{padding:3rem 3rem 2rem;border-bottom:1px solid var(--rule)}
+@media (max-width:46rem){header.top{padding:2rem 1.1rem 1.4rem}}
+.kicker{font-family:var(--f-mono);font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--decided);margin:0 0 1rem;font-weight:500}
+h1{font-family:var(--f-sans);font-weight:600;letter-spacing:-.028em;
+  font-size:clamp(2rem,5.5vw,3rem);line-height:1.03;margin:0 0 1rem;text-wrap:balance}
+.deck{font-size:1.08rem;color:var(--ink2);margin:0;max-width:44rem;line-height:1.56}
+.panel{padding:2rem 3rem 1rem}
+@media (max-width:46rem){.panel{padding:1.4rem 1.1rem 1rem}}
+h2{font-family:var(--f-sans);font-weight:600;letter-spacing:-.02em;font-size:1.55rem;line-height:1.18;
+  margin:3rem 0 1rem;padding-top:1.5rem;border-top:2px solid var(--ink);text-wrap:balance}
+h2:first-child{margin-top:0;padding-top:0;border-top:0}
+h3{font-family:var(--f-sans);font-weight:600;font-size:1.06rem;margin:1.6rem 0 .5rem}
+p{margin:0 0 .95rem;max-width:40rem}
+ul,ol{margin:0 0 1rem;padding-left:1.25rem;max-width:40rem}
+li{margin-bottom:.45rem} li::marker{color:var(--ink3)}
+code{font-family:var(--f-mono);font-size:.85em;background:var(--code-bg);padding:.09em .34em;
+  border-radius:3px;color:var(--code-ink);border:1px solid var(--rule2);white-space:nowrap}
+pre{margin:1rem 0;background:var(--code-bg);border:1px solid var(--rule);border-radius:5px;
+  padding:.9rem 1rem;overflow-x:auto;font-family:var(--f-mono);font-size:.79rem;
+  line-height:1.62;color:var(--code-ink)}
+pre code{background:none;border:0;padding:0;font-size:1em;white-space:pre}
+.tw{overflow-x:auto;margin:1.1rem 0;max-width:46rem}
+table{border-collapse:collapse;width:100%;font-family:var(--f-sans);font-size:.85rem}
+th,td{text-align:left;padding:.52rem .7rem;border-bottom:1px solid var(--rule2);vertical-align:top}
+th{font-family:var(--f-mono);font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink3);border-bottom:1px solid var(--rule);white-space:nowrap;font-weight:500}
+tbody tr:last-child td{border-bottom:0}
+.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.card{margin:1.6rem 0;border:1px solid var(--rule);border-radius:6px;overflow:hidden;
+  background:var(--sunk);max-width:46rem}
+.card>.hd{padding:.85rem 1.15rem;border-bottom:1px solid var(--rule);display:flex;
+  align-items:baseline;gap:.8rem;flex-wrap:wrap;background:var(--sheet)}
+.card>.hd h3{margin:0;font-size:1rem;flex:1 1 18rem}
+.card>.bd{padding:1rem 1.15rem}
+.card>.bd>:last-child{margin-bottom:0}
+.card p,.card ul,.card .tw{max-width:none}
+.chip{font-family:var(--f-mono);font-size:.62rem;letter-spacing:.11em;text-transform:uppercase;
+  padding:.22rem .5rem;border-radius:3px;white-space:nowrap;font-weight:500;border:1px solid}
+.c-ship{color:var(--shipped);background:var(--shipped-wash);border-color:var(--shipped-edge)}
+.c-dec{color:var(--decided);background:var(--decided-wash);border-color:var(--decided-edge)}
+.c-open{color:var(--open);background:var(--open-wash);border-color:var(--open-edge)}
+.c-no{color:var(--against);background:var(--against-wash);border-color:var(--against-edge)}
+.card--ship{border-left:3px solid var(--shipped)}
+.card--dec{border-left:3px solid var(--decided)}
+.card--open{border-left:3px solid var(--open)}
+.card--no{border-left:3px solid var(--against)}
+.lab{font-family:var(--f-mono);font-size:.64rem;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--ink3);margin:1.1rem 0 .35rem;font-weight:500}
+.lab:first-child{margin-top:0}
+.note{margin:1.3rem 0;padding:.95rem 1.1rem;border-radius:5px;background:var(--sunk2);
+  border:1px solid var(--rule);max-width:46rem;font-size:.95rem}
+.note>:last-child{margin-bottom:0}
+.note p,.note ul{max-width:none}
+.note--open{background:var(--open-wash);border-color:var(--open-edge);border-left:3px solid var(--open)}
+footer.end{padding:1.6rem 3rem 2.4rem;border-top:1px solid var(--rule2);
+  font-family:var(--f-sans);font-size:.76rem;color:var(--ink3);line-height:1.6}
+@media (max-width:46rem){footer.end{padding:1.3rem 1.1rem 2rem}}
+</style>
+
+<div class="wrap"><div class="sheet">
+<header class="top">
+  <p class="kicker">LtRAM &middot; kernel background threads &middot; 27 August 2026</p>
+  <h1>Erase and Scan Pacing</h1>
+  <p class="deck">Two kernel threads run behind the placement policy: one erases sectors,
+  one finds pages to promote. Neither does anything difficult. Almost all of the design
+  effort went into deciding <em>how often each one wakes up</em>, and one of those decisions
+  quietly cost the project its headline number. This records what was chosen, what was
+  rejected, and what is still open.</p>
+</header>
+
+<section class="panel">
+
+<h2>The decisions at a glance</h2>
+<div class="tw"><table>
+<thead><tr><th>question</th><th>outcome</th><th>status</th></tr></thead>
+<tbody>
+<tr><td>Timer or workqueue for the erase worker</td><td>Workqueue</td><td><span class="chip c-ship">shipped</span></td></tr>
+<tr><td>Fixed sleep or wait on the device</td><td>Poll the erase counter</td><td><span class="chip c-ship">shipped</span></td></tr>
+<tr><td>Which status bits gate an erase</td><td>Three bits, not two</td><td><span class="chip c-ship">shipped</span></td></tr>
+<tr><td>How the erase worker re-arms</td><td>Zero delay while draining</td><td><span class="chip c-ship">shipped</span></td></tr>
+<tr><td>Is a 1 s scan interval right</td><td>No. It absorbed the 14&times;</td><td><span class="chip c-dec">decided</span></td></tr>
+<tr><td>Two fixed intervals, or adaptive</td><td>Adaptive, on batch fill</td><td><span class="chip c-dec">decided</span></td></tr>
+<tr><td>Split scanning from migrating</td><td>Not yet. Buys 0.01%</td><td><span class="chip c-no">rejected</span></td></tr>
+<tr><td>Burst rate versus wear budget</td><td>Needs a governor</td><td><span class="chip c-open">open</span></td></tr>
+<tr><td>Erase counts across reboots</td><td>debugfs blob</td><td><span class="chip c-ship">shipped</span></td></tr>
+</tbody></table></div>
+
+<h2>Part one: the erase worker</h2>
+<p>Its job is a four step loop. Pick a sector holding stale data, tell the FPGA to erase it,
+wait for the erase to finish, mark it free. The waiting is what makes every other decision.</p>
+
+<div class="card card--ship">
+  <div class="hd"><h3>Timer or workqueue</h3><span class="chip c-ship">shipped</span></div>
+  <div class="bd">
+    <p class="lab">The constraint</p>
+    <p>An erase takes about 16.4 ms. At 2 GHz that is 33 million clock cycles. Spinning on a
+    status register for that long would occupy an entire core doing nothing, 61 times a
+    second. The code has to give the CPU up and be woken later.</p>
+    <p class="lab">Why that rules out a timer</p>
+    <p>Kernel code cannot sleep everywhere. Process context, meaning a real thread with its own
+    stack and scheduler entry, can sleep, because there is something to put to sleep and
+    something to wake. Softirq and interrupt context cannot: that code is borrowing the current
+    CPU and stack from whatever task happened to be running, and there is no thread to suspend.
+    Sleeping there wedges an unrelated task and the kernel deadlocks or panics.</p>
+    <p>Linux <code>timer_list</code> callbacks run in softirq context. A timer callback therefore
+    cannot call <code>msleep()</code>. It could only notice that work exists and wake a thread
+    to do it, which is a hand written workqueue.</p>
+    <p class="lab">The choice</p>
+    <p><code>delayed_work</code> is the built in version: a timer that fires and hands the work
+    to a pool of kernel threads. The callback runs in process context and is allowed to sleep.
+    The decision is not about performance or elegance. The function must sleep for 16 ms and
+    only one of the two options permits it.</p>
+  </div>
+</div>
+
+<div class="card card--ship">
+  <div class="hd"><h3>Fixed sleep, or ask the device</h3><span class="chip c-ship">shipped</span></div>
+  <div class="bd">
+    <p class="lab">Rejected: sleep 16.4 ms and assume</p>
+    <p>Wrong in both directions, and the second one is dangerous.</p>
+    <p>If the erase runs long, because the device was busy or the sector needed retries, the
+    sector is marked free while it is still erasing, and the next writer programs into a half
+    erased region.</p>
+    <p>If the erase <strong>never started</strong>, because the trigger write was dropped or the
+    FPGA missed it, the code sleeps and then marks an unerased sector blank with complete
+    confidence. Nothing reports a problem. The allocator hands it out as fresh, and NOR programs
+    by clearing bits, so the next write produces the bitwise AND of old and new data. Silently.
+    That surfaces much later as wrong results with nothing to trace back to.</p>
+    <p class="lab">Chosen: poll the device's erase counter</p>
+    <p>The FPGA maintains a count of completed erases in its status word. Read it before
+    triggering, poll until it increases, give up after a two second ceiling and return the sector
+    to the dirty state.</p>
+    <p>A fixed sleep cannot distinguish <em>finished</em> from <em>never started</em>, and those
+    two need opposite responses. The interface header states the rule directly: waiting on the
+    counter rather than a fixed sleep is the difference between noticing a dropped trigger and
+    corrupting the next program.</p>
+  </div>
+</div>
+
+<div class="card card--ship">
+  <div class="hd"><h3>Three status bits, not two</h3><span class="chip c-ship">shipped</span></div>
+  <div class="bd">
+    <p>The original specification was <code>HW_BUSY == 0 &amp;&amp; SCH == 0</code>. The
+    implementation adds a third term.</p>
+<pre><code>return !ST_HW_BUSY(w) &amp;&amp; !ST_ER_INFL(w) &amp;&amp; ST_SCH(w) == 0;</code></pre>
+    <div class="tw"><table>
+    <thead><tr><th>bit</th><th>meaning</th><th>why it is needed</th></tr></thead>
+    <tbody>
+    <tr><td><code>HW_BUSY</code> (56)</td><td>NOR controller mid operation</td><td>the obvious one</td></tr>
+    <tr><td><code>ER_INFL</code> (57)</td><td>an erase triggered but not retired</td><td>a longer window than the other two. Without it the worker can trigger a second erase while one is outstanding, and the device does one at a time</td></tr>
+    <tr><td><code>SCH</code> (58 to 60)</td><td>read subsystem state machine</td><td><strong>the only visibility into read traffic that exists.</strong> Reads never reach the driver, they are plain loads through a cacheable window, so this register is the only way the kernel can see them at all</td></tr>
+    </tbody></table></div>
+    <p>The device must look idle three times in a row, one millisecond apart, before a 16.4 ms
+    erase is committed. A single sample can land in the gap between two reads and report quiet
+    while a workload is mid stream.</p>
+  </div>
+</div>
+
+<div class="card card--ship">
+  <div class="hd"><h3>Re-arming: zero delay while draining</h3><span class="chip c-ship">shipped</span></div>
+  <div class="bd">
+    <p>A workqueue item runs once. Nothing calls it again unless it schedules itself, and the
+    delay it picks is the worker's pace. The plan called for 15 ms then 1 ms. What shipped is
+    different.</p>
+<pre><code>queue_delayed_work(system_unbound_wq, &amp;lt_erase_work,
+                   backlog ? 0 : msecs_to_jiffies(erase_poll_ms));</code></pre>
+    <p>The zero is arithmetic. The device sustains about 61 erases per second. A worker that
+    erased a batch and then waited even 50 ms would run 20 times a second, and no amount of
+    batching inside one invocation changes the fact that it is asleep for most of the wall
+    clock. Coming straight back while sectors remain makes the device the limit rather than the
+    scheduler.</p>
+    <p>The 50 ms applies only when the queue is empty, where the worker is checking whether work
+    appeared and doing that 61 times a second would be pure waste.</p>
+  </div>
+</div>
+
+<h2>Part two: the scanner</h2>
+
+<div class="note note--open">
+  <p><strong>This is where the project lost its headline number.</strong> The next card is the
+  most consequential thing in this document.</p>
+</div>
+
+<div class="card card--dec">
+  <div class="hd"><h3>The 1 s interval absorbed the 14&times;</h3><span class="chip c-dec">decided, not built</span></div>
+  <div class="bd">
+    <p class="lab">What the loop does</p>
+<pre><code>while (!kthread_should_stop()) {
+        ltram_scan_once();
+        msleep_interruptible(scan_interval_ms);   /* 1000 */
+}</code></pre>
+    <p><code>ltram_scan_once()</code> includes the migration, and migration blocks on the device.
+    So the sleep is a gap, not a period, and the promotion rate is
+    <code>batch / (work + sleep)</code>.</p>
+    <div class="tw"><table>
+    <thead><tr><th></th><th class="num">work, 32 pages</th><th class="num">plus 1 s</th><th class="num">predicted</th><th class="num">measured</th></tr></thead>
+    <tbody>
+    <tr><td>inline erase</td><td class="num">0.563 s</td><td class="num">1.563 s</td><td class="num">20.5/s</td><td class="num">24.1/s</td></tr>
+    <tr><td>background erase</td><td class="num">0.038 s</td><td class="num">1.038 s</td><td class="num">30.8/s</td><td class="num">28.8/s</td></tr>
+    </tbody></table></div>
+    <p>Now delete the sleep and recompute: <strong>57/s against 842/s, a ratio of 14.8</strong>.</p>
+    <p class="lab">The finding</p>
+    <p>The 14&times; was always real. A fixed one second sleep dwarfs both work times and
+    compresses a 14.8&times; difference into 1.5&times;. Moving the erase off the critical path
+    made promotion 14 times cheaper, and the sleep it was already sitting behind absorbed the
+    entire gain.</p>
+    <p>Worth stating plainly, because it changes how the result should be reported: the design
+    decision was right and the published justification was wrong. Not "promotion is 14&times;
+    faster" as an end to end claim, but "the promotion path costs 14&times; less device time,
+    which the scanner's pacing currently throws away."</p>
+  </div>
+</div>
+
+<div class="card card--dec">
+  <div class="hd"><h3>Adaptive backoff, not two fixed intervals</h3><span class="chip c-dec">decided, not built</span></div>
+  <div class="bd">
+    <p class="lab">The proposal</p>
+    <p>Wake 1.5 ms after a pass when the erase engine is off, since that is roughly what a write
+    costs, and 18 ms when it is on, to cover an erase.</p>
+    <p class="lab">Why not</p>
+    <p>The scanner is <strong>already self pacing</strong>, because
+    <code>ltram_write_page()</code> blocks. The thread physically cannot promote faster than the
+    device permits, whatever the timer says. It does not need to be told how long a write takes.
+    It finds out by waiting for one.</p>
+    <p>Hard coded device constants also age badly. 1.5 ms and 18 ms are true for this bitstream,
+    this chip, and an idle bus. They are wrong under contention, wrong if
+    <code>inline_erase</code> flips, wrong when a sector needs a retry, and wrong on the next
+    hardware. Two magic numbers that silently stop matching reality.</p>
+    <p class="lab">Chosen instead</p>
+    <p>Drive the delay from <strong>productivity</strong>, which the scanner already knows,
+    because <code>ctx-&gt;nr</code> is sitting there when the pass ends.</p>
+    <div class="tw"><table>
+    <thead><tr><th>at end of pass</th><th>means</th><th>delay</th></tr></thead>
+    <tbody>
+    <tr><td><code>nr == promote_batch</code></td><td>more work than one pass could take</td><td>zero</td></tr>
+    <tr><td><code>0 &lt; nr &lt; batch</code></td><td>found some, ran out of PTE budget</td><td>short</td></tr>
+    <tr><td><code>nr == 0</code></td><td>nothing eligible in this region</td><td>back off toward ~1 s</td></tr>
+    </tbody></table></div>
+    <p>No timing measurement, no device constants, one integer that already exists.</p>
+  </div>
+</div>
+
+<div class="card card--no">
+  <div class="hd"><h3>Why fast scanning must be conditional</h3><span class="chip c-no">hazard</span></div>
+  <div class="bd">
+    <p>The third row above matters more than the others, and a short fixed interval would make
+    it worse.</p>
+    <p>Measured on hardware, over ten seconds of a saturated run:</p>
+<pre><code>ptes_examined     delta 32799
+was_written       delta 32799     <- every one was writable
+chosen            delta 0         <- none promoted</code></pre>
+    <p>Every PTE examined was rejected. Those were scrub buffer pages, dirtied on every workload
+    pass. Each rejection costs a <code>ptep_set_wrprotect</code> plus a
+    <code>flush_tlb_page</code>, and a TLB flush here is an inter processor interrupt. Roughly
+    <strong>3,300 IPIs per second aimed at the cores running the workload</strong>.</p>
+    <p>At a 1.5 ms interval that becomes tens of thousands per second, and none of it appears in
+    the scanner's own accounting. It shows up as the workload mysteriously getting slower. A
+    scanner that wakes every 1.5 ms over write active memory is a denial of service against the
+    thing it exists to help.</p>
+  </div>
+</div>
+
+<div class="card card--no">
+  <div class="hd"><h3>Splitting scan from migrate</h3><span class="chip c-no">rejected for now</span></div>
+  <div class="bd">
+    <p class="lab">The proposal</p>
+    <p>Scanning is CPU work, migration is waiting on a device. Decouple them with a queue so the
+    scanner keeps finding candidates while the migrator drains, and accept that the migrator
+    must re-check whether a queued page changed while it waited.</p>
+    <p class="lab">The ratio that settles it</p>
+    <p>Walking one PTE costs on the order of 100 ns. Promoting one page costs 1.2 ms with
+    background erase. The scanner stops as soon as it has <code>promote_batch</code> candidates,
+    so in a page dense region, which is the case that matters during migration:</p>
+<pre><code>walk to find 32 candidates      ~4 us     (32 to 100 PTEs)
+migrate 32 pages                ~38 ms    (device bound)
+sleep                          1000 ms</code></pre>
+    <p>Scanning is <strong>0.01%</strong> of the cycle. The sleep is 96% of it. Decoupling
+    recovers the 0.01% and leaves the 96% untouched.</p>
+    <p class="lab">What it would cost</p>
+    <ul>
+      <li>A bounded queue, and backpressure when the device falls behind</li>
+      <li>A second thread</li>
+      <li>Re-validation per page, and it is worse than it first looks. Between queueing and
+      migrating, a page can be written, unmapped, or its process can exit. The isolated folio
+      holds a reference so it will not be freed, but the mapping can vanish, so the migrator has
+      to re-take the page table lock and re-check <code>pte_write()</code> for every entry</li>
+    </ul>
+    <p class="lab">When it becomes right</p>
+    <p>Not throughput. <strong>Multi-process.</strong> Once several processes are candidates, one
+    scanner per address space feeding a single migrator is the natural structure, because the
+    device is serial. Then the queue is not an optimisation, it is the shape of the problem.
+    Build it when multi-process support arrives, not before.</p>
+  </div>
+</div>
+
+<h2>The open question</h2>
+
+<div class="card card--open">
+  <div class="hd"><h3>Burst rate against the wear budget</h3><span class="chip c-open">open</span></div>
+  <div class="bd">
+    <p>Zero delay does exactly the right thing for a migration transient and exactly the wrong
+    thing forever.</p>
+    <p><code>promote_batch = 32</code> at one pass per second was never chosen for throughput.
+    It is the wear budget: 65,536 sectors times 100,000 erases, spread across five years, comes
+    to <strong>41.5 erases per second sustained</strong>. The current settings sit just under
+    that by construction.</p>
+    <p>Remove the sleep and the loop promotes at whatever the device allows, roughly 842 per
+    second. That is twenty times the budget. Sustained, it retires the chip in about three
+    months instead of five years.</p>
+    <p class="lab">Two limits, currently conflated</p>
+    <ul>
+      <li><strong>Burst rate</strong> should be as fast as the device allows, so a workload's
+      migration transient is short</li>
+      <li><strong>Sustained rate</strong> must stay near 41.5 per second, or the wear model is
+      fiction</li>
+    </ul>
+    <p class="lab">Proposed mechanism</p>
+    <p>A token bucket. Refill at the sustained rate, allow a depth of a few thousand promotions,
+    and let the productivity signal drive the delay only while tokens remain. A workload that
+    migrates 8,000 pages once and then settles spends its bucket in ten seconds and refills over
+    the following three minutes. A workload that would churn continuously gets throttled to the
+    budget automatically.</p>
+    <p>This also makes the wear guarantee <strong>explicit rather than emergent</strong>. Today it
+    is a property of two tunables that happen to multiply to the right number, which nothing
+    enforces and nothing checks. Anyone raising <code>promote_batch</code> for an experiment, as
+    we did at 512 and 2048 this week, silently blows through it. With a bucket the limit is
+    stated once, in one place, and an experiment that exceeds it has to say so.</p>
+    <p><strong>Settle this before writing the backoff.</strong> The backoff is easy. The governor
+    is the part that protects the hardware.</p>
+  </div>
+</div>
+
+<h2>Related decisions from the same session</h2>
+
+<div class="card card--ship">
+  <div class="hd"><h3>Erase counts across reboots</h3><span class="chip c-ship">shipped</span></div>
+  <div class="bd">
+    <p>The counts survive nothing on their own. The array is allocated zeroed at every boot while
+    the flash keeps its wear, and the boot scan cannot help: it recovers which sectors are blank
+    by reading them, but no sector records how many times it has been erased.</p>
+    <p>Within one boot the levelling works, which is where the improvement from 1,518 allocations
+    on a single sector down to a peak of 1 comes from. Across boots every sector looks equally
+    fresh and it starts over.</p>
+    <p><code>/sys/kernel/debug/ltram/erase_counts</code> is a header plus one <code>u32</code> per
+    page, 256 KB for a 256 MiB window. A userspace unit reads it before shutdown and writes it
+    back after boot.</p>
+    <p class="lab">The failure direction was chosen deliberately</p>
+    <p>Unclean shutdown loses whatever accumulated since the last save, so every count is a lower
+    bound. That is the right way to be wrong. Undercounting sends a write to a sector believed
+    fresher than it is and costs some wear. Overcounting would make the allocator avoid good
+    sectors and crowd the ones it still believes are fresh, which is precisely the failure this
+    mechanism exists to prevent.</p>
+    <p>The counts mean "erases since counting began", not the device's history. This chip took
+    heavy unknown wear during FPGA bring up and nothing can recover that.</p>
+  </div>
+</div>
+
+<div class="card card--dec">
+  <div class="hd"><h3>How to measure the 14&times;</h3><span class="chip c-dec">designed</span></div>
+  <div class="bd">
+    <p>It will not appear in workload latency, because promotion is asynchronous. It appears in
+    <strong>migration throughput</strong>, which is what the claim was always about.</p>
+    <div class="tw"><table>
+    <thead><tr><th></th><th class="num">per promotion</th><th class="num">device limited</th><th class="num">8,190 pages</th></tr></thead>
+    <tbody>
+    <tr><td>inline erase</td><td class="num">17.6 ms</td><td class="num">57/s</td><td class="num">~144 s</td></tr>
+    <tr><td>background erase</td><td class="num">1.2 ms</td><td class="num">833/s</td><td class="num">~10 s</td></tr>
+    </tbody></table></div>
+    <p>The metric is time to 100% residency, read from the sampling the harness already writes
+    every five seconds. Same workload, same page count, only <code>inline_erase</code> changes.
+    Raise <code>promote_batch</code> so the batch limit stops being the ceiling and the device
+    becomes it.</p>
+    <p>Expect nearer 9&times; than 14&times; in practice, because the fast side hits the
+    scanner's own limits before it reaches 833/s. The honest claim is that migration completes
+    roughly an order of magnitude faster, with 14&times; as the per promotion device cost.</p>
+    <p class="lab">The other number this produces</p>
+    <p>The same pair of runs gives the <strong>migration cost curve</strong>, previously called
+    station 7, which is a name that means nothing to anyone. It measures the workload's per pass
+    cost <em>while</em> migration is happening, as opposed to after it settles. Its earlier
+    result peaked at 2.971 s against a 0.1075 s baseline, so 27.6&times; at the worst moment,
+    falling back toward 4.9&times; once migration finished. That peak is the price of moving
+    data, paid once, and it was measured with inline erase.</p>
+  </div>
+</div>
+
+<h2>What to do next, in order</h2>
+<ol>
+  <li><strong>Settle the sustained rate policy.</strong> The token bucket, or an argument for
+  something else. Everything below depends on it</li>
+  <li><strong>Then the adaptive backoff.</strong> Three lines of state in the scan thread, using
+  <code>ctx-&gt;nr</code>, with the governor as its ceiling</li>
+  <li><strong>Then re-measure.</strong> One pair of runs gives both the migration throughput
+  ratio and the migration cost curve</li>
+  <li><strong>Leave the thread split alone</strong> until multi-process support makes it
+  structural rather than an optimisation</li>
+</ol>
+
+</section>
+<footer class="end">
+Decisions recorded 26 to 27 August 2026. zuestoll08, Cavium ThunderX CRB-2S with Xilinx VU9P,
+bitstream 169_phy200, kernel 6.8.0-ltram. Micron MT35XU02GCBA octal DDR NOR as NUMA node 1.
+Measurements cited here were taken on that hardware in the same session; the 100,000 erase
+endurance figure is the manufacturer's.
+</footer>
+</div></div>
