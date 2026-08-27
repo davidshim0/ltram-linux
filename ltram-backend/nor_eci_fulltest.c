@@ -439,16 +439,26 @@ static unsigned int  zc_pages = 1;   /* source region size, in pages */
 static unsigned int  zc_probe = 0;   /* which page of that region to ship */
 static unsigned int  zc_evict = 0;   /* 1 = CVM the source before the DMA (control) */
 /*
- * Write back the source page before every LtRAM promotion. Default OFF, because
- * test=45 case C proved the engine snoops: Y was never in DRAM at any point up
- * to and including the DMA, so the correct data it fetched can only have come
- * from the CPU's dirty line. A flush here would be dead code.
+ * Write back the source page before every LtRAM promotion. Default ON, because
+ * without it the first successfully promoted page kills the process.
  *
- * It exists because that proof is about ONE bitstream. If a future build stops
- * snooping, the symptom is matmul's digest failing on the second run, and this
- * is the one-parameter answer rather than a rebuild.
+ * 2026-08-27: zc_flush_src=0 segfaulted matmul after exactly one promotion,
+ * 9 runs in. With it, 16,435 pages promoted and the digest matched. The
+ * plateau is 0.253 s either way, so the ~134 ns this costs against a 1326 us
+ * write is not measurable.
+ *
+ * test=45 predicted the opposite and was wrong as a prediction. It writes a
+ * freshly allocated KERNEL page and ships it from the same thread microseconds
+ * later, and reported that the engine snoops the dirty line -- which it does,
+ * for that page, under those conditions. A migration source is a USER page,
+ * written by userspace on another core, unmapped by try_to_migrate(), and
+ * shipped by the scanner kthread. The microbenchmark controlled none of those
+ * differences, so it measured a narrower thing than the name suggested.
+ *
+ * Which of those differences matters is not established. Do not remove this
+ * flush on the strength of test=45 alone.
  */
-static unsigned int  zc_flush_src = 0;
+static unsigned int  zc_flush_src = 1;
 static unsigned int  inline_erase = 1;
 /*
  * 1 = read the first words of a sector before programming and refuse if they
@@ -1059,20 +1069,17 @@ static int write_sector_from(u64 sect, u64 src_pa)
         for (a &= ~63UL; a < e; a += 64) asm volatile("dc cvac, %0" :: "r"(a) : "memory");
     }
     /*
-     * No cache maintenance on an external source, and that is now a measured
-     * position rather than an open question. test=45 case C: DRAM held X, the
-     * cache held Y, the engine fetched Y, and a post-DMA discard-and-read showed
-     * DRAM still held X -- so Y had never been written back and the engine can
-     * only have snooped.
+     * No cache maintenance HERE. The LtRAM path does its own, in
+     * ft_ltram_write_page() under zc_flush_src, which defaults on because the
+     * integrated test showed it is required -- see the note on that parameter.
      *
-     * Case B, the same test with 8 MB written after the probe page, reported a
-     * pass that carried no information: the DRAM check found Y, meaning L2 had
-     * already evicted the line and the engine read it from DRAM. Worth knowing
-     * that a passing coherence test can be vacuous.
-     *
-     * zc_flush_src=1 puts a cvm_wbi_l2_pa() sweep back if a future bitstream
-     * ever stops snooping, ~134 ns for 32 lines. dc cvac could not do it: PoC is
-     * L1D here, so cvac and civac are no-ops at every level.
+     * Two things from test=45 are worth keeping even though its headline
+     * prediction did not hold. Its case B, with 8 MB written after the probe
+     * page, reported a pass that carried no information: the DRAM check found
+     * the cached value already written back, so the engine had simply read it
+     * from DRAM. A coherence test can pass vacuously. And dc cvac cannot
+     * substitute for the CVM op: PoC is L1D here, so cvac and civac are no-ops
+     * at every level.
      */
     wmb();
 
