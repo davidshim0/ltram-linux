@@ -434,6 +434,10 @@ static unsigned int  provide_ops = 0;  // 1 = register the LtRAM write backend a
  * Default ON. Turn it off only once the state machine has been trusted, and
  * keep verify_erased on for the first runs after.
  */
+/* test=45: zero-copy coherence probe. See the test body for what each does. */
+static unsigned int  zc_pages = 1;   /* source region size, in pages */
+static unsigned int  zc_probe = 0;   /* which page of that region to ship */
+static unsigned int  zc_evict = 0;   /* 1 = CVM the source before the DMA (control) */
 static unsigned int  inline_erase = 1;
 /*
  * 1 = read the first words of a sector before programming and refuse if they
@@ -3189,6 +3193,115 @@ static int fulltest_thread(void *unused)
                     slow == 0 ? "the ECI window is cached at a level SHARED BY EVERY CORE"
                               : "NOT uniformly shared -- see the per-core rows above");
         }
+        goto out;
+    }
+
+    if (test == 45) {
+        /* ===== ZERO-COPY COHERENCE PROBE ==========================================
+         * Does the engine's coherent read see lines the CPU has dirtied but not
+         * written back?
+         *
+         * The trick is making DRAM provably different from cache:
+         *   1. allocate zeroed, then CVM the whole region  -> DRAM is definitely 0
+         *   2. write a pattern from the CPU, no flush      -> cache has the pattern,
+         *                                                     DRAM still has zeros
+         *   3. DMA the probe page straight from its PFN
+         *   4. read the sector back
+         *
+         * ZEROS mean the engine read DRAM and did not snoop.
+         * PATTERN means it snooped.
+         * 0xFFFFFFFF means the sector was never written at all.
+         *
+         * Three cases, selected by module params rather than rebuilt:
+         *   A  zc_pages=1    zc_evict=1   control. Source is in DRAM. Must pass.
+         *   B  zc_pages=2048 zc_evict=0   8 MB written after the probe page, so it
+         *                                 is long out of L1D (32 KiB) and should
+         *                                 still be in the 16 MiB LLC. Tests L2.
+         *   C  zc_pages=1    zc_evict=0   written and shipped immediately, so it is
+         *                                 in L1D. Tests L1.
+         * If L1D is write-through to L2, which is what "PoC = L1D" implies, B and C
+         * are the same experiment and should agree.
+         * ========================================================================= */
+        u64 sec = start_sector;
+        struct page **pg;
+        unsigned int i, w, bad = 0, zeros = 0, ffs = 0;
+        u32 er0; int tr; u64 src_pa;
+
+        if (zc_probe >= zc_pages) {
+            pr_err("fulltest: ## ZC zc_probe %u is outside zc_pages %u\n", zc_probe, zc_pages);
+            goto zc_out_novec;
+        }
+        pg = kvcalloc(zc_pages, sizeof(*pg), GFP_KERNEL);
+        if (!pg) { pr_err("fulltest: ## ZC out of memory\n"); goto zc_out_novec; }
+        for (i = 0; i < zc_pages; i++) {
+            pg[i] = alloc_page(GFP_KERNEL | __GFP_ZERO);
+            if (!pg[i]) { pr_err("fulltest: ## ZC alloc failed at %u\n", i); goto zc_out; }
+        }
+
+        /* Step 1: force the zeros all the way to DRAM, so "what DRAM holds" is known. */
+        for (i = 0; i < zc_pages; i++) {
+            u64 pa = page_to_phys(pg[i]);
+            u64 off;
+            for (off = 0; off < PAGE_SIZE; off += 128)
+                cvm_wbi_l2_pa(pa + off);
+        }
+        asm volatile("dsb sy" ::: "memory");
+
+        /* Step 2: dirty the region from the CPU. No flush. */
+        for (i = 0; i < zc_pages; i++) {
+            u32 *v = page_address(pg[i]);
+            for (w = 0; w < PAGE_SIZE / 4; w++)
+                v[w] = 0xA5A50000u + (i << 12) + w;
+        }
+
+        if (zc_evict) {
+            u64 pa = page_to_phys(pg[zc_probe]);
+            u64 off;
+            for (off = 0; off < PAGE_SIZE; off += 128)
+                cvm_wbi_l2_pa(pa + off);
+            asm volatile("dsb sy" ::: "memory");
+        }
+
+        /* Step 3: erase the target, then DMA straight from the probe page. */
+        cvm_evict_sector(sec);
+        er0 = ST_ERASES(readq(io_win));
+        trigger_erase(sec);
+        for (tr = 0; tr < 2000; tr++) {
+            if (ST_DELTA(ST_ERASES(readq(io_win)), er0, 0xFF) >= 1) break;
+            msleep(1);
+        }
+        if (tr >= 2000) { pr_err("fulltest: ## ZC erase never retired\n"); goto zc_out; }
+
+        src_pa = page_to_phys(pg[zc_probe]);
+        if (write_sector_from(sec, src_pa)) {
+            pr_err("fulltest: ## ZC DMA failed\n"); goto zc_out;
+        }
+
+        /* Step 4: read it back through a real eviction and classify every word. */
+        cvm_evict_sector(sec);
+        for (w = 0; w < PAGE_SIZE / 4; w++) {
+            u32 want = 0xA5A50000u + (zc_probe << 12) + w;
+            u32 got  = readl(rd_win + sec * SECT_SZ + 4 * w);
+            if (got == want) continue;
+            bad++;
+            if (got == 0)          zeros++;
+            if (got == 0xFFFFFFFFu) ffs++;
+            if (bad <= 4)
+                pr_info("fulltest: ## ZC   word %4u want %08x got %08x\n", w, want, got);
+        }
+
+        pr_info("fulltest: ## ZC[%u] pages=%u probe=%u evict=%u src_pa=0x%llx sector=%llu\n",
+                run_tag, zc_pages, zc_probe, zc_evict, src_pa, sec);
+        pr_info("fulltest: ## ZC   %u/%u words wrong (%u read as zero, %u still erased) -> %s\n",
+                bad, (unsigned int)(PAGE_SIZE / 4), zeros, ffs,
+                bad == 0            ? "SNOOPED: the engine saw the CPU's dirty lines" :
+                zeros == bad        ? "NOT SNOOPED: the engine read stale DRAM" :
+                ffs  == bad         ? "NOT WRITTEN: the sector never received data" :
+                                      "MIXED -- something else is wrong");
+zc_out:
+        for (i = 0; i < zc_pages; i++) if (pg[i]) __free_page(pg[i]);
+        kvfree(pg);
+zc_out_novec:
         goto out;
     }
 
