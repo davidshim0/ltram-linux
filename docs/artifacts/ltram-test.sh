@@ -29,8 +29,8 @@ OUT=/scratch/hushim/ltram-$(date +%m%d-%H%M%S); mkdir -p "$OUT" || exit 9
 say(){ echo "[$(date +%H:%M:%S)] $*"; }
 st(){ sudo -n cat $S; }
 ps_(){ sudo -n cat $P; }
-# EXACT first-field match. A regex of ^key also matches free_buckets,
-# free_from_bucketlist and valid_detail, which turns every assertion's
+# EXACT first-field match. A regex of ^key also matches clean_buckets,
+# clean_from_bucketlist and data_detail, which turns every assertion's
 # arithmetic into multi-line garbage.
 g(){ awk -v k="$2" '$1==k{print $2; exit}' <<<"$1"; }
 cleanup(){ echo 0 | sudo -n tee $TP >/dev/null 2>&1; }
@@ -74,17 +74,17 @@ PID=$(pgrep -x matmul | head -1)
 [ -n "${PID:-}" ] || { say "!! workload died"; tail -20 "$OUT/run.log"; exit 6; }
 echo $PID | sudo -n tee $TP >/dev/null; say "attached $PID"
 
-echo "# t valid dirty free erasing moved_to_ltram moved_to_dram erases_done" > "$OUT/curve"
+echo "# t data dirty clean erasing moved_to_ltram moved_to_dram erases_done" > "$OUT/curve"
 for t in $(seq 1 600); do
         [ -d /proc/$PID ] || { say "workload exited"; break; }
         PS=$(ps_); SS=$(st)
-        echo "$((t*5)) $(g "$PS" valid) $(g "$PS" dirty) $(g "$PS" free) $(g "$PS" erasing) $(g "$SS" moved_to_ltram) $(g "$SS" moved_to_dram) $(g "$SS" erases_done)" >> "$OUT/curve"
-        [ $((t % 12)) -eq 0 ] && say "  t+$((t*5))s  valid $(g "$PS" valid)  dirty $(g "$PS" dirty)  free $(g "$PS" free)  to_ltram $(g "$SS" moved_to_ltram)"
+        echo "$((t*5)) $(g "$PS" data) $(g "$PS" dirty) $(g "$PS" clean) $(g "$PS" erasing) $(g "$SS" moved_to_ltram) $(g "$SS" moved_to_dram) $(g "$SS" erases_done)" >> "$OUT/curve"
+        [ $((t % 12)) -eq 0 ] && say "  t+$((t*5))s  data $(g "$PS" data)  dirty $(g "$PS" dirty)  clean $(g "$PS" clean)  to_ltram $(g "$SS" moved_to_ltram)"
         # The workload holds at the end, so this catches the LAST sample before
         # it exits -- the moment every flash page it owns is still VALID. That
         # number is what must become 0.
         if grep -q "^holding" "$OUT/run.log" 2>/dev/null && [ -z "${PEAK:-}" ]; then
-                PEAK=$(g "$PS" valid); ps_ > "$OUT/atexit.pagestate"
+                PEAK=$(g "$PS" data); ps_ > "$OUT/atexit.pagestate"
                 say "  workload is holding: $PEAK pages VALID, all of which must be released"
         fi
         sleep 5
@@ -120,7 +120,7 @@ wait $SUDOPID; RC=$?
 DRAIN=0; FLAT=0; PREV=-1; POLLED=0; FORCED=0
 : > "$OUT/drain.log"
 for i in $(seq 1 300); do
-        V=$(g "$(ps_)" valid)
+        V=$(g "$(ps_)" data)
         POLLED=$i
         echo "$i ${V:-READ_FAILED} forced=$FORCED" >> "$OUT/drain.log"
         [ "${V:-x}" = "0" ] && { DRAIN=$i; break; }
@@ -148,11 +148,13 @@ RDIG=$(awk '/^DIGEST/{print $2}' "$OUT/run.log")
 
 # --------------------------------------------------------------- assertions
 PS=$(cat "$OUT/after.pagestate"); SS=$(cat "$OUT/after.stats")
-V=$(g "$PS" valid); D=$(g "$PS" dirty); F=$(g "$PS" free)
-FB=$(g "$PS" free_from_bucketlist); INV=$(awk '/^invariant/{print $2}' <<<"$PS")
-E=$(awk '/^erasing/{print ($2=="idle")?0:1}' <<<"$PS")
+V=$(g "$PS" data); D=$(g "$PS" dirty); F=$(g "$PS" clean)
+FB=$(g "$PS" clean_from_bucketlist); INV=$(awk '/^invariant/{print $2}' <<<"$PS")
+E=$(awk '/^erasing/{$1="";sub(/^ /,"");print}' <<<"$PS")
 TOL=$(g "$SS" moved_to_ltram); BS=$(g "$SS" freed_via_backstop); HK=$(g "$SS" freed_via_hook)
-SUM=$((V + D + F + E)); ACC=$((V + BS + HK))
+# Three terms, not four. Erasing is a marker on a page that is still counted
+# in dirty, so adding it would double-count exactly one page.
+SUM=$((V + D + F)); ACC=$((V + BS + HK))
 FAIL=0
 {
 echo "================= LTRAM TEST ================="
@@ -164,9 +166,9 @@ echo "  run     digest $RDIG"
 [ "$CDIG" = "$RDIG" ] && echo "  DIGEST MATCHES" || { echo "  !! DIGEST MISMATCH -- data was corrupted"; FAIL=1; }
 echo
 echo "-- state machine --"
-echo "  valid $V  dirty $D  free $F  erasing $E"
-echo "  sum $SUM (want 65536)"; [ "$SUM" = "65536" ] || { echo "  !! a page was lost from every state"; FAIL=1; }
-echo "  free_from_bucketlist $FB (want $F)"; [ "$FB" = "$F" ] || { echo "  !! bucket lists disagree with the free count"; FAIL=1; }
+echo "  data $V  dirty $D  clean $F      erasing: $E"
+echo "  data+dirty+clean $SUM (want 65536)"; [ "$SUM" = "65536" ] || { echo "  !! a page was lost from every state"; FAIL=1; }
+echo "  clean_from_bucketlist $FB (want $F)"; [ "$FB" = "$F" ] || { echo "  !! bucket lists disagree with the clean count"; FAIL=1; }
 echo "  invariant $INV"; [ "$INV" = "ok" ] || FAIL=1
 echo
 echo "-- release at exit: every page the workload held must be released --"
@@ -177,11 +179,11 @@ else echo "  !! $V pages still VALID after ${POLLED}s (lru_add_drain_all forced:
      echo "     Flat AFTER a forced drain, so not a per-CPU folio batch. Check"
      echo "     /proc/kpageflags for these pfns: ACTIVE without LRU would mean"
      echo "     the batch theory after all; anything else is a held reference."
-     echo "     pfns are in the valid_detail block of after.pagestate."; FAIL=1; fi
+     echo "     pfns are in the data_detail block of after.pagestate."; FAIL=1; fi
 echo
-echo "-- page accounting: every promoted page is valid, or was freed --"
+echo "-- page accounting: every promoted page holds data, or was freed --"
 echo "  moved_to_ltram      $TOL"
-echo "  still valid         $V"
+echo "  still holding data  $V"
 echo "  freed_via_backstop  $BS   (batch path: process exit, munmap, reclaim)"
 echo "  freed_via_hook      $HK   (single-page path: folio_put -> __folio_put_small)"
 echo "  valid+backstop+hook $ACC  (want $TOL)"

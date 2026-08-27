@@ -78,8 +78,8 @@ static unsigned int erase_high_water = 8192;
  *
  * TODO: make this event driven and stop polling. Nothing tells the worker that
  * free has crossed the low mark; it finds out on its next tick, so this value
- * is purely how stale that answer may be. Having lt_to_valid() call
- * queue_delayed_work(..., 0) when lt_free_count drops below erase_low_water
+ * is purely how stale that answer may be. Having lt_to_data() call
+ * queue_delayed_work(..., 0) when lt_clean_count drops below erase_low_water
  * would make the wait exact and remove idle wakeups entirely. queue_delayed_work()
  * does not sleep, so it is safe under ltram_alloc_lock. The cost is a branch on
  * the allocation path and the allocator having to know the erase engine exists.
@@ -129,7 +129,7 @@ module_param(idle_samples, uint, 0644);
 module_param(idle_sample_us, uint, 0644);
 
 /* ---- the flash page allocator --------------------------------------------- */
-static unsigned long *ltram_free_bitmap;	/* 1 = free */
+static unsigned long *ltram_clean_bitmap;	/* 1 = free */
 static unsigned long ltram_nr_pages;
 static DEFINE_SPINLOCK(ltram_alloc_lock);
 static atomic64_t stat_moved_to_dram;
@@ -204,15 +204,15 @@ static atomic64_t ltram_pages_in_use;
 #define LT_EC_BUCKETS	101u			/* 0 .. 100,000 erases */
 #define LT_ERASING_IDLE	0xFFFFFFFFu
 
-enum lt_bmstate { LT_VALID = 0, LT_DIRTY, LT_NR_BM };
-static const char * const lt_bm_name[LT_NR_BM] = { "valid", "dirty" };
+enum lt_bmstate { LT_DATA = 0, LT_DIRTY, LT_NR_BM };
+static const char * const lt_bm_name[LT_NR_BM] = { "data", "dirty" };
 
 static unsigned long	*lt_bm[LT_NR_BM];	/* VALID and DIRTY only */
 static unsigned long	*lt_scratch;		/* derivations and ANDs */
 static u32		*lt_ec;			/* erase count, per page */
 static struct list_head	*lt_node;		/* per-page link into a bucket */
-static struct list_head	 lt_free_by_ec[LT_EC_BUCKETS];
-static unsigned long	 lt_free_count;		/* O(1) for the watermark */
+static struct list_head	 lt_clean_by_ec[LT_EC_BUCKETS];
+static unsigned long	 lt_clean_count;		/* O(1) for the watermark */
 static u32		 lt_erasing = LT_ERASING_IDLE;
 static bool		 lt_ready;
 
@@ -232,25 +232,25 @@ static inline unsigned int lt_bucket_of(u32 ec)
  *
  * Caller holds ltram_alloc_lock.
  */
-static void lt_to_valid(unsigned long idx)
+static void lt_to_data(unsigned long idx)
 {
 	if (!lt_ready)
 		return;
 	list_del_init(&lt_node[idx]);		/* off its free bucket */
-	lt_free_count--;
-	__set_bit(idx, lt_bm[LT_VALID]);
+	lt_clean_count--;
+	__set_bit(idx, lt_bm[LT_DATA]);
 	if (lt_ec[idx] < U32_MAX)
 		lt_ec[idx]++;
 }
 
 /* VALID -> FREE, for a sector that was never programmed. */
-static void lt_to_free(unsigned long idx)
+static void lt_to_clean(unsigned long idx)
 {
 	if (!lt_ready)
 		return;
-	__clear_bit(idx, lt_bm[LT_VALID]);
-	list_add_tail(&lt_node[idx], &lt_free_by_ec[lt_bucket_of(lt_ec[idx])]);
-	lt_free_count++;
+	__clear_bit(idx, lt_bm[LT_DATA]);
+	list_add_tail(&lt_node[idx], &lt_clean_by_ec[lt_bucket_of(lt_ec[idx])]);
+	lt_clean_count++;
 }
 
 /*
@@ -261,32 +261,41 @@ static void lt_to_dirty(unsigned long idx)
 {
 	if (!lt_ready)
 		return;
-	__clear_bit(idx, lt_bm[LT_VALID]);
+	__clear_bit(idx, lt_bm[LT_DATA]);
 	__set_bit(idx, lt_bm[LT_DIRTY]);
 }
 
-/* DIRTY -> ERASING. At most one at a time: the device erases one sector. */
-static void lt_dirty_to_erasing(unsigned long idx)
+/*
+ * Mark which DIRTY page has an erase in flight. NOT a state transition: the
+ * page stays in the DIRTY bitmap throughout.
+ *
+ * Erasing is something happening TO a dirty page, not a place a page can be.
+ * Treating it as a fourth state cost a fourth term in the count invariant and
+ * an exception in the derived CLEAN set, and bought nothing: the worker already
+ * refuses to select a second page while this marker is set, so nothing ever
+ * depended on the page having left DIRTY.
+ */
+static void lt_mark_erasing(unsigned long idx)
 {
-	__clear_bit(idx, lt_bm[LT_DIRTY]);
 	lt_erasing = idx;
 }
 
-/* ERASING -> FREE. The sector is blank and allocatable again. */
-static void lt_erasing_to_free(unsigned long idx)
+/* The erase retired. Now the sector is blank and allocatable. */
+static void lt_erasing_to_clean(unsigned long idx)
 {
 	lt_erasing = LT_ERASING_IDLE;
-	list_add_tail(&lt_node[idx], &lt_free_by_ec[lt_bucket_of(lt_ec[idx])]);
-	lt_free_count++;
-	__set_bit(idx, ltram_free_bitmap);
+	__clear_bit(idx, lt_bm[LT_DIRTY]);
+	list_add_tail(&lt_node[idx], &lt_clean_by_ec[lt_bucket_of(lt_ec[idx])]);
+	lt_clean_count++;
+	__set_bit(idx, ltram_clean_bitmap);
 	atomic64_dec(&ltram_pages_in_use);
 }
 
-/* ERASING -> DIRTY. The erase failed; put it back and try again later. */
-static void lt_erasing_to_dirty(unsigned long idx)
+/* Erase failed, or the idle gate refused. The page never left DIRTY, so just
+ * release the marker and let the worker try again on a later tick. */
+static void lt_erasing_clear(unsigned long idx)
 {
 	lt_erasing = LT_ERASING_IDLE;
-	__set_bit(idx, lt_bm[LT_DIRTY]);
 }
 
 /*
@@ -304,13 +313,13 @@ static void lt_erasing_to_dirty(unsigned long idx)
  *
  * Returns ltram_nr_pages when the window is full. Caller holds ltram_alloc_lock.
  */
-static unsigned long lt_pop_free(void)
+static unsigned long lt_pop_clean(void)
 {
 	unsigned int b;
 
 	for (b = 0; b < LT_EC_BUCKETS; b++)
-		if (!list_empty(&lt_free_by_ec[b]))
-			return lt_free_by_ec[b].next - lt_node;
+		if (!list_empty(&lt_clean_by_ec[b]))
+			return lt_clean_by_ec[b].next - lt_node;
 	return ltram_nr_pages;
 }
 
@@ -322,26 +331,26 @@ static struct page *ltram_alloc_page(void)
 	spin_lock_irqsave(&ltram_alloc_lock, flags);
 	/*
 	 * STEP 1b: the bucket lists now DECIDE which page is handed out. The old
-	 * ltram_free_bitmap is still maintained in step, purely so the assertion
+	 * ltram_clean_bitmap is still maintained in step, purely so the assertion
 	 * in lt_check_fast() -- derived FREE must equal it bit for bit -- keeps
 	 * cross-checking two independently updated structures. It is cheap, and
 	 * it is the strongest check this subsystem has. Retire it only once the
 	 * bucket lists have been trusted for a while.
 	 */
 	if (lt_ready) {
-		idx = lt_pop_free();
+		idx = lt_pop_clean();
 		if (idx < ltram_nr_pages) {
-			__clear_bit(idx, ltram_free_bitmap);
+			__clear_bit(idx, ltram_clean_bitmap);
 			p = pfn_to_page(ltram_start_pfn + idx);
 			atomic64_inc(&ltram_pages_in_use);
-			lt_to_valid(idx);	/* removes it from its bucket */
+			lt_to_data(idx);	/* removes it from its bucket */
 		}
-	} else if (ltram_free_bitmap) {
+	} else if (ltram_clean_bitmap) {
 		/* Tracking failed to allocate at init. Fall back to the old
 		 * lowest-index allocator rather than refusing to work at all. */
-		idx = find_first_bit(ltram_free_bitmap, ltram_nr_pages);
+		idx = find_first_bit(ltram_clean_bitmap, ltram_nr_pages);
 		if (idx < ltram_nr_pages) {
-			__clear_bit(idx, ltram_free_bitmap);
+			__clear_bit(idx, ltram_clean_bitmap);
 			p = pfn_to_page(ltram_start_pfn + idx);
 			atomic64_inc(&ltram_pages_in_use);
 		}
@@ -377,18 +386,18 @@ static void ltram_free_page_back(struct page *p, bool was_programmed)
 	/* free_pages_prepare() can reach here from softirq and with interrupts
 	 * already off, so this lock cannot be the plain variety. */
 	spin_lock_irqsave(&ltram_alloc_lock, flags);
-	if (!ltram_free_bitmap || idx >= ltram_nr_pages ||
-	    test_bit(idx, ltram_free_bitmap))
+	if (!ltram_clean_bitmap || idx >= ltram_nr_pages ||
+	    test_bit(idx, ltram_clean_bitmap))
 		goto out;			/* not ours, or already free */
 
 	if (was_programmed && lt_ready) {
-		/* Stays out of ltram_free_bitmap: it is not allocatable until
+		/* Stays out of ltram_clean_bitmap: it is not allocatable until
 		 * the erase worker has blanked it. */
 		lt_to_dirty(idx);
 	} else {
-		__set_bit(idx, ltram_free_bitmap);
+		__set_bit(idx, ltram_clean_bitmap);
 		atomic64_dec(&ltram_pages_in_use);
-		lt_to_free(idx);
+		lt_to_clean(idx);
 	}
 out:
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
@@ -465,9 +474,9 @@ static void lt_erase_work_fn(struct work_struct *w)
 		 * means a nonsensical low > high degrades to that single
 		 * threshold rather than latching on forever.
 		 */
-		if (lt_free_count >= erase_high_water)
+		if (lt_clean_count >= erase_high_water)
 			lt_erase_engine_on = false;
-		else if (lt_free_count < erase_low_water)
+		else if (lt_clean_count < erase_low_water)
 			lt_erase_engine_on = true;
 
 		if (lt_erase_engine_on && lt_erasing == LT_ERASING_IDLE) {
@@ -475,7 +484,7 @@ static void lt_erase_work_fn(struct work_struct *w)
 							 ltram_nr_pages);
 
 			if (d < ltram_nr_pages) {
-				lt_dirty_to_erasing(d);
+				lt_mark_erasing(d);
 				idx = d;
 			}
 		}
@@ -489,7 +498,7 @@ static void lt_erase_work_fn(struct work_struct *w)
 				/* Put it back rather than erase into a read
 				 * stream; try again on the next tick. */
 				spin_lock_irqsave(&ltram_alloc_lock, flags);
-				lt_erasing_to_dirty(idx);
+				lt_erasing_clear(idx);
 				spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 				atomic64_inc(&stat_erase_deferred);
 				break;
@@ -505,10 +514,10 @@ static void lt_erase_work_fn(struct work_struct *w)
 
 		spin_lock_irqsave(&ltram_alloc_lock, flags);
 		if (rc) {
-			lt_erasing_to_dirty(idx);
+			lt_erasing_clear(idx);
 			atomic64_inc(&stat_erases_failed);
 		} else {
-			lt_erasing_to_free(idx);
+			lt_erasing_to_clean(idx);
 			if (have_op)
 				atomic64_inc(&stat_erases_done);
 		}
@@ -1042,7 +1051,7 @@ static struct kobject *ltram_kobj;
 
 /* ---- invariant checking and the debugfs view ------------------------------
  *
- * The redundancy is the point. lt_free_count and the bucket lists are two
+ * The redundancy is the point. lt_clean_count and the bucket lists are two
  * independently maintained descriptions of the same set, and the derived free
  * set is a third that cannot drift because it is computed, not stored.
  * Asserting they agree turns a silent page loss into a loud one -- which is
@@ -1050,7 +1059,7 @@ static struct kobject *ltram_kobj;
  */
 #define LT_ERR_OVERLAP		(1u << 0)
 #define LT_ERR_COUNT		(1u << 1)
-#define LT_ERR_FREE_MISMATCH	(1u << 2)
+#define LT_ERR_CLEAN_MISMATCH	(1u << 2)
 #define LT_ERR_BUCKET_COUNT	(1u << 3)
 #define LT_ERR_BUCKET_MEMBER	(1u << 4)
 
@@ -1066,14 +1075,13 @@ static unsigned int lt_check_fast(void)
 	if (!lt_ready)
 		return 0;
 
-	bitmap_and(lt_scratch, lt_bm[LT_VALID], lt_bm[LT_DIRTY], ltram_nr_pages);
+	bitmap_and(lt_scratch, lt_bm[LT_DATA], lt_bm[LT_DIRTY], ltram_nr_pages);
 	if (!bitmap_empty(lt_scratch, ltram_nr_pages))
 		err |= LT_ERR_OVERLAP;
 
-	total = bitmap_weight(lt_bm[LT_VALID], ltram_nr_pages) +
+	total = bitmap_weight(lt_bm[LT_DATA], ltram_nr_pages) +
 		bitmap_weight(lt_bm[LT_DIRTY], ltram_nr_pages) +
-		lt_free_count +
-		(lt_erasing != LT_ERASING_IDLE ? 1 : 0);
+		lt_clean_count;
 	if (total != ltram_nr_pages)
 		err |= LT_ERR_COUNT;
 
@@ -1083,13 +1091,11 @@ static unsigned int lt_check_fast(void)
 	 * bit-for-bit the live allocator's bitmap -- which is the whole point of
 	 * the shadow step.
 	 */
-	if (ltram_free_bitmap) {
-		bitmap_or(lt_scratch, lt_bm[LT_VALID], lt_bm[LT_DIRTY], ltram_nr_pages);
+	if (ltram_clean_bitmap) {
+		bitmap_or(lt_scratch, lt_bm[LT_DATA], lt_bm[LT_DIRTY], ltram_nr_pages);
 		bitmap_complement(lt_scratch, lt_scratch, ltram_nr_pages);
-		if (lt_erasing != LT_ERASING_IDLE)
-			__clear_bit(lt_erasing, lt_scratch);
-		if (!bitmap_equal(lt_scratch, ltram_free_bitmap, ltram_nr_pages))
-			err |= LT_ERR_FREE_MISMATCH;
+		if (!bitmap_equal(lt_scratch, ltram_clean_bitmap, ltram_nr_pages))
+			err |= LT_ERR_CLEAN_MISMATCH;
 	}
 	return err;
 }
@@ -1168,19 +1174,19 @@ static int lt_state_show(struct seq_file *m, void *v)
 	for (b = 0; b < LT_EC_BUCKETS; b++) {
 		struct list_head *e;
 
-		list_for_each(e, &lt_free_by_ec[b]) {
+		list_for_each(e, &lt_clean_by_ec[b]) {
 			unsigned long idx = e - lt_node;
 
 			bucket_total++;
 			lt_blen[b]++;
 			if (idx >= ltram_nr_pages ||
-			    test_bit(idx, lt_bm[LT_VALID]) ||
+			    test_bit(idx, lt_bm[LT_DATA]) ||
 			    test_bit(idx, lt_bm[LT_DIRTY]) ||
 			    lt_bucket_of(lt_ec[idx]) != b)
 				err |= LT_ERR_BUCKET_MEMBER;
 		}
 	}
-	if (bucket_total != lt_free_count)
+	if (bucket_total != lt_clean_count)
 		err |= LT_ERR_BUCKET_COUNT;
 
 	erasing_snap = lt_erasing;
@@ -1189,11 +1195,15 @@ static int lt_state_show(struct seq_file *m, void *v)
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 
 	seq_printf(m, "pages                %lu\n", ltram_nr_pages);
-	seq_printf(m, "free                 %lu   (bucket lists)\n", lt_free_count);
+	seq_printf(m, "clean                %lu   (bucket lists)\n", lt_clean_count);
 	for (st = 0; st < LT_NR_BM; st++)
 		seq_printf(m, "%-20s %lu\n", lt_bm_name[st], counts[st]);
-	seq_printf(m, "erasing              %s\n",
-		   erasing_snap == LT_ERASING_IDLE ? "idle" : "yes");
+	/* Not a state: which DIRTY page, if any, has an erase in flight. */
+	if (erasing_snap == LT_ERASING_IDLE)
+		seq_puts(m, "erasing              none\n");
+	else
+		seq_printf(m, "erasing              page %u (still counted in dirty)\n",
+			   erasing_snap);
 	/*
 	 * The engine is off whenever free is above the high mark -- so
 	 * "erases_done 0" after a small workload is the design working, not a
@@ -1201,7 +1211,7 @@ static int lt_state_show(struct seq_file *m, void *v)
 	 */
 	seq_printf(m, "erase_engine         %s   (on below %u free, off at %u)\n",
 		   engine_on ? "ON" : "off", erase_low_water, erase_high_water);
-	seq_printf(m, "free_from_bucketlist %lu   (recount, must equal free)\n",
+	seq_printf(m, "clean_from_bucketlist %lu  (recount, must equal clean)\n",
 		   bucket_total);
 	/*
 	 * total_allocs is the load-bearing number for judging spread: it is the
@@ -1248,13 +1258,13 @@ static int lt_state_show(struct seq_file *m, void *v)
 	 *
 	 * Capped, so a mid-run read with thousands VALID does not print a novel.
 	 */
-	if (counts[LT_VALID] > 0 && counts[LT_VALID] <= 64) {
+	if (counts[LT_DATA] > 0 && counts[LT_DATA] <= 64) {
 		unsigned long b;
 
-		seq_puts(m, "valid_detail         pfn : state (nothing should be VALID with no owner)\n");
-		for (b = find_first_bit(lt_bm[LT_VALID], ltram_nr_pages);
+		seq_puts(m, "data_detail          pfn : state (nothing should hold DATA with no owner)\n");
+		for (b = find_first_bit(lt_bm[LT_DATA], ltram_nr_pages);
 		     b < ltram_nr_pages;
-		     b = find_next_bit(lt_bm[LT_VALID], ltram_nr_pages, b + 1)) {
+		     b = find_next_bit(lt_bm[LT_DATA], ltram_nr_pages, b + 1)) {
 			struct folio *f = page_folio(pfn_to_page(ltram_start_pfn + b));
 
 			seq_printf(m, "  %10lu : refs %d  map %d  %s%s%s%s\n",
@@ -1267,26 +1277,135 @@ static int lt_state_show(struct seq_file *m, void *v)
 		}
 	}
 
-	seq_puts(m, "free_buckets         non-empty only\n");
+	seq_puts(m, "clean_buckets        non-empty only\n");
 	for (b = 0; b < LT_EC_BUCKETS; b++)
 		if (lt_blen[b])
-			seq_printf(m, "  [%6u..%6u] %u free\n",
+			seq_printf(m, "  [%6u..%6u] %u clean\n",
 				   b * LT_EC_GRAIN, (b + 1) * LT_EC_GRAIN - 1, lt_blen[b]);
 
 	seq_printf(m, "invariant            %s\n", err ? "FAIL" : "ok");
 	if (err & LT_ERR_OVERLAP)
-		seq_puts(m, "  FAIL: a page is both VALID and DIRTY\n");
+		seq_puts(m, "  FAIL: a page is both DATA and DIRTY\n");
 	if (err & LT_ERR_COUNT)
-		seq_puts(m, "  FAIL: valid + dirty + free + erasing != page count\n");
-	if (err & LT_ERR_FREE_MISMATCH)
-		seq_puts(m, "  FAIL: derived FREE disagrees with the live allocator bitmap\n");
+		seq_puts(m, "  FAIL: data + dirty + clean != page count\n");
+	if (err & LT_ERR_CLEAN_MISMATCH)
+		seq_puts(m, "  FAIL: derived CLEAN disagrees with the live allocator bitmap\n");
 	if (err & LT_ERR_BUCKET_COUNT)
-		seq_puts(m, "  FAIL: bucket lengths do not sum to lt_free_count\n");
+		seq_puts(m, "  FAIL: bucket lengths do not sum to clean\n");
 	if (err & LT_ERR_BUCKET_MEMBER)
-		seq_puts(m, "  FAIL: a bucketed page is VALID/DIRTY, or is in the wrong bucket\n");
+		seq_puts(m, "  FAIL: a bucketed page holds DATA or is DIRTY, or is in the wrong bucket\n");
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(lt_state);
+
+/*
+ * Promotion provenance: for every sector currently holding live data, where
+ * that data came from.
+ *
+ * /proc/pid/pagemap answers the forward question, virtual to physical, for a
+ * process that is still alive. This is the reverse, and it outlives the
+ * process: given a sector, what was put there, from which pfn, for which
+ * target, and in what order.
+ *
+ * The order is the part that earns its keep. On 2026-08-27 a single promotion
+ * segfaulted the workload and identifying WHICH sector took an evening of
+ * reasoning. Sector 0 had been programmed directly by test=45, outside the
+ * state machine, so the kernel still believed it blank and handed it out first.
+ * A line saying "sector 0, seq 1" would have made that immediate.
+ *
+ * Overwritten in place, so it is a snapshot of what is live rather than a
+ * history. 12 bytes a sector, 768 KB for a 256 MiB window.
+ */
+struct lt_prov {
+	u32 src_pfn;		/* the DRAM page it came from */
+	u32 seq;		/* promotion order, monotonic since boot */
+	pid_t pid;		/* which target it was promoted for */
+};
+static struct lt_prov *lt_prov;
+static atomic_t lt_prov_seq;
+
+void ltram_record_promotion(unsigned long dst_pfn, unsigned long src_pfn)
+{
+	unsigned long idx = dst_pfn - ltram_start_pfn;
+
+	if (!lt_prov || idx >= ltram_nr_pages)
+		return;
+	/*
+	 * No lock. Three independent u32 stores, so a concurrent reader can see
+	 * a row half from one promotion and half from the next. That is a debug
+	 * view of a moving target; taking ltram_alloc_lock on the write path for
+	 * it would be paying a real cost for a cosmetic one.
+	 */
+	lt_prov[idx].src_pfn = (u32)src_pfn;
+	lt_prov[idx].seq     = (u32)atomic_inc_return(&lt_prov_seq);
+	lt_prov[idx].pid     = target_pid;
+}
+
+/*
+ * Iterated rather than dumped: there can be tens of thousands of live sectors,
+ * and a single show() would make seq_file grow a multi-megabyte buffer. The
+ * VALID bitmap is walked WITHOUT the allocator lock, so a row may appear or
+ * vanish mid-read. Again: a debug view of a moving target.
+ */
+static void *lt_prov_start(struct seq_file *m, loff_t *pos)
+{
+	unsigned long b;
+
+	if (!lt_ready || !lt_prov)
+		return NULL;
+	if (*pos == 0)
+		return SEQ_START_TOKEN;
+	b = find_next_bit(lt_bm[LT_DATA], ltram_nr_pages, *pos - 1);
+	return b < ltram_nr_pages ? (*pos = b + 1, &lt_prov[b]) : NULL;
+}
+
+static void *lt_prov_next(struct seq_file *m, void *v, loff_t *pos)
+{
+	unsigned long from = (v == SEQ_START_TOKEN) ? 0 : *pos;
+	unsigned long b = find_next_bit(lt_bm[LT_DATA], ltram_nr_pages, from);
+
+	return b < ltram_nr_pages ? (*pos = b + 1, &lt_prov[b]) : NULL;
+}
+
+static void lt_prov_stop(struct seq_file *m, void *v) { }
+
+static int lt_prov_show(struct seq_file *m, void *v)
+{
+	struct lt_prov *e = v;
+	unsigned long idx;
+
+	if (v == SEQ_START_TOKEN) {
+		seq_puts(m, "# live sectors only. sector = index into the window; src_pfn = the\n"
+			    "# DRAM page it was copied from; seq = promotion order since boot.\n"
+			    "#sector      pfn      src_pfn   erases      seq     pid\n");
+		return 0;
+	}
+	idx = e - lt_prov;
+	seq_printf(m, "%8lu %10lu %12u %8u %8u %7d\n",
+		   idx, ltram_start_pfn + idx, e->src_pfn,
+		   lt_ec ? lt_ec[idx] : 0, e->seq, e->pid);
+	return 0;
+}
+
+static const struct seq_operations lt_prov_sops = {
+	.start = lt_prov_start,
+	.next  = lt_prov_next,
+	.stop  = lt_prov_stop,
+	.show  = lt_prov_show,
+};
+
+static int lt_prov_open(struct inode *i, struct file *f)
+{
+	return seq_open(f, &lt_prov_sops);
+}
+
+static const struct file_operations lt_prov_fops = {
+	.owner   = THIS_MODULE,
+	.open    = lt_prov_open,
+	.read    = seq_read,
+	.llseek  = seq_lseek,
+	.release = seq_release,
+};
 
 /*
  * Erase-count persistence.
@@ -1343,21 +1462,19 @@ static void lt_rebuild_buckets(void)
 
 	spin_lock_irqsave(&ltram_alloc_lock, flags);
 	for (b = 0; b < LT_EC_BUCKETS; b++)
-		INIT_LIST_HEAD(&lt_free_by_ec[b]);
-	lt_free_count = 0;
+		INIT_LIST_HEAD(&lt_clean_by_ec[b]);
+	lt_clean_count = 0;
 
 	for (i = 0; i < ltram_nr_pages; i++) {
-		if (test_bit(i, lt_bm[LT_VALID]) || test_bit(i, lt_bm[LT_DIRTY]))
-			continue;
-		if (lt_erasing == i)
+		if (test_bit(i, lt_bm[LT_DATA]) || test_bit(i, lt_bm[LT_DIRTY]))
 			continue;
 		INIT_LIST_HEAD(&lt_node[i]);
-		list_add_tail(&lt_node[i], &lt_free_by_ec[lt_bucket_of(lt_ec[i])]);
-		lt_free_count++;
+		list_add_tail(&lt_node[i], &lt_clean_by_ec[lt_bucket_of(lt_ec[i])]);
+		lt_clean_count++;
 	}
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 	pr_info("ltram: erase counts restored, %lu free pages rebucketed\n",
-		lt_free_count);
+		lt_clean_count);
 }
 
 static ssize_t lt_ec_read(struct file *f, char __user *ubuf, size_t len,
@@ -1428,7 +1545,7 @@ static ssize_t lt_ec_write(struct file *f, const char __user *ubuf, size_t len,
 
 	/*
 	 * Restoring counts moves pages between buckets, so the free lists have
-	 * to be rebuilt or lt_pop_free() keeps handing out by the old order and
+	 * to be rebuilt or lt_pop_clean() keeps handing out by the old order and
 	 * lt_check_fast() reports LT_ERR_BUCKET_MEMBER. Done once, when the
 	 * last byte lands.
 	 */
@@ -1497,8 +1614,8 @@ static long __init lt_scan_pool(void)
 				break;
 
 		if (w == PAGE_SIZE / sizeof(u64)) {
-			list_add_tail(&lt_node[i], &lt_free_by_ec[0]);
-			lt_free_count++;
+			list_add_tail(&lt_node[i], &lt_clean_by_ec[0]);
+			lt_clean_count++;
 			blank++;
 		} else {
 			/*
@@ -1516,7 +1633,7 @@ static long __init lt_scan_pool(void)
 			 * pages_in_use goes negative.
 			 */
 			set_bit(i, lt_bm[LT_DIRTY]);
-			__clear_bit(i, ltram_free_bitmap);
+			__clear_bit(i, ltram_clean_bitmap);
 			atomic64_inc(&ltram_pages_in_use);
 		}
 
@@ -1546,11 +1663,12 @@ static int __init lt_tracking_init(void)
 	lt_scratch = bitmap_zalloc(ltram_nr_pages, GFP_KERNEL);
 	lt_ec   = kvcalloc(ltram_nr_pages, sizeof(*lt_ec), GFP_KERNEL);
 	lt_node = kvmalloc_array(ltram_nr_pages, sizeof(*lt_node), GFP_KERNEL);
-	if (!lt_scratch || !lt_ec || !lt_node)
+	lt_prov = kvcalloc(ltram_nr_pages, sizeof(*lt_prov), GFP_KERNEL);
+	if (!lt_scratch || !lt_ec || !lt_node || !lt_prov)
 		goto nomem;
 
 	for (b = 0; b < LT_EC_BUCKETS; b++)
-		INIT_LIST_HEAD(&lt_free_by_ec[b]);
+		INIT_LIST_HEAD(&lt_clean_by_ec[b]);
 
 	/*
 	 * Erase counts all start at 0. They are NOT the device's history and are
@@ -1560,7 +1678,7 @@ static int __init lt_tracking_init(void)
 	for (i = 0; i < ltram_nr_pages; i++)
 		INIT_LIST_HEAD(&lt_node[i]);
 
-	lt_free_count = 0;
+	lt_clean_count = 0;
 	blank = lt_scan_pool();
 	if (blank < 0) {
 		/*
@@ -1572,20 +1690,23 @@ static int __init lt_tracking_init(void)
 		 * the pool back.
 		 */
 		bitmap_fill(lt_bm[LT_DIRTY], ltram_nr_pages);
-		bitmap_zero(ltram_free_bitmap, ltram_nr_pages);
+		bitmap_zero(ltram_clean_bitmap, ltram_nr_pages);
 		atomic64_set(&ltram_pages_in_use, ltram_nr_pages);
 		pr_warn("ltram: pool not scanned -- assuming all %lu sectors dirty\n",
 			ltram_nr_pages);
 	}
 	lt_ready = true;
 
-	if (ltram_debugfs_dir)
+	if (ltram_debugfs_dir) {
 		debugfs_create_file("pagestate", 0444, ltram_debugfs_dir,
 				    NULL, &lt_state_fops);
 		/* 0600: it is the device's wear history, and writing it
 		 * rewrites the allocator's idea of which sector to use next. */
 		debugfs_create_file("erase_counts", 0600, ltram_debugfs_dir,
 				    NULL, &lt_ec_fops);
+		debugfs_create_file("promotions", 0444, ltram_debugfs_dir,
+				    NULL, &lt_prov_fops);
+	}
 	queue_delayed_work(system_unbound_wq, &lt_erase_work,
 			   msecs_to_jiffies(erase_poll_ms));
 	pr_info("ltram: page states armed, %lu pages, erase worker running\n",
@@ -1600,6 +1721,7 @@ nomem:
 	bitmap_free(lt_scratch); lt_scratch = NULL;
 	kvfree(lt_ec);   lt_ec = NULL;
 	kvfree(lt_node); lt_node = NULL;
+	kvfree(lt_prov); lt_prov = NULL;
 	pr_warn("ltram: page-state tracking disabled (out of memory)\n");
 	return -ENOMEM;
 }
@@ -1610,10 +1732,10 @@ static int __init ltram_policy_init(void)
 		return 0;
 
 	ltram_nr_pages = ltram_end_pfn - ltram_start_pfn;
-	ltram_free_bitmap = bitmap_zalloc(ltram_nr_pages, GFP_KERNEL);
-	if (!ltram_free_bitmap)
+	ltram_clean_bitmap = bitmap_zalloc(ltram_nr_pages, GFP_KERNEL);
+	if (!ltram_clean_bitmap)
 		return -ENOMEM;
-	bitmap_fill(ltram_free_bitmap, ltram_nr_pages);
+	bitmap_fill(ltram_clean_bitmap, ltram_nr_pages);
 
 	/* Shadow tracking. Failure here is not fatal: it costs the new
 	 * bookkeeping and its assertions, not the ability to allocate. */
