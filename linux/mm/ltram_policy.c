@@ -1289,115 +1289,6 @@ static int lt_state_show(struct seq_file *m, void *v)
 DEFINE_SHOW_ATTRIBUTE(lt_state);
 
 /*
- * Promotion provenance: for every sector currently holding live data, where
- * that data came from.
- *
- * /proc/pid/pagemap answers the forward question, virtual to physical, for a
- * process that is still alive. This is the reverse, and it outlives the
- * process: given a sector, what was put there, from which pfn, for which
- * target, and in what order.
- *
- * The order is the part that earns its keep. On 2026-08-27 a single promotion
- * segfaulted the workload and identifying WHICH sector took an evening of
- * reasoning. Sector 0 had been programmed directly by test=45, outside the
- * state machine, so the kernel still believed it blank and handed it out first.
- * A line saying "sector 0, seq 1" would have made that immediate.
- *
- * Overwritten in place, so it is a snapshot of what is live rather than a
- * history. 12 bytes a sector, 768 KB for a 256 MiB window.
- */
-struct lt_prov {
-	u32 src_pfn;		/* the DRAM page it came from */
-	u32 seq;		/* promotion order, monotonic since boot */
-	pid_t pid;		/* which target it was promoted for */
-};
-static struct lt_prov *lt_prov;
-static atomic_t lt_prov_seq;
-
-void ltram_record_promotion(unsigned long dst_pfn, unsigned long src_pfn)
-{
-	unsigned long idx = dst_pfn - ltram_start_pfn;
-
-	if (!lt_prov || idx >= ltram_nr_pages)
-		return;
-	/*
-	 * No lock. Three independent u32 stores, so a concurrent reader can see
-	 * a row half from one promotion and half from the next. That is a debug
-	 * view of a moving target; taking ltram_alloc_lock on the write path for
-	 * it would be paying a real cost for a cosmetic one.
-	 */
-	lt_prov[idx].src_pfn = (u32)src_pfn;
-	lt_prov[idx].seq     = (u32)atomic_inc_return(&lt_prov_seq);
-	lt_prov[idx].pid     = target_pid;
-}
-
-/*
- * Iterated rather than dumped: there can be tens of thousands of live sectors,
- * and a single show() would make seq_file grow a multi-megabyte buffer. The
- * VALID bitmap is walked WITHOUT the allocator lock, so a row may appear or
- * vanish mid-read. Again: a debug view of a moving target.
- */
-static void *lt_prov_start(struct seq_file *m, loff_t *pos)
-{
-	unsigned long b;
-
-	if (!lt_ready || !lt_prov)
-		return NULL;
-	if (*pos == 0)
-		return SEQ_START_TOKEN;
-	b = find_next_bit(lt_bm[LT_VALID], ltram_nr_pages, *pos - 1);
-	return b < ltram_nr_pages ? (*pos = b + 1, &lt_prov[b]) : NULL;
-}
-
-static void *lt_prov_next(struct seq_file *m, void *v, loff_t *pos)
-{
-	unsigned long from = (v == SEQ_START_TOKEN) ? 0 : *pos;
-	unsigned long b = find_next_bit(lt_bm[LT_VALID], ltram_nr_pages, from);
-
-	return b < ltram_nr_pages ? (*pos = b + 1, &lt_prov[b]) : NULL;
-}
-
-static void lt_prov_stop(struct seq_file *m, void *v) { }
-
-static int lt_prov_show(struct seq_file *m, void *v)
-{
-	struct lt_prov *e = v;
-	unsigned long idx;
-
-	if (v == SEQ_START_TOKEN) {
-		seq_puts(m, "# live sectors only. sector = index into the window; src_pfn = the\n"
-			    "# DRAM page it was copied from; seq = promotion order since boot.\n"
-			    "#sector      pfn      src_pfn   erases      seq     pid\n");
-		return 0;
-	}
-	idx = e - lt_prov;
-	seq_printf(m, "%8lu %10lu %12u %8u %8u %7d\n",
-		   idx, ltram_start_pfn + idx, e->src_pfn,
-		   lt_ec ? lt_ec[idx] : 0, e->seq, e->pid);
-	return 0;
-}
-
-static const struct seq_operations lt_prov_sops = {
-	.start = lt_prov_start,
-	.next  = lt_prov_next,
-	.stop  = lt_prov_stop,
-	.show  = lt_prov_show,
-};
-
-static int lt_prov_open(struct inode *i, struct file *f)
-{
-	return seq_open(f, &lt_prov_sops);
-}
-
-static const struct file_operations lt_prov_fops = {
-	.owner   = THIS_MODULE,
-	.open    = lt_prov_open,
-	.read    = seq_read,
-	.llseek  = seq_lseek,
-	.release = seq_release,
-};
-
-/*
  * Erase-count persistence.
  *
  * The counts survive nothing on their own. lt_ec is allocated zeroed at every
@@ -1655,8 +1546,7 @@ static int __init lt_tracking_init(void)
 	lt_scratch = bitmap_zalloc(ltram_nr_pages, GFP_KERNEL);
 	lt_ec   = kvcalloc(ltram_nr_pages, sizeof(*lt_ec), GFP_KERNEL);
 	lt_node = kvmalloc_array(ltram_nr_pages, sizeof(*lt_node), GFP_KERNEL);
-	lt_prov = kvcalloc(ltram_nr_pages, sizeof(*lt_prov), GFP_KERNEL);
-	if (!lt_scratch || !lt_ec || !lt_node || !lt_prov)
+	if (!lt_scratch || !lt_ec || !lt_node)
 		goto nomem;
 
 	for (b = 0; b < LT_EC_BUCKETS; b++)
@@ -1696,8 +1586,6 @@ static int __init lt_tracking_init(void)
 		 * rewrites the allocator's idea of which sector to use next. */
 		debugfs_create_file("erase_counts", 0600, ltram_debugfs_dir,
 				    NULL, &lt_ec_fops);
-		debugfs_create_file("promotions", 0444, ltram_debugfs_dir,
-				    NULL, &lt_prov_fops);
 	queue_delayed_work(system_unbound_wq, &lt_erase_work,
 			   msecs_to_jiffies(erase_poll_ms));
 	pr_info("ltram: page states armed, %lu pages, erase worker running\n",
@@ -1712,7 +1600,6 @@ nomem:
 	bitmap_free(lt_scratch); lt_scratch = NULL;
 	kvfree(lt_ec);   lt_ec = NULL;
 	kvfree(lt_node); lt_node = NULL;
-	kvfree(lt_prov); lt_prov = NULL;
 	pr_warn("ltram: page-state tracking disabled (out of memory)\n");
 	return -ENOMEM;
 }
