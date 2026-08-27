@@ -43,6 +43,7 @@ static size_t N = 8192;          /* W is N*N floats: 8192 -> 256 MiB, the window
 static int    ITERS = 100;
 static int    RUNS = 10;
 static int    do_verify = 0, do_protect = 0, do_ranges = 0, do_phys = 0, hold_secs = 0;
+static int    compute_only = 0;   /* --compute-only: pin every row to row 0 */
 static size_t flush_mb = 0;             /* 0 = off; LLC scrub between runs */
 static unsigned char *scrub_buf = NULL;
 static size_t scrub_bytes = 0;
@@ -524,7 +525,8 @@ int main(int argc, char **argv)
         {"n",1,0,'n'}, {"iters",1,0,'i'}, {"runs",1,0,'r'},
         {"verify",0,0,'V'}, {"protect-weights",0,0,'P'},
         {"print-ranges",0,0,'R'}, {"phys",0,0,'A'},
-        {"hold",1,0,'H'}, {"seed",1,0,'S'}, {"flush",1,0,'F'}, {0,0,0,0}
+        {"hold",1,0,'H'}, {"seed",1,0,'S'}, {"flush",1,0,'F'},
+        {"compute-only",0,0,'C'}, {0,0,0,0}
     };
     int c;
     while ((c = getopt_long(argc, argv, "n:i:r:VPRAH:S:F:", lo, NULL)) != -1) {
@@ -539,11 +541,12 @@ int main(int argc, char **argv)
         case 'H': hold_secs = atoi(optarg); break;
         case 'S': SEED = strtoull(optarg, NULL, 0); break;
         case 'F': flush_mb = strtoul(optarg, NULL, 0); break;
+        case 'C': compute_only = 1; break;
         default:
             fprintf(stderr,
               "usage: %s [--n DIM] [--iters K] [--runs R] [--verify]\n"
               "          [--protect-weights] [--print-ranges] [--phys]\n"
-              "          [--hold SECS] [--seed S] [--flush MB]\n", argv[0]);
+              "          [--hold SECS] [--seed S] [--flush MB] [--compute-only]\n", argv[0]);
             return 2;
         }
     }
@@ -552,6 +555,11 @@ int main(int argc, char **argv)
     xbytes = N * sizeof(float);
     ybytes = N * sizeof(float);
 
+    if (compute_only && do_verify) {
+        fprintf(stderr, "--compute-only computes the wrong answer on purpose "
+                        "(every row is row 0). Do not ask it to --verify.\n");
+        return 2;
+    }
     W = alloc_region(Wbytes);
     x = alloc_region(xbytes);
     y = alloc_region(ybytes);
@@ -610,7 +618,22 @@ int main(int argc, char **argv)
             /* y accumulates every iteration: continuously written.
              * W is read N*N times per iteration and never touched. */
             for (size_t i = 0; i < N; i++) {
-                const float *row = W + i * N;
+                /*
+                 * --compute-only pins every row to W's FIRST row, so the inner
+                 * loop reads the same N*4 bytes N times and stays in L1D. Same
+                 * N, same bounds, same instruction stream, same FMA count. The
+                 * ONLY thing removed is the memory traffic.
+                 *
+                 * That makes the difference between this and a normal run the
+                 * cost of reaching the weights, measured rather than inferred:
+                 *
+                 *   T_full - T_compute = time spent getting at W
+                 *
+                 * Run it against DRAM and against LtRAM and the two memory
+                 * terms are directly comparable. The result is wrong on purpose
+                 * (every row is row 0), so --verify is refused below.
+                 */
+                const float *row = compute_only ? W : W + i * N;
                 float acc = 0.0f;
                 for (size_t j = 0; j < N; j++) acc += row[j] * x[j];
                 y[i] += acc;
