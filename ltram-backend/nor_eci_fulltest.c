@@ -3227,7 +3227,7 @@ static int fulltest_thread(void *unused)
          * ========================================================================= */
         u64 sec = start_sector;
         struct page **pg;
-        unsigned int i, w, bad = 0, zeros = 0, ffs = 0;
+        unsigned int i, w, bad = 0, stale = 0, ffs = 0, other = 0;
         u32 er0; int tr; u64 src_pa;
 
         if (zc_probe >= zc_pages) {
@@ -3237,11 +3237,19 @@ static int fulltest_thread(void *unused)
         pg = kvcalloc(zc_pages, sizeof(*pg), GFP_KERNEL);
         if (!pg) { pr_err("fulltest: ## ZC out of memory\n"); goto zc_out_novec; }
         for (i = 0; i < zc_pages; i++) {
-            pg[i] = alloc_page(GFP_KERNEL | __GFP_ZERO);
+            pg[i] = alloc_page(GFP_KERNEL);
             if (!pg[i]) { pr_err("fulltest: ## ZC alloc failed at %u\n", i); goto zc_out; }
         }
 
-        /* Step 1: force the zeros all the way to DRAM, so "what DRAM holds" is known. */
+        /* Step 1: pattern X everywhere, then CVM it all the way to DRAM.
+         * Two distinct patterns, not zeros-and-a-pattern. Reading X back is
+         * POSITIVE evidence that the engine fetched DRAM, where zero would also
+         * be what a failed read, an unwritten region, or a dead mapping returns. */
+        for (i = 0; i < zc_pages; i++) {
+            u32 *v = page_address(pg[i]);
+            for (w = 0; w < PAGE_SIZE / 4; w++)
+                v[w] = 0x5EED0000u + (i << 12) + w;         /* X */
+        }
         for (i = 0; i < zc_pages; i++) {
             u64 pa = page_to_phys(pg[i]);
             u64 off;
@@ -3250,11 +3258,32 @@ static int fulltest_thread(void *unused)
         }
         asm volatile("dsb sy" ::: "memory");
 
-        /* Step 2: dirty the region from the CPU. No flush. */
+        /* Step 1b: prove the setup before trusting anything below it.
+         * cvm_wbi_l2_pa invalidates as well as writing back, so these reads must
+         * miss and come from DRAM. If they do not return X, the CVM did nothing,
+         * DRAM holds whatever preceded the allocation, and every verdict this test
+         * can print is meaningless. That is exactly how the civac bug survived for
+         * weeks: an instruction that quietly does nothing, trusted by a check that
+         * could not tell. */
+        {
+            const u32 *v = page_address(pg[zc_probe]);
+            for (w = 0; w < 4; w++) {
+                u32 want = 0x5EED0000u + (zc_probe << 12) + w;
+                if (v[w] != want) {
+                    pr_err("fulltest: ## ZC SETUP FAILED: word %u reads %08x, wanted %08x after "
+                           "cvm_wbi_l2_pa. The writeback did not reach DRAM; this test cannot "
+                           "answer anything.\n", w, v[w], want);
+                    goto zc_out;
+                }
+            }
+        }
+
+        /* Step 2: pattern Y over the top, from the CPU, with no flush.
+         * DRAM now holds X, the cache holds Y. */
         for (i = 0; i < zc_pages; i++) {
             u32 *v = page_address(pg[i]);
             for (w = 0; w < PAGE_SIZE / 4; w++)
-                v[w] = 0xA5A50000u + (i << 12) + w;
+                v[w] = 0xA5A50000u + (i << 12) + w;         /* Y */
         }
 
         if (zc_evict) {
@@ -3283,24 +3312,31 @@ static int fulltest_thread(void *unused)
         /* Step 4: read it back through a real eviction and classify every word. */
         cvm_evict_sector(sec);
         for (w = 0; w < PAGE_SIZE / 4; w++) {
-            u32 want = 0xA5A50000u + (zc_probe << 12) + w;
-            u32 got  = readl(rd_win + sec * SECT_SZ + 4 * w);
-            if (got == want) continue;
+            u32 y   = 0xA5A50000u + (zc_probe << 12) + w;   /* cache held this */
+            u32 x   = 0x5EED0000u + (zc_probe << 12) + w;   /* DRAM held this */
+            u32 got = readl(rd_win + sec * SECT_SZ + 4 * w);
+
+            if (got == y) continue;                          /* snooped */
             bad++;
-            if (got == 0)          zeros++;
-            if (got == 0xFFFFFFFFu) ffs++;
+            if      (got == x)           stale++;
+            else if (got == 0xFFFFFFFFu) ffs++;
+            else                         other++;
             if (bad <= 4)
-                pr_info("fulltest: ## ZC   word %4u want %08x got %08x\n", w, want, got);
+                pr_info("fulltest: ## ZC   word %4u  Y=%08x X=%08x got=%08x\n", w, y, x, got);
         }
 
         pr_info("fulltest: ## ZC[%u] pages=%u probe=%u evict=%u src_pa=0x%llx sector=%llu\n",
                 run_tag, zc_pages, zc_probe, zc_evict, src_pa, sec);
-        pr_info("fulltest: ## ZC   %u/%u words wrong (%u read as zero, %u still erased) -> %s\n",
-                bad, (unsigned int)(PAGE_SIZE / 4), zeros, ffs,
-                bad == 0            ? "SNOOPED: the engine saw the CPU's dirty lines" :
-                zeros == bad        ? "NOT SNOOPED: the engine read stale DRAM" :
-                ffs  == bad         ? "NOT WRITTEN: the sector never received data" :
-                                      "MIXED -- something else is wrong");
+        pr_info("fulltest: ## ZC   %u/%u wrong  (X/stale %u, erased %u, other %u) -> %s\n",
+                bad, (unsigned int)(PAGE_SIZE / 4), stale, ffs, other,
+                bad == 0      ? "SNOOPED: the engine saw the CPU's dirty lines" :
+                stale == bad  ? "NOT SNOOPED: the engine read X, the flushed DRAM copy" :
+                ffs   == bad  ? "NOT WRITTEN: the sector never received data" :
+                                "MIXED -- something else is wrong");
+        if (bad == 0)
+            pr_info("fulltest: ## ZC   caveat: a Y that reached DRAM before the DMA is "
+                    "indistinguishable from a snoop. zc_pages=1 minimises that window; "
+                    "at zc_pages=2048 page 0 sat through 8 MB of later writes.\n");
 zc_out:
         for (i = 0; i < zc_pages; i++) if (pg[i]) __free_page(pg[i]);
         kvfree(pg);
