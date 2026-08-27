@@ -44,6 +44,8 @@ static int    ITERS = 100;
 static int    RUNS = 10;
 static int    do_verify = 0, do_protect = 0, do_ranges = 0, do_phys = 0, hold_secs = 0;
 static int    compute_only = 0;   /* --compute-only: pin every row to row 0 */
+static int    do_chase = 0;       /* --chase: dependent-load latency over W */
+static volatile uint64_t chase_sink;
 static size_t flush_mb = 0;             /* 0 = off; LLC scrub between runs */
 static unsigned char *scrub_buf = NULL;
 static size_t scrub_bytes = 0;
@@ -526,7 +528,7 @@ int main(int argc, char **argv)
         {"verify",0,0,'V'}, {"protect-weights",0,0,'P'},
         {"print-ranges",0,0,'R'}, {"phys",0,0,'A'},
         {"hold",1,0,'H'}, {"seed",1,0,'S'}, {"flush",1,0,'F'},
-        {"compute-only",0,0,'C'}, {0,0,0,0}
+        {"compute-only",0,0,'C'}, {"chase",0,0,'H'+128}, {0,0,0,0}
     };
     int c;
     while ((c = getopt_long(argc, argv, "n:i:r:VPRAH:S:F:", lo, NULL)) != -1) {
@@ -542,11 +544,12 @@ int main(int argc, char **argv)
         case 'S': SEED = strtoull(optarg, NULL, 0); break;
         case 'F': flush_mb = strtoul(optarg, NULL, 0); break;
         case 'C': compute_only = 1; break;
+        case 'H'+128: do_chase = 1; break;
         default:
             fprintf(stderr,
               "usage: %s [--n DIM] [--iters K] [--runs R] [--verify]\n"
               "          [--protect-weights] [--print-ranges] [--phys]\n"
-              "          [--hold SECS] [--seed S] [--flush MB] [--compute-only]\n", argv[0]);
+              "          [--hold SECS] [--seed S] [--flush MB] [--compute-only] [--chase]\n", argv[0]);
             return 2;
         }
     }
@@ -555,6 +558,10 @@ int main(int argc, char **argv)
     xbytes = N * sizeof(float);
     ybytes = N * sizeof(float);
 
+    if (do_chase && do_verify) {
+        fprintf(stderr, "--chase does not compute the matmul. Nothing to verify.\n");
+        return 2;
+    }
     if (compute_only && do_verify) {
         fprintf(stderr, "--compute-only computes the wrong answer on purpose "
                         "(every row is row 0). Do not ask it to --verify.\n");
@@ -576,6 +583,37 @@ int main(int argc, char **argv)
     rng_s = SEED ? SEED : 1;
     for (size_t i = 0; i < N * N; i++) W[i] = rnd();
     for (size_t i = 0; i < N; i++)     x[i] = rnd();
+    /*
+     * --chase turns W into a single cycle over its 128-byte lines: the first
+     * word of each line holds the index of the next. Following it makes every
+     * load DEPEND on the one before, so nothing overlaps, nothing prefetches,
+     * and no memory-level parallelism can hide anything. What comes out is the
+     * medium's latency, which is a different number from what the matmul pays.
+     *
+     * Sattolo's algorithm rather than a plain shuffle: it produces exactly one
+     * cycle covering every line, so the walk cannot fall into a short loop and
+     * measure a working set smaller than W.
+     *
+     * The chain is written ONCE, here. After this W is only read, which is what
+     * lets the policy see it as read-mostly and promote it.
+     */
+    if (do_chase) {
+        size_t lines = Wbytes / 128, i;
+        uint32_t *perm = malloc(lines * sizeof *perm);
+        if (!perm) { perror("chase perm"); return 1; }
+        for (i = 0; i < lines; i++) perm[i] = (uint32_t)i;
+        for (i = lines - 1; i > 0; i--) {         /* Sattolo: one cycle */
+            size_t j;
+            rng_s ^= rng_s << 13; rng_s ^= rng_s >> 7; rng_s ^= rng_s << 17;
+            j = (size_t)(rng_s % i);
+            uint32_t t2 = perm[i]; perm[i] = perm[j]; perm[j] = t2;
+        }
+        for (i = 0; i < lines; i++)
+            *(uint32_t *)((char *)W + i * 128) = perm[i];
+        free(perm);
+        printf("CHASE %zu lines of 128 B over %zu MiB, one dependent load each\n",
+               lines, Wbytes >> 20);
+    }
     memset(y, 0, ybytes);
 
     if (do_protect) {
@@ -614,6 +652,26 @@ int main(int argc, char **argv)
         memset(y, 0, ybytes);
         cache_scrub();          /* BEFORE t0: excluded from the measurement */
         double t0 = now();
+        if (do_chase) {
+            /* One full cycle: every line visited exactly once, each load
+             * waiting on the previous. lines accesses, no overlap. */
+            size_t lines = Wbytes / 128, k;
+            uint32_t cur = 0;
+            for (k = 0; k < lines; k++)
+                cur = *(volatile uint32_t *)((char *)W + (size_t)cur * 128);
+            chase_sink += cur;
+            t[r] = now() - t0;
+            printf("  run %2d/%d  %8.3f s   %7.1f ns/access\n",
+                   r + 1, RUNS, t[r], t[r] * 1e9 / (double)lines);
+            printf("POINT %d %.6f %.3f\n", r + 1, t[r], now() - t_start);
+            fflush(stdout);
+            if (do_phys) {
+                char tag[16];
+                snprintf(tag, sizeof tag, "run%d", r + 1);
+                phys_report(tag);
+            }
+            continue;
+        }
         for (int it = 0; it < ITERS; it++) {
             /* y accumulates every iteration: continuously written.
              * W is read N*N times per iteration and never touched. */
