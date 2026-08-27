@@ -438,6 +438,17 @@ static unsigned int  provide_ops = 0;  // 1 = register the LtRAM write backend a
 static unsigned int  zc_pages = 1;   /* source region size, in pages */
 static unsigned int  zc_probe = 0;   /* which page of that region to ship */
 static unsigned int  zc_evict = 0;   /* 1 = CVM the source before the DMA (control) */
+/*
+ * Write back the source page before every LtRAM promotion. Default OFF, because
+ * test=45 case C proved the engine snoops: Y was never in DRAM at any point up
+ * to and including the DMA, so the correct data it fetched can only have come
+ * from the CPU's dirty line. A flush here would be dead code.
+ *
+ * It exists because that proof is about ONE bitstream. If a future build stops
+ * snooping, the symptom is matmul's digest failing on the second run, and this
+ * is the one-parameter answer rather than a rebuild.
+ */
+static unsigned int  zc_flush_src = 0;
 static unsigned int  inline_erase = 1;
 /*
  * 1 = read the first words of a sector before programming and refuse if they
@@ -466,6 +477,7 @@ module_param(provide_ops, uint, 0444);
 module_param(zc_pages, uint, 0644);
 module_param(zc_probe, uint, 0644);
 module_param(zc_evict, uint, 0644);
+module_param(zc_flush_src, uint, 0644);
 module_param(inline_erase, uint, 0644);
 module_param(verify_erased, uint, 0644);
 module_param(fail_writes, uint, 0644);
@@ -1047,12 +1059,20 @@ static int write_sector_from(u64 sect, u64 src_pa)
         for (a &= ~63UL; a < e; a += 64) asm volatile("dc cvac, %0" :: "r"(a) : "memory");
     }
     /*
-     * DELIBERATELY no cache maintenance on an external source. Whether the
-     * engine's coherent read picks up lines the CPU has dirtied is the open
-     * question, and writing back here would hide the answer. If the test says it
-     * does not snoop, the fix is a cvm_wbi_l2_pa() sweep over src_pa, ~134 ns
-     * for 32 lines. dc cvac cannot do it: PoC is L1D on this part, so civac and
-     * cvac are both no-ops at every level.
+     * No cache maintenance on an external source, and that is now a measured
+     * position rather than an open question. test=45 case C: DRAM held X, the
+     * cache held Y, the engine fetched Y, and a post-DMA discard-and-read showed
+     * DRAM still held X -- so Y had never been written back and the engine can
+     * only have snooped.
+     *
+     * Case B, the same test with 8 MB written after the probe page, reported a
+     * pass that carried no information: the DRAM check found Y, meaning L2 had
+     * already evicted the line and the engine read it from DRAM. Worth knowing
+     * that a passing coherence test can be vacuous.
+     *
+     * zc_flush_src=1 puts a cvm_wbi_l2_pa() sweep back if a future bitstream
+     * ever stops snooping, ~134 ns for 32 lines. dc cvac could not do it: PoC is
+     * L1D here, so cvac and civac are no-ops at every level.
      */
     wmb();
 
@@ -3339,6 +3359,14 @@ static int fulltest_thread(void *unused)
                 pr_info("fulltest: ## ZC   word %4u  Y=%08x X=%08x got=%08x\n", w, y, x, got);
         }
 
+        pr_info("fulltest: ## ZC[%u] pages=%u probe=%u evict=%u src_pa=0x%llx sector=%llu\n",
+                run_tag, zc_pages, zc_probe, zc_evict, src_pa, sec);
+        pr_info("fulltest: ## ZC   %u/%u wrong  (X/stale %u, erased %u, other %u) -> %s\n",
+                bad, (unsigned int)(PAGE_SIZE / 4), stale, ffs, other,
+                bad == 0      ? "SNOOPED: the engine saw the CPU's dirty lines" :
+                stale == bad  ? "NOT SNOOPED: the engine read X, the flushed DRAM copy" :
+                ffs   == bad  ? "NOT WRITTEN: the sector never received data" :
+                                "MIXED -- something else is wrong");
         /*
          * Was Y ever in DRAM? Until now the answer was "probably not, but a
          * writeback before the DMA would look exactly like a snoop". Settle it:
@@ -3379,14 +3407,6 @@ static int fulltest_thread(void *unused)
                                                                "neither X nor Y -- the discard or the eviction did not work");
         }
 
-        pr_info("fulltest: ## ZC[%u] pages=%u probe=%u evict=%u src_pa=0x%llx sector=%llu\n",
-                run_tag, zc_pages, zc_probe, zc_evict, src_pa, sec);
-        pr_info("fulltest: ## ZC   %u/%u wrong  (X/stale %u, erased %u, other %u) -> %s\n",
-                bad, (unsigned int)(PAGE_SIZE / 4), stale, ffs, other,
-                bad == 0      ? "SNOOPED: the engine saw the CPU's dirty lines" :
-                stale == bad  ? "NOT SNOOPED: the engine read X, the flushed DRAM copy" :
-                ffs   == bad  ? "NOT WRITTEN: the sector never received data" :
-                                "MIXED -- something else is wrong");
         if (bad == 0 && zc_evict)
             pr_info("fulltest: ## ZC   control case: the source was flushed on purpose, so "
                     "this only proves the DMA and the read-back path work.\n");
@@ -7025,6 +7045,14 @@ static int ft_ltram_write_page(unsigned long dst_pfn, unsigned long src_pfn)
         mutex_unlock(&ltram_wp_lock);
         pr_err("fulltest: write_page sector %llu ERASE never retired\n", sec);
         return -EIO;
+    }
+
+    if (zc_flush_src) {
+        u64 spa = (u64)src_pfn << PAGE_SHIFT, soff;
+
+        for (soff = 0; soff < SECT_SZ; soff += 128)
+            cvm_wbi_l2_pa(spa + soff);
+        asm volatile("dsb sy" ::: "memory");
     }
 
     rc = write_sector_from(sec, (u64)src_pfn << PAGE_SHIFT);
