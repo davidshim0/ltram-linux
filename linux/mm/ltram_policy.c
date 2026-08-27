@@ -71,10 +71,39 @@ static unsigned int scan_ptes_per_pass = 8192;
  */
 static unsigned int erase_low_water  = 2048;
 static unsigned int erase_high_water = 8192;
-static unsigned int erase_poll_ms    = 50;
+/*
+ * How long to wait before looking again when there is NOTHING to erase. Only
+ * the idle case: with a backlog the worker re-arms at zero delay and the device
+ * sets the pace.
+ *
+ * TODO: make this event driven and stop polling. Nothing tells the worker that
+ * free has crossed the low mark; it finds out on its next tick, so this value
+ * is purely how stale that answer may be. Having lt_to_valid() call
+ * queue_delayed_work(..., 0) when lt_free_count drops below erase_low_water
+ * would make the wait exact and remove idle wakeups entirely. queue_delayed_work()
+ * does not sleep, so it is safe under ltram_alloc_lock. The cost is a branch on
+ * the allocation path and the allocator having to know the erase engine exists.
+ */
+static unsigned int erase_poll_ms    = 30;
+/*
+ * The idle tick, used only when the engine is OFF: free is above the high mark
+ * and no erase is wanted. That is the steady state of a machine that has
+ * finished a workload -- tonight it sat at free 60633, dirty 4903, engine off,
+ * and would have woken 33 times a second forever to decide it had nothing to
+ * do. Once a second is plenty.
+ *
+ * It is safe because of what the low mark buys. At the sustained promotion rate
+ * the wear budget allows, ~41/s, draining 2048 free pages takes about 50
+ * seconds, so starting the engine up to a second late costs 2% of the buffer.
+ * That stops being true if promote_batch is raised for an experiment: at 512/s
+ * the same buffer lasts 4 seconds. It does not matter there either, but for a
+ * different reason -- the device only erases ~61/s, so at those rates the pool
+ * exhausts no matter how promptly the engine starts.
+ */
+static unsigned int erase_idle_ms    = 1000;
 /*
  * Erases per worker invocation. One per poll would cap the engine at
- * 1000/erase_poll_ms per second -- 20/s at a 50 ms poll -- when the device
+ * 1000/erase_poll_ms per second -- 33/s at a 30 ms poll -- when the device
  * sustains ~61/s. Each erase blocks ~16.4 ms, so 16 of them is ~260 ms in one
  * work item, which is why this runs on the unbound queue and re-arms with no
  * delay while there is still a backlog.
@@ -94,6 +123,7 @@ module_param(scan_ptes_per_pass, uint, 0644);
 module_param(erase_low_water, uint, 0644);
 module_param(erase_high_water, uint, 0644);
 module_param(erase_poll_ms, uint, 0644);
+module_param(erase_idle_ms, uint, 0644);
 module_param(erase_batch, uint, 0644);
 module_param(idle_samples, uint, 0644);
 module_param(idle_sample_us, uint, 0644);
@@ -492,9 +522,28 @@ static void lt_erase_work_fn(struct work_struct *w)
 	}
 
 again:
-	/* Still draining -> come straight back. Idle -> tick slowly. */
+	/*
+	 * Three paces, because "did nothing" covers two very different states.
+	 *
+	 *   backlog        erased something, more is waiting. The device is the
+	 *                  limit, so come straight back.
+	 *   engine on      wanted to erase and could not: the idle gate saw the
+	 *                  device serving reads, or there was nothing dirty
+	 *                  left. Retry soon. This is the case that matters --
+	 *                  one run tonight deferred 931 times, and at the idle
+	 *                  tick that would have been 931 seconds of erase
+	 *                  opportunity thrown away instead of 28.
+	 *   engine off     free is above the high mark and no erase is wanted.
+	 *                  Nothing is going to change quickly. Tick slowly.
+	 *
+	 * lt_erase_engine_on is read without the lock. It is a bool, it cannot
+	 * tear, and being one tick stale only picks a different polling
+	 * interval.
+	 */
 	queue_delayed_work(system_unbound_wq, &lt_erase_work,
-			   backlog ? 0 : msecs_to_jiffies(erase_poll_ms));
+			   backlog ? 0 :
+			   msecs_to_jiffies(lt_erase_engine_on ? erase_poll_ms
+							       : erase_idle_ms));
 }
 
 /* migrate_pages() callbacks */
