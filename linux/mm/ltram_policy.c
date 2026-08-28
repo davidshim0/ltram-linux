@@ -509,7 +509,28 @@ static void lt_erase_work_fn(struct work_struct *w)
 		if (idx == ULONG_MAX)
 			break;			/* nothing dirty, or engine off */
 
-		if (have_op) {
+		/*
+		 * No erase op means no way to blank a sector. Recycling anyway
+		 * used to be safe, because write_page() erased inline before
+		 * every program; with inline_erase=0 it is exactly the bug
+		 * lt_written exists to prevent, one level up. Put it back and
+		 * say so once: a pool that stops recovering is a visible
+		 * problem, and a pool that recycles unerased sectors is not.
+		 */
+		if (!have_op) {
+			static bool said;
+
+			spin_lock_irqsave(&ltram_alloc_lock, flags);
+			lt_erasing_clear(idx);
+			spin_unlock_irqrestore(&ltram_alloc_lock, flags);
+			if (!said) {
+				said = true;
+				pr_warn("ltram: no erase op registered -- dirty sectors cannot be recycled\n");
+			}
+			break;
+		}
+
+		{
 			if (!lt_device_quiet()) {
 				/* Put it back rather than erase into a read
 				 * stream; try again on the next tick. */
@@ -521,12 +542,6 @@ static void lt_erase_work_fn(struct work_struct *w)
 			}
 			rc = ltram_erase_page(ltram_start_pfn + idx);
 		}
-		/*
-		 * No erase op: the sector still has to be recycled, and that is
-		 * safe because write_page() erases inline before every program.
-		 * One wasted erase per reuse -- the price of doing this in two
-		 * steps rather than one flag day.
-		 */
 
 		spin_lock_irqsave(&ltram_alloc_lock, flags);
 		if (rc) {
@@ -534,8 +549,7 @@ static void lt_erase_work_fn(struct work_struct *w)
 			atomic64_inc(&stat_erases_failed);
 		} else {
 			lt_erasing_to_clean(idx);
-			if (have_op)
-				atomic64_inc(&stat_erases_done);
+			atomic64_inc(&stat_erases_done);
 		}
 		spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 
