@@ -209,6 +209,21 @@ static const char * const lt_bm_name[LT_NR_BM] = { "data", "dirty" };
 
 static unsigned long	*lt_bm[LT_NR_BM];	/* VALID and DIRTY only */
 static unsigned long	*lt_scratch;		/* derivations and ANDs */
+/*
+ * Has this sector been PROGRAMMED since its last erase?
+ *
+ * Not the same question as DATA or DIRTY, which is why it needs its own bit.
+ * A destination is allocated (DATA, blank), then written, then the migration
+ * either completes or fails. On failure migrate_pages() hands the page back
+ * through put_new_folio, and until 2026-08-28 that path assumed the sector was
+ * never touched and returned it straight to CLEAN.
+ *
+ * It is touched whenever ltram_copy_to_flash() ran before the mapping move
+ * failed, which is 24% of migrations in a sweep. Those sectors went back into
+ * the clean pool holding data, and with inline_erase=0 the next promotion
+ * programmed on top of them. verify_erased caught it; nothing else would have.
+ */
+static unsigned long	*lt_written;
 static u32		*lt_ec;			/* erase count, per page */
 static struct list_head	*lt_node;		/* per-page link into a bucket */
 static struct list_head	 lt_clean_by_ec[LT_EC_BUCKETS];
@@ -285,6 +300,7 @@ static void lt_erasing_to_clean(unsigned long idx)
 {
 	lt_erasing = LT_ERASING_IDLE;
 	__clear_bit(idx, lt_bm[LT_DIRTY]);
+	__clear_bit(idx, lt_written);		/* the erase is what makes it blank */
 	list_add_tail(&lt_node[idx], &lt_clean_by_ec[lt_bucket_of(lt_ec[idx])]);
 	lt_clean_count++;
 	__set_bit(idx, ltram_clean_bitmap);
@@ -573,10 +589,22 @@ static struct folio *ltram_get_new_folio(struct folio *src, unsigned long privat
 	return p ? page_folio(p) : NULL;
 }
 
+/*
+ * migrate_pages() handing back a destination it could not use.
+ *
+ * "Failed" does NOT mean "untouched". ltram_copy_to_flash() runs before
+ * folio_migrate_mapping(), on purpose, so that a flash error aborts with
+ * nothing published -- which means a mapping failure arrives here on a sector
+ * that has already been programmed. Ask lt_written rather than assume.
+ */
 static void ltram_put_new_folio(struct folio *dst, unsigned long private)
 {
+	unsigned long idx = page_to_pfn(&dst->page) - ltram_start_pfn;
+	bool programmed = lt_written && idx < ltram_nr_pages &&
+			  test_bit(idx, lt_written);
+
 	atomic64_inc(&stat_dst_released);
-	ltram_free_page_back(&dst->page, false);	/* never programmed */
+	ltram_free_page_back(&dst->page, programmed);
 }
 
 /*
@@ -1336,6 +1364,19 @@ void ltram_record_promotion(unsigned long dst_pfn, unsigned long src_pfn)
 	 * view of a moving target; taking ltram_alloc_lock on the write path for
 	 * it would be paying a real cost for a cosmetic one.
 	 */
+	/*
+	 * The sector now holds data, whatever happens to the migration after
+	 * this. ltram_put_new_folio() reads this to decide DIRTY or CLEAN, so
+	 * getting it here is what keeps a failed migration from returning a
+	 * programmed sector to the clean pool.
+	 */
+	if (lt_written) {
+		unsigned long flags;
+
+		spin_lock_irqsave(&ltram_alloc_lock, flags);
+		__set_bit(idx, lt_written);
+		spin_unlock_irqrestore(&ltram_alloc_lock, flags);
+	}
 	lt_prov[idx].src_pfn = (u32)src_pfn;
 	lt_prov[idx].seq     = (u32)atomic_inc_return(&lt_prov_seq);
 	lt_prov[idx].pid     = target_pid;
@@ -1633,6 +1674,7 @@ static long __init lt_scan_pool(void)
 			 * pages_in_use goes negative.
 			 */
 			set_bit(i, lt_bm[LT_DIRTY]);
+			set_bit(i, lt_written);		/* it demonstrably holds data */
 			__clear_bit(i, ltram_clean_bitmap);
 			atomic64_inc(&ltram_pages_in_use);
 		}
@@ -1661,10 +1703,11 @@ static int __init lt_tracking_init(void)
 			goto nomem;
 	}
 	lt_scratch = bitmap_zalloc(ltram_nr_pages, GFP_KERNEL);
+	lt_written = bitmap_zalloc(ltram_nr_pages, GFP_KERNEL);
 	lt_ec   = kvcalloc(ltram_nr_pages, sizeof(*lt_ec), GFP_KERNEL);
 	lt_node = kvmalloc_array(ltram_nr_pages, sizeof(*lt_node), GFP_KERNEL);
 	lt_prov = kvcalloc(ltram_nr_pages, sizeof(*lt_prov), GFP_KERNEL);
-	if (!lt_scratch || !lt_ec || !lt_node || !lt_prov)
+	if (!lt_scratch || !lt_written || !lt_ec || !lt_node || !lt_prov)
 		goto nomem;
 
 	for (b = 0; b < LT_EC_BUCKETS; b++)
@@ -1690,6 +1733,7 @@ static int __init lt_tracking_init(void)
 		 * the pool back.
 		 */
 		bitmap_fill(lt_bm[LT_DIRTY], ltram_nr_pages);
+		bitmap_fill(lt_written, ltram_nr_pages);
 		bitmap_zero(ltram_clean_bitmap, ltram_nr_pages);
 		atomic64_set(&ltram_pages_in_use, ltram_nr_pages);
 		pr_warn("ltram: pool not scanned -- assuming all %lu sectors dirty\n",
@@ -1719,6 +1763,7 @@ nomem:
 		lt_bm[st] = NULL;
 	}
 	bitmap_free(lt_scratch); lt_scratch = NULL;
+	bitmap_free(lt_written); lt_written = NULL;
 	kvfree(lt_ec);   lt_ec = NULL;
 	kvfree(lt_node); lt_node = NULL;
 	kvfree(lt_prov); lt_prov = NULL;
