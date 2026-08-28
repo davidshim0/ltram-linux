@@ -1,0 +1,325 @@
+<title>Status, Corrected</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+<style>
+:root{
+  --paper:#F2F3F1; --card:#FFFFFF; --sunk:#EDEFEC; --sunk2:#E4E7E2;
+  --ink:#16191A; --ink2:#535B58; --ink3:#868E8A;
+  --rule:#D6DAD5; --rule2:#E6E9E4;
+  --code-bg:#EEF1EC; --code-ink:#20262B;
+  --ok:#2C6B3F;    --ok-wash:#E7F1E8;   --ok-edge:#B4D3BB;
+  --fix:#9B3220;   --fix-wash:#F8ECE8;  --fix-edge:#E2C2B8;
+  --open:#8A6008;  --open-wash:#F8F0DF; --open-edge:#DFCCA0;
+  --plan:#1E5470;  --plan-wash:#E4EFF4; --plan-edge:#B0CDDB;
+  --f-d:"Archivo",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
+  --f-b:"Newsreader",Charter,Georgia,"DejaVu Serif",serif;
+  --f-m:"JetBrains Mono",ui-monospace,"SF Mono","DejaVu Sans Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#0E100F; --card:#181B19; --sunk:#1F2321; --sunk2:#262B28;
+  --ink:#E6E9E5; --ink2:#9DA5A0; --ink3:#6F7772;
+  --rule:#2B302D; --rule2:#232825;
+  --code-bg:#121614; --code-ink:#CCD4CE;
+  --ok:#63BC7B;    --ok-wash:#0F2414;   --ok-edge:#254A2E;
+  --fix:#E8806B;   --fix-wash:#261613;  --fix-edge:#4C2B23;
+  --open:#D3A340;  --open-wash:#241D0E; --open-edge:#493C1E;
+  --plan:#66AECD;  --plan-wash:#10242E; --plan-edge:#274957;
+}}
+:root[data-theme="dark"]{
+  --paper:#0E100F; --card:#181B19; --sunk:#1F2321; --sunk2:#262B28;
+  --ink:#E6E9E5; --ink2:#9DA5A0; --ink3:#6F7772;
+  --rule:#2B302D; --rule2:#232825;
+  --code-bg:#121614; --code-ink:#CCD4CE;
+  --ok:#63BC7B;    --ok-wash:#0F2414;   --ok-edge:#254A2E;
+  --fix:#E8806B;   --fix-wash:#261613;  --fix-edge:#4C2B23;
+  --open:#D3A340;  --open-wash:#241D0E; --open-edge:#493C1E;
+  --plan:#66AECD;  --plan-wash:#10242E; --plan-edge:#274957;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--f-b);
+  font-size:17px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:63rem;margin:0 auto;padding:0 1rem 4.5rem}
+.sheet{background:var(--card);border-left:1px solid var(--rule);border-right:1px solid var(--rule)}
+@media (max-width:58rem){.sheet{border:0}}
+header.top{padding:3rem 2.8rem 1.9rem;border-bottom:3px solid var(--ink)}
+@media (max-width:46rem){header.top{padding:2rem 1.1rem 1.3rem}}
+.kick{font-family:var(--f-m);font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--fix);margin:0 0 .9rem;font-weight:500}
+h1{font-family:var(--f-d);font-weight:600;letter-spacing:-.03em;
+  font-size:clamp(2.1rem,6vw,3.2rem);line-height:1.0;margin:0 0 .9rem}
+.deck{font-size:1.09rem;color:var(--ink2);margin:0;max-width:43rem;line-height:1.52}
+.panel{padding:2rem 2.8rem 1rem}
+@media (max-width:46rem){.panel{padding:1.4rem 1.1rem 1rem}}
+h2{font-family:var(--f-d);font-weight:600;letter-spacing:-.022em;font-size:1.5rem;
+  margin:2.9rem 0 .5rem;padding-top:1.4rem;border-top:2px solid var(--ink);line-height:1.15}
+h2:first-child{margin-top:0;padding-top:0;border-top:0}
+.h2sub{font-family:var(--f-d);font-size:.85rem;color:var(--ink3);margin:0 0 1.3rem;font-weight:400}
+h3{font-family:var(--f-d);font-weight:600;font-size:1.03rem;margin:1.6rem 0 .45rem}
+p{margin:0 0 .9rem;max-width:40rem}
+ul,ol{margin:0 0 1rem;padding-left:1.2rem;max-width:40rem}
+li{margin-bottom:.42rem} li::marker{color:var(--ink3)}
+code{font-family:var(--f-m);font-size:.83em;background:var(--code-bg);padding:.1em .34em;
+  border-radius:3px;color:var(--code-ink);border:1px solid var(--rule2);white-space:nowrap}
+pre{margin:.9rem 0;background:var(--code-bg);border:1px solid var(--rule);border-radius:5px;
+  padding:.85rem 1rem;overflow-x:auto;font-family:var(--f-m);font-size:.78rem;
+  line-height:1.6;color:var(--code-ink)}
+pre code{background:none;border:0;padding:0;font-size:1em;white-space:pre}
+.tw{overflow-x:auto;margin:1rem 0;max-width:44rem}
+table{border-collapse:collapse;width:100%;font-family:var(--f-d);font-size:.84rem}
+th,td{text-align:left;padding:.5rem .65rem;border-bottom:1px solid var(--rule2);vertical-align:top}
+th{font-family:var(--f-m);font-size:.63rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink3);border-bottom:1px solid var(--rule);white-space:nowrap;font-weight:500}
+.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+
+/* corrections: what the slide says, then what is true */
+.cx{margin:1.5rem 0;border:1px solid var(--rule);border-radius:6px;overflow:hidden;max-width:44rem}
+.cx .said{background:var(--fix-wash);border-bottom:1px solid var(--fix-edge);
+  padding:.8rem 1.05rem;font-family:var(--f-b);font-size:.97rem;color:var(--ink)}
+.cx .said b{font-family:var(--f-m);font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--fix);display:block;margin-bottom:.3rem;font-weight:500}
+.cx .real{padding:.85rem 1.05rem;background:var(--sunk)}
+.cx .real b{font-family:var(--f-m);font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ok);display:block;margin-bottom:.3rem;font-weight:500}
+.cx .real>:last-child{margin-bottom:0}
+.cx .real p,.cx .real ul,.cx .real .tw{max-width:none}
+.cx--solved .said{background:var(--ok-wash);border-bottom-color:var(--ok-edge)}
+.cx--solved .said b{color:var(--ok)}
+
+.note{margin:1.3rem 0;padding:.9rem 1.1rem;border-radius:5px;background:var(--sunk2);
+  border:1px solid var(--rule);max-width:44rem;font-size:.96rem}
+.note>:last-child{margin-bottom:0}
+.note p,.note ul{max-width:none}
+.note b.lab{font-family:var(--f-m);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;
+  display:block;margin-bottom:.35rem;color:var(--ink3);font-weight:500}
+.note--open{background:var(--open-wash);border-color:var(--open-edge);border-left:3px solid var(--open)}
+.note--open b.lab{color:var(--open)}
+.note--plan{background:var(--plan-wash);border-color:var(--plan-edge);border-left:3px solid var(--plan)}
+.note--plan b.lab{color:var(--plan)}
+.note--ok{background:var(--ok-wash);border-color:var(--ok-edge);border-left:3px solid var(--ok)}
+.note--ok b.lab{color:var(--ok)}
+.chip{font-family:var(--f-m);font-size:.6rem;letter-spacing:.11em;text-transform:uppercase;
+  padding:.2rem .5rem;border-radius:3px;font-weight:500;border:1px solid;white-space:nowrap}
+.c-ok{color:var(--ok);background:var(--ok-wash);border-color:var(--ok-edge)}
+.c-plan{color:var(--plan);background:var(--plan-wash);border-color:var(--plan-edge)}
+.c-open{color:var(--open);background:var(--open-wash);border-color:var(--open-edge)}
+footer.end{padding:1.5rem 2.8rem 2.2rem;border-top:1px solid var(--rule2);
+  font-family:var(--f-d);font-size:.76rem;color:var(--ink3);line-height:1.6}
+@media (max-width:46rem){footer.end{padding:1.3rem 1.1rem 2rem}}
+</style>
+
+<div class="wrap"><div class="sheet">
+<header class="top">
+  <p class="kick">LtRAM &middot; before the slide goes up &middot; 28 August 2026</p>
+  <h1>Status, Corrected</h1>
+  <p class="deck">Six lines on the status slide say something the code does not do. Then what
+  is actually left on the scanner, which is one decided change blocked behind one undecided
+  policy. And one thing we still cannot explain.</p>
+</header>
+
+<section class="panel">
+
+<h2>Six corrections</h2>
+<p class="h2sub">Each pairs the line as written against what the tree does today.</p>
+
+<div class="cx">
+  <div class="said"><b>as written</b>Erase count metadata: saved before and after each test run and before power off.</div>
+  <div class="real"><b>not implemented</b>
+    <p>The kernel half landed: <code>/sys/kernel/debug/ltram/erase_counts</code> reads and
+    restores the array, and restoring rebuilds the allocator's buckets. The userspace unit that
+    reads it at shutdown and writes it back at boot <strong>does not exist</strong>, so counts
+    still reset every boot.</p>
+    <p>Two things to say alongside it. Unclean shutdown will lose whatever accumulated since the
+    last save, so every count is a lower bound. That is the right direction to be wrong in:
+    undercounting sends a write to a sector believed fresher than it is, while overcounting would
+    crowd the sectors still believed fresh, which is the exact failure the mechanism exists to
+    prevent. And the counts mean "erases since counting began", not the device's history. This
+    chip took heavy unknown wear during FPGA bring-up and nothing can recover that.</p>
+  </div>
+</div>
+
+<div class="cx cx--solved">
+  <div class="said"><b>as written, and now true</b>Erase thread issues erases every 30 ms.</div>
+  <div class="real"><b>true as of tonight</b>
+    <p>It was not true this morning. The worker batched sixteen erases back to back and re-armed
+    with zero delay, which kept the device busy essentially continuously during a drain. Since
+    NOR cannot serve a read while a sector is erasing, that was the worst possible shape for read
+    latency, and the run that recorded <code>erase_deferred 931</code> was the idle gate trying to
+    prevent something it structurally cannot.</p>
+    <div class="tw"><table>
+    <thead><tr><th>situation</th><th class="num">delay</th><th>why</th></tr></thead>
+    <tbody>
+    <tr><td>engine off</td><td class="num">1000 ms</td><td>just checking whether clean has dropped</td></tr>
+    <tr><td>a workload is attached</td><td class="num">30 ms</td><td>one erase, then a 13.6 ms window for reads</td></tr>
+    <tr><td>nothing attached</td><td class="num">0 ms</td><td>nothing to disturb, drain at the device's ~61/s</td></tr>
+    </tbody></table></div>
+    <p>33 erases a second is not a compromise. Every dirty sector exists because a page was
+    promoted, so the erase rate is pinned to the promotion rate, which is 32/s at the default
+    batch and capped at 41.5/s by the wear budget regardless. The capacity up to 61/s was never
+    needed while something is running.</p>
+    <p>One word in the original line is still wrong: it <strong>polls</strong>, it is not woken by
+    an event. Nothing tells the worker that the clean count crossed the watermark, so the interval
+    is purely how stale that answer may be. A TODO in the code records the fix, which is for the
+    allocator to queue the work directly when it drops below the low mark.</p>
+  </div>
+</div>
+
+<div class="cx">
+  <div class="said"><b>as written</b>Boot scan reads the array to learn which pages are free versus dirty, to minimise erase latencies.</div>
+  <div class="real"><b>right mechanism, wrong reason</b>
+    <p>It is there for <strong>correctness</strong>, not latency. Page state lives in RAM while
+    the flash keeps its bits, so after a reboot the kernel would believe written sectors are
+    blank. With inline erase off, programming a sector that already holds data yields the bitwise
+    AND of old and new, silently and with no error on any path.</p>
+    <p>The alternative was to assume everything is dirty, which is safe and costs 65,536 erases
+    and about 18 minutes to blank an array that is usually mostly blank. Reading it costs 256 MB
+    through the window at roughly 124 MB/s, so about two seconds, and reports the truth rather
+    than either assumption.</p>
+  </div>
+</div>
+
+<div class="cx">
+  <div class="said"><b>as written</b>Valid becomes dirty when a page is written and migrated back to DRAM.</div>
+  <div class="real"><b>true, but it is the rare path</b>
+    <p>Measured on one run:</p>
+    <div class="tw"><table>
+    <thead><tr><th>route</th><th class="num">pages</th><th>what it is</th></tr></thead>
+    <tbody>
+    <tr><td><code>freed_via_backstop</code></td><td class="num">61,270</td><td>process exit, munmap, reclaim</td></tr>
+    <tr><td><code>freed_via_hook</code></td><td class="num">189</td><td>write fault, demoted back to DRAM</td></tr>
+    </tbody></table></div>
+    <p>So the common route is the process simply exiting, by a factor of 324. Worth saying because
+    it is also why the batch free path needed its own catch-all: before that existed, 16,502 pages
+    went missing in one evening through exactly this route.</p>
+  </div>
+</div>
+
+<div class="cx">
+  <div class="said"><b>as written</b>Wear history: erase counts reset every boot, no long-term memory.</div>
+  <div class="real"><b>half fixed</b>
+    <p>Kernel side done tonight. Userspace side not written. So the statement is still true in
+    practice and the remaining work is a systemd unit and a file, not a design question.</p>
+  </div>
+</div>
+
+<div class="cx">
+  <div class="said"><b>as written</b>Medium latency: the 10&times; per-access figure is from driver annotations, not measured.</div>
+  <div class="real"><b>now measured, and it depends on the access pattern</b>
+    <p>Two measurements, and they disagree for a real reason rather than by error.</p>
+    <div class="tw"><table>
+    <thead><tr><th>access pattern</th><th class="num">DRAM</th><th class="num">NOR</th><th class="num">ratio</th></tr></thead>
+    <tbody>
+    <tr><td>sequential streaming (matmul)</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num"><strong>9.6&times;</strong></td></tr>
+    <tr><td>random dependent chase</td><td class="num">130 ns</td><td class="num">901 ns</td><td class="num"><strong>6.9&times;</strong></td></tr>
+    </tbody></table></div>
+    <p>DRAM is about 1.6&times; faster under sequential access; NOR is 1.05&times; faster, which is
+    to say barely. Prefetching and memory-level parallelism recover a lot on DRAM and almost
+    nothing on NOR. So there is no single number for "how much slower is the medium", and the
+    honest phrasing names the pattern.</p>
+    <p>The chase number is further diluted by page-table walks, which cost the same on both media
+    and therefore drag the ratio down. That is consistent with a line-level ratio near 10 plus a
+    common offset of roughly 48 ns.</p>
+  </div>
+</div>
+
+<h2>The scanner</h2>
+<p class="h2sub">One change, decided and not built, blocked behind one policy that is not decided.</p>
+
+<div class="note note--ok">
+  <b class="lab">Built and running</b>
+  <p>The walk resumes from a cursor rather than restarting, so every region is reached. Selection
+  is one line, <code>!pte_write()</code>, with no per-page metadata. Nine filters reject
+  file-backed, KSM, DMA-pinned and large folios before anything is chosen. The counters partition:
+  <code>ptes_examined = was_written + chosen + lru_refused</code>.</p>
+</div>
+
+<div class="note note--plan">
+  <b class="lab">Decided, not built</b>
+  <p>The pacing. Today it is <code>msleep(1000)</code>, unconditional, and that constant absorbed
+  the entire benefit of moving the erase off the promotion path.</p>
+<pre><code>promotion rate = batch / (work + sleep)
+
+                work for 32   plus 1 s    rate    measured
+inline erase       0.563 s     1.563 s   20.5/s     24.1/s
+background erase   0.038 s     1.038 s   30.8/s     28.8/s
+
+delete the sleep:  57/s against 842/s  =  14.8x</code></pre>
+  <p>A one second constant dwarfs both work times and compresses a 14.8&times; difference into
+  1.5&times;. Making promotion fourteen times cheaper changed nothing observable, because both
+  numbers were already sitting behind it.</p>
+  <p>The fix is adaptive backoff driven by <code>ctx-&gt;nr</code>, which the scanner already has
+  when a pass ends. Batch filled means more work is waiting, so come straight back. Nothing found
+  means back off.</p>
+</div>
+
+<div class="note">
+  <b class="lab">Argued down, with the numbers</b>
+  <p><strong>Two fixed intervals tied to write and erase timing.</strong> The scanner already
+  self-paces, because <code>ltram_write_page()</code> blocks and the thread cannot outrun the
+  device whatever the timer says. Hard-coded device constants are also wrong under contention,
+  wrong if <code>inline_erase</code> flips, and wrong on the next hardware.</p>
+  <p><strong>Splitting the scan from the migration.</strong> In a page-dense region the walk costs
+  about 4 &micro;s to find 32 candidates and the migration costs 38 ms. Scanning is
+  <strong>0.01%</strong> of a cycle that is 96% sleep. The split would recover that 0.01% and cost
+  a bounded queue, backpressure, and per-page revalidation against a page that may have been
+  written or unmapped while it waited. It becomes right for multi-process, where it is structural
+  rather than an optimisation.</p>
+</div>
+
+<div class="note--open note">
+  <b class="lab">The blocker</b>
+  <p>The fixed second is doing two unrelated jobs: pacing, badly, and wear limiting, invisibly.
+  Remove it and you fix the first while silently deleting the second. Unleashed, the scanner
+  promotes at roughly <strong>842 per second against a budget of 41.5</strong>.</p>
+  <p>Today that limit is an accident of <code>promote_batch</code> and <code>scan_interval_ms</code>
+  multiplying to about the right number. Nothing states it and nothing checks it, and we exceeded
+  it ourselves this week running the batch at 512 and 2,048 for measurements.</p>
+  <p><strong>Settled:</strong> a deadline formula, remaining erases over remaining seconds, which
+  self-corrects for periods of light use. A token bucket to separate burst from sustained, so a
+  workload's migration transient runs at device speed while the long-run average stays at budget.
+  Charging at promotion rather than at erase, since they are one to one. The instantaneous cap is
+  free, because the flash write blocks.</p>
+  <p><strong>Not settled:</strong> calendar time or powered-on time; what should happen when the
+  budget is exhausted; and where <code>t=0</code> lives if the erase-count blob is ever lost.</p>
+  <p>Once that is decided the backoff is about ten lines. The governor is the part that decides
+  whether the hardware survives five years.</p>
+</div>
+
+<h2>One thing we cannot explain</h2>
+<p class="h2sub">Small, and unresolved, which is why it is here rather than buried.</p>
+
+<div class="note">
+  <p>matmul's input vector <code>x</code> is never promoted. Every run reports
+  <code>PHYS end input LtRAM 0 (0.0%)</code>.</p>
+  <p>It should be. All three buffers come from the same allocator,
+  <code>mmap(PROT_READ|PROT_WRITE)</code>, so <code>x</code> gets its own three-page region rather
+  than sharing heap pages with write-active data. It is written exactly once, at line 570, and only
+  read afterwards, which is precisely the pattern the policy selects for. The weights in the same
+  address space reach 100% residency.</p>
+  <p>Three pages out of 8,196 changes no result, which is why it has not been chased. It is
+  answerable rather than mysterious: <code>/sys/kernel/debug/ltram/promotions</code> now records
+  the source pfn of everything promoted, so comparing that against the <code>first pfn</code> that
+  <code>--phys</code> prints for the input region says directly whether those three pages were ever
+  candidates.</p>
+  <p>Worth knowing before someone asks, because the honest answer is that we noticed and have not
+  looked.</p>
+</div>
+
+<h2>What is left, in order</h2>
+<ol>
+  <li><strong>Settle the sustained-rate policy.</strong> Everything below waits on it</li>
+  <li><strong>Then the scanner backoff.</strong> Ten lines, with the governor as its ceiling</li>
+  <li><strong>Then re-measure.</strong> One pair of runs gives both the migration throughput ratio
+  and the cost curve during migration</li>
+  <li><strong>The erase-count userspace unit.</strong> A systemd unit and a file, no design left</li>
+  <li><strong>Leave the thread split alone</strong> until multi-process makes it structural</li>
+</ol>
+
+</section>
+<footer class="end">
+zuestoll08, Cavium ThunderX CRB-2S with Xilinx VU9P, bitstream 169_phy200, kernel 6.8.0-ltram.
+Micron MT35XU02GCBA octal DDR NOR as NUMA node 1. Measurements cited were taken on that hardware;
+the 100,000 erase endurance figure is the manufacturer's.
+</footer>
+</div></div>
