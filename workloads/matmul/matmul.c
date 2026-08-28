@@ -43,6 +43,20 @@ static size_t N = 8192;          /* W is N*N floats: 8192 -> 256 MiB, the window
 static int    ITERS = 100;
 static int    RUNS = 10;
 static int    do_verify = 0, do_protect = 0, do_ranges = 0, do_phys = 0, hold_secs = 0;
+/* Do not start the clock until the weights are actually IN flash.
+ *
+ * Promotion happens while the workload runs, and it is not free: at ~1.2 ms a
+ * program and 512 pages a scanner tick, the device spends 61% of each second
+ * programming, and a program blocks a read. Time a run through that phase and
+ * the mean is an average over a transient rather than a latency.
+ *
+ * That is not hypothetical. The 128 and 256 MiB points came out with a
+ * per-pass sd of 17% and 15%, against 0.10% at 64 MiB where promotion finishes
+ * early -- and the elevated NOR cost at exactly those two sizes is what sent
+ * us looking. Same number in the sweep and in a clean rerun, so it reproduces;
+ * it just is not the number we wanted. */
+static double wait_res = 0.0;    /* --wait-resident PCT: 0 disables */
+static int    wait_max = 900;    /* --wait-timeout SECS */
 static int    compute_only = 0;   /* --compute-only: pin every row to row 0 */
 static int    do_chase = 0;       /* --chase: dependent-load latency over W */
 static volatile uint64_t chase_sink;
@@ -521,6 +535,27 @@ static void phys_report(const char *tag)
     phys_one(tag, "result",  y, ybytes);
     phys_overhead += now() - t0;
 }
+/* LtRAM share of the weight region, right now. Same scan phys_one does,
+ * without the printing, so --wait-resident can poll it cheaply. */
+static double weights_ltram_pct(void)
+{
+    uint64_t pages = ((uint64_t)Wbytes + (uint64_t)page_sz - 1) / (uint64_t)page_sz;
+    struct phys_stat s;
+
+    if (pm_fd < 0)
+        return 0.0;
+    if (pages > pfn_scratch_n) {
+        unsigned long *p = realloc(pfn_scratch, pages * sizeof *p);
+
+        if (!p)
+            return 0.0;
+        pfn_scratch = p;
+        pfn_scratch_n = pages;
+    }
+    phys_scan(W, Wbytes, &s, pfn_scratch);
+    return s.pages ? 100.0 * (double)s.in_ltram / (double)s.pages : 0.0;
+}
+
 int main(int argc, char **argv)
 {
     static struct option lo[] = {
@@ -528,10 +563,11 @@ int main(int argc, char **argv)
         {"verify",0,0,'V'}, {"protect-weights",0,0,'P'},
         {"print-ranges",0,0,'R'}, {"phys",0,0,'A'},
         {"hold",1,0,'H'}, {"seed",1,0,'S'}, {"flush",1,0,'F'},
-        {"compute-only",0,0,'C'}, {"chase",0,0,'H'+128}, {0,0,0,0}
+        {"compute-only",0,0,'C'}, {"chase",0,0,'H'+128},
+        {"wait-resident",1,0,'W'}, {"wait-timeout",1,0,'W'+128}, {0,0,0,0}
     };
     int c;
-    while ((c = getopt_long(argc, argv, "n:i:r:VPRAH:S:F:", lo, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "n:i:r:VPRAH:S:F:W:", lo, NULL)) != -1) {
         switch (c) {
         case 'n': N = strtoul(optarg, NULL, 0); break;
         case 'i': ITERS = atoi(optarg); break;
@@ -541,6 +577,8 @@ int main(int argc, char **argv)
         case 'R': do_ranges = 1; break;
         case 'A': do_phys = 1; break;
         case 'H': hold_secs = atoi(optarg); break;
+        case 'W': wait_res = atof(optarg); break;
+        case 'W'+128: wait_max = atoi(optarg); break;
         case 'S': SEED = strtoull(optarg, NULL, 0); break;
         case 'F': flush_mb = strtoul(optarg, NULL, 0); break;
         case 'C': compute_only = 1; break;
@@ -549,7 +587,8 @@ int main(int argc, char **argv)
             fprintf(stderr,
               "usage: %s [--n DIM] [--iters K] [--runs R] [--verify]\n"
               "          [--protect-weights] [--print-ranges] [--phys]\n"
-              "          [--hold SECS] [--seed S] [--flush MB] [--compute-only] [--chase]\n", argv[0]);
+              "          [--hold SECS] [--seed S] [--flush MB] [--compute-only] [--chase]\n"
+              "          [--wait-resident PCT] [--wait-timeout SECS]\n", argv[0]);
             return 2;
         }
     }
@@ -636,6 +675,45 @@ int main(int argc, char **argv)
         fflush(stdout);
     }
     phys_report("start");
+
+    /* Untimed passes until the weights are in flash, THEN start the clock.
+     * Reads only, so it drives the scanner exactly as a timed pass would; the
+     * only difference is that nothing here lands in t[]. y is zeroed after,
+     * and every timed run memsets it anyway, so --verify is unaffected. */
+    if (wait_res > 0.0) {
+        double tw = now(), share = 0.0;
+        int pass = 0;
+
+        if (!phys_ready)
+            phys_open();
+        printf("WARMUP waiting for weights to reach %.1f%% LtRAM residency"
+               " (timeout %d s)\n", wait_res, wait_max);
+        fflush(stdout);
+        for (;;) {
+            for (size_t i = 0; i < N; i++) {
+                const float *row = W + i * N;
+                float acc = 0.0f;
+                for (size_t j = 0; j < N; j++) acc += row[j] * x[j];
+                y[i] += acc;
+            }
+            pass++;
+            share = weights_ltram_pct();
+            printf("WARMUP pass %3d  residency %6.2f%%  %7.1f s\n",
+                   pass, share, now() - tw);
+            fflush(stdout);
+            if (share >= wait_res)
+                break;
+            if (now() - tw > (double)wait_max) {
+                printf("WARMUP TIMEOUT after %.1f s at %.2f%% -- measuring anyway,"
+                       " treat this point as contaminated\n", now() - tw, share);
+                break;
+            }
+        }
+        memset(y, 0, ybytes);
+        printf("WARMUP done  residency %.2f%%  %d passes  %.1f s\n",
+               share, pass, now() - tw);
+        fflush(stdout);
+    }
 
     double *t = calloc(RUNS, sizeof(double));
     char digest[65] = "", d2[65];

@@ -33,9 +33,10 @@
 #   ./repeat_large.sh [--reps 10] [--out FILE]
 set -u
 REPS=10; OUT=/scratch/hushim/large.csv; SIZES="4096 5793 8192"
+WAIT=99.5; DO_DRAM=1
 while [ $# -gt 0 ]; do case "$1" in
-  --reps) REPS=$2; shift;; --out) OUT=$2; shift;; --sizes) SIZES=$2; shift;;
-  *) echo "usage: $0 [--reps N] [--out FILE] [--sizes \"N N N\"]"; exit 2;; esac; shift; done
+  --reps) REPS=$2; shift;; --out) OUT=$2; shift;; --sizes) SIZES=$2; shift;; --wait) WAIT=$2; shift;; --nor-only) DO_DRAM=0;;
+  *) echo "usage: $0 [--reps N] [--out FILE] [--sizes \"N N N\"] [--wait PCT] [--nor-only]"; exit 2;; esac; shift; done
 
 MM=$HOME/matmul; KO=$HOME/nor_eci/nor_eci_fulltest_ltram.ko
 S=/sys/kernel/ltram/stats; P=/sys/kernel/debug/ltram/pagestate
@@ -102,18 +103,23 @@ for N in $SIZES; do
     say "  pool clean=$CB dirty=$DB, erase engine pinned off"
     echo 512 | sudo -n tee $PB >/dev/null
 
-    L=/tmp/rl-dram.log
-    sudo -n $MM --n $N --iters 1 --runs $R --flush 32 --verify > $L 2>&1
-    read M SD < <(plateau $L)
-    series $L "r${rep}-N${N}-dram"
-    NSL=$(awk -v m="$M" -v l="$LINES" 'BEGIN{printf "%.1f", m*1e9/l}')
-    echo "$rep,$N,dram_cold,$BYTES,$PAGES,$M,$SD,$NSL,0,$CB,0,$DB" >> "$OUT"
-    say "  dram $M s   $NSL ns/line"
-    rm -f $L
+    if [ "$DO_DRAM" = 1 ]; then
+        # DRAM came in at sd 0.02-0.06% everywhere, so it is already settled
+        # and re-measuring it buys nothing. --nor-only skips it.
+        L=/tmp/rl-dram.log
+        sudo -n $MM --n $N --iters 1 --runs $R --flush 32 --verify > $L 2>&1
+        read M SD < <(plateau $L)
+        series $L "r${rep}-N${N}-dram"
+        NSL=$(awk -v m="$M" -v l="$LINES" 'BEGIN{printf "%.1f", m*1e9/l}')
+        echo "$rep,$N,dram_cold,$BYTES,$PAGES,$M,$SD,$NSL,0,$CB,0,$DB" >> "$OUT"
+        say "  dram $M s   $NSL ns/line"
+        rm -f $L
+    fi
 
     E0=$(gs erases_done)
     L=/tmp/rl-nor.log
-    sudo -n $MM --n $N --iters 1 --runs $R --flush 32 --verify --print-ranges --phys --hold 5 > $L 2>&1 &
+    sudo -n $MM --n $N --iters 1 --runs $R --flush 32 --verify --print-ranges --phys \
+        --wait-resident $WAIT --wait-timeout 900 > $L 2>&1 &
     BG=$!
     for i in $(seq 1 180); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 1; done
     PID=$(pgrep -x matmul | head -1); [ -n "${PID:-}" ] && echo $PID | sudo -n tee $TP >/dev/null
@@ -125,6 +131,8 @@ for N in $SIZES; do
     NSL=$(awk -v m="$M" -v l="$LINES" 'BEGIN{printf "%.1f", m*1e9/l}')
     echo "$rep,$N,nor_cold,$BYTES,$PAGES,$M,$SD,$NSL,${RES:-0},$CB,$ED,$DB" >> "$OUT"
     PCT=$(awk -v m="$M" -v v="$SD" 'BEGIN{printf "%.2f", (m>0?100*v/m:0)}')
+    WU=$(grep "^WARMUP done" $L | tail -1)
+    [ -n "$WU" ] && say "  $WU"
     say "  nor  $M s   $NSL ns/line   sd ${PCT}%   resident ${RES:-0}/$PAGES   erases $ED"
     awk -v p="$PCT" 'BEGIN{exit !(p>2)}' && \
         say "  !! sd ${PCT}% -- this run never settled, the mean is not a latency"
