@@ -1,0 +1,17 @@
+[Unit]
+Description=Checkpoint LtRAM erase counts periodically
+Documentation=file:/usr/local/sbin/ltram-erase-counts
+
+# OPTIONAL, and not part of the "save before and after a run, and at power
+# off" requirement. It exists only to bound what an unclean shutdown loses:
+# without it that is everything since the last run, with it at most 10
+# minutes. 256 KB a write, so the wear it costs the ROOT DISK is negligible
+# and it touches the flash not at all.
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+Unit=ltram-erase-counts-save.service
+
+[Install]
+WantedBy=timers.target

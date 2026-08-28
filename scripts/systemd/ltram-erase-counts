@@ -1,0 +1,89 @@
+#!/bin/bash
+# ltram-erase-counts -- carry the per-sector erase counts across a power cycle.
+#
+# WHAT IS PERSISTED
+#   /sys/kernel/debug/ltram/erase_counts is a 16-byte header ("LTEC", version,
+#   nr_pages) followed by one u32 per sector. The kernel validates that header
+#   on the first write and rebuilds the allocator's wear buckets when the last
+#   byte lands. A SHORT BLOB IS THEREFORE DANGEROUS: the body would be pasted
+#   in without the rebuild, leaving lt_pop_clean() handing out by the old order
+#   while the counts say otherwise, which is LT_ERR_BUCKET_MEMBER. Both
+#   directions check the size before writing anything.
+#
+# WHAT IT IS WORTH
+#   Every count is a LOWER BOUND. An unclean shutdown loses whatever
+#   accumulated since the last save, and nothing here can recover it.
+#
+#   That is the right direction to be wrong in. Undercounting sends a write to
+#   a sector believed fresher than it is. Overcounting would crowd the sectors
+#   still believed fresh -- which is the exact failure the wear machinery
+#   exists to prevent.
+#
+#   And the counts mean "erases since counting began", not the device's
+#   history. This chip took heavy unknown wear during FPGA bring-up, before any
+#   of this existed, and no amount of bookkeeping recovers that.
+#
+# WHERE IT LIVES
+#   /var/lib/ltram/erase_counts, on root. NOT /scratch: that is NFS, unmounted
+#   by the time a shutdown hook runs and not guaranteed at early boot. z08's
+#   root sits at 98% with ~114 MB free, so the 256 KB blob plus one generation
+#   of backup is checked for space rather than assumed.
+set -u
+DBG=/sys/kernel/debug/ltram
+STATE=/var/lib/ltram
+F=$STATE/erase_counts
+HDR=16
+die(){ echo "ltram-erase-counts: $*" >&2; exit 1; }
+note(){ echo "ltram-erase-counts: $*"; }
+
+expected_size(){
+    local lo hi n
+    lo=$(cat $DBG/start_pfn 2>/dev/null) || return 1
+    hi=$(cat $DBG/end_pfn   2>/dev/null) || return 1
+    n=$((hi - lo)); [ "$n" -gt 0 ] || return 1
+    echo $((HDR + 4 * n))
+}
+
+case "${1:-}" in
+save)
+    [ -r $DBG/erase_counts ] || { note "no $DBG/erase_counts -- not an LtRAM kernel, nothing to save"; exit 0; }
+    WANT=$(expected_size) || die "cannot read the pfn window"
+    mkdir -p $STATE
+    FREE=$(df -k $STATE | awk 'NR==2{print $4}')
+    [ "${FREE:-0}" -lt 2048 ] && die "only ${FREE} KB free on $STATE -- refusing to write a possibly truncated blob"
+    # temp-then-rename: a crash mid-save leaves the previous generation intact
+    # rather than a half-written file that restore would refuse.
+    cat $DBG/erase_counts > $F.tmp || die "read failed"
+    GOT=$(stat -c %s $F.tmp)
+    if [ "$GOT" != "$WANT" ]; then rm -f $F.tmp; die "read $GOT bytes, expected $WANT -- not saving"; fi
+    [ -f $F ] && cp -f $F $F.prev 2>/dev/null
+    mv -f $F.tmp $F
+    sync -f $F 2>/dev/null || sync
+    note "saved $GOT bytes to $F"
+    ;;
+restore)
+    [ -w $DBG/erase_counts ] || { note "no $DBG/erase_counts -- not an LtRAM kernel, nothing to restore"; exit 0; }
+    [ -f $F ] || { note "no saved counts at $F -- first boot, starting from zero"; exit 0; }
+    WANT=$(expected_size) || die "cannot read the pfn window"
+    GOT=$(stat -c %s $F)
+    if [ "$GOT" != "$WANT" ]; then
+        die "$F is $GOT bytes, this kernel wants $WANT -- window size changed, refusing (a short blob restores without rebuilding the buckets)"
+    fi
+    # cat, not dd: the kernel's first write consumes exactly the 16-byte header
+    # and returns 16, so the writer MUST handle a short write. coreutils cat
+    # loops on partial writes; dd reports them and moves on.
+    cat $F > $DBG/erase_counts || die "restore failed -- check dmesg for a rejected header"
+    note "restored $GOT bytes from $F"
+    dmesg 2>/dev/null | tail -20 | grep -E "ltram: (erase counts restored|erase-count blob rejected)" | tail -1
+    ;;
+show)
+    [ -r $DBG/erase_counts ] || die "no $DBG/erase_counts"
+    cat $DBG/erase_counts | od -An -tu4 -j $HDR -v | tr -s ' ' '\n' | grep -v '^$' | \
+      awk '{n++; s+=$1; if($1>mx)mx=$1; if(n==1||$1<mn)mn=$1; if($1)nz++}
+           END{printf "live:  %d sectors  min %d  max %d  mean %.1f  nonzero %d (%.1f%%)  total erases %d\n",
+                      n, mn, mx, (n?s/n:0), nz, (n?100.0*nz/n:0), s}'
+    [ -f $F ] && { echo -n "saved: "; stat -c '%s bytes, %y' $F; } || echo "saved: none"
+    ;;
+*)
+    echo "usage: $0 {save|restore|show}"; exit 2;;
+esac

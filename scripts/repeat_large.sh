@@ -44,6 +44,11 @@ TP=/sys/kernel/ltram/target_pid; PB=/sys/module/ltram_policy/parameters/promote_
 HW=/sys/module/ltram_policy/parameters/erase_high_water
 LW=/sys/module/ltram_policy/parameters/erase_low_water
 say(){ echo "[$(date +%H:%M:%S)] $*"; }
+# Checkpoint the erase counts around every point. They only move during a
+# drain, so this is where the interesting deltas happen. Silent no-op if the
+# unit is not installed.
+EC=/usr/local/sbin/ltram-erase-counts
+ec_save(){ [ -x $EC ] && sudo -n $EC save >/dev/null 2>&1; return 0; }
 SER=/scratch/hushim/series; mkdir -p $SER
 # Keep the per-pass series. The mean alone cannot tell a run that is still
 # decaying from one that is bimodal, and at 128 and 256 MB the NOR sd is 17%
@@ -81,6 +86,7 @@ for N in $SIZES; do
     if [ $PAGES -le 32768 ]; then R=200; else R=120; fi
     say "===== rep $rep/$REPS  N=$N  $((BYTES/1048576)) MiB  $PAGES pages  runs=$R ====="
 
+    ec_save
     say "  draining to a full pool"
     # Shake out the per-CPU lru_add folio batches FIRST. Pages the previous
     # run released sit there with ACTIVE set and LRU clear, so they are never
@@ -140,6 +146,7 @@ for N in $SIZES; do
     rm -f $L
 
     echo 8192 | sudo -n tee $HW >/dev/null; echo 2048 | sudo -n tee $LW >/dev/null
+    ec_save
 done
 done
 say "done -> $OUT"

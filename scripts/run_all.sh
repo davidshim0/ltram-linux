@@ -50,3 +50,8 @@ say "=== 4. fresh CSV ==="
 
 say "=== 5. sweep, all five modes ==="
 exec "$HOME/sweep.sh" --out "$OUT"
+
+# Persist the erase counts now that the sweep has finished burning through
+# them. No-op if the systemd unit is not installed.
+[ -x /usr/local/sbin/ltram-erase-counts ] && \
+    sudo -n /usr/local/sbin/ltram-erase-counts save || true

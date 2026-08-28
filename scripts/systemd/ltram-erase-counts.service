@@ -1,0 +1,23 @@
+[Unit]
+Description=LtRAM erase-count persistence (restore at boot, save at shutdown)
+Documentation=file:/usr/local/sbin/ltram-erase-counts
+# debugfs has to be up before either direction can touch erase_counts.
+RequiresMountsFor=/sys/kernel/debug /var/lib
+# Default service dependencies are deliberately KEPT: they already provide
+# After=sysinit.target basic.target and Before=shutdown.target
+# Conflicts=shutdown.target, which is exactly the "run at shutdown" wiring.
+# Services are stopped before local-fs.target is torn down, so ExecStop still
+# has a writable root.
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ltram-erase-counts restore
+ExecStop=/usr/local/sbin/ltram-erase-counts save
+# A failed restore must not block boot: worst case the counts start at zero,
+# which is the behaviour we already have today.
+SuccessExitStatus=0 1
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

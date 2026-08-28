@@ -1,0 +1,8 @@
+[Unit]
+Description=LtRAM erase-count checkpoint
+Documentation=file:/usr/local/sbin/ltram-erase-counts
+RequiresMountsFor=/sys/kernel/debug /var/lib
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ltram-erase-counts save
