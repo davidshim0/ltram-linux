@@ -64,15 +64,20 @@ ax[1].set_title("Absolute cost. The grey line is the same arithmetic with the "
                 "memory traffic removed", fontsize=9)
 
 # --- 3. where the time goes ------------------------------------------------
-for mode, lab, c in [("dram_cold", "DRAM", "#1F5F7A"), ("nor_cold", "NOR", "#9E2F33")]:
+# Cold and warm both decompose against the SAME compute floor. The pinned row
+# is N*4 bytes, so a scrub costs it at most ~12 us of re-fetch against a ~30 ms
+# floor, which is four hundredths of a percent and below the run-to-run noise.
+for mode, lab, c, ls in [("dram_cold", "DRAM, forced cold", "#1F5F7A", "o-"),
+                         ("nor_cold",  "NOR, forced cold",  "#9E2F33", "o-"),
+                         ("dram_warm", "DRAM, cache allowed", "#1F5F7A", "s--"),
+                         ("nor_warm",  "NOR, cache allowed",  "#9E2F33", "s--")]:
     t, comp = col(mode), col("comp")
     ax[2].plot(mib, [100 * (x - k) / x if x and x > k else float("nan")
-                     for x, k in zip(t, comp)], "o-", color=c,
-               label=f"{lab}: share of the pass spent reaching the weights")
+                     for x, k in zip(t, comp)], ls, color=c, label=lab, alpha=0.9)
 ax[2].axhline(50, color="#828E96", lw=0.8, ls=":")
 ax[2].set_ylabel("% of pass spent on memory"); ax[2].set_ylim(0, 100)
 ax[2].set_xlabel("weight matrix size (MiB)")
-ax[2].legend(fontsize=8, loc="lower right")
+ax[2].legend(fontsize=7, loc="lower right", ncol=2)
 ax[2].set_title("Measured, not inferred. If DRAM sits near 50%, a 10x medium "
                 "gives ~5x end to end", fontsize=9)
 
@@ -90,13 +95,17 @@ fig.savefig(a.out, dpi=150)
 print(f"wrote {a.out}")
 
 # The table matters as much as the picture: these are the numbers for a slide.
-print(f"\n{'MiB':>8} {'DRAM s':>9} {'NOR s':>9} {'ratio':>6} {'comp s':>9} "
-      f"{'mem DRAM':>9} {'mem NOR':>9} {'DRAM mem%':>10} {'resident':>9}")
+hdr = (f"\n{'MiB':>8} {'comp s':>9} | {'DRAM s':>9} {'wDRAM s':>9} {'w%':>5} "
+       f"| {'NOR s':>9} {'wNOR s':>9} {'w%':>5} | {'ratio':>5} {'wRatio':>6} {'res':>6}")
+print(hdr); print("-" * len(hdr))
 for s in sizes:
     e = d[s]
-    if not {"dram_cold", "nor_cold", "comp"} <= set(e): continue
-    dc, nc, cp = e["dram_cold"][0], e["nor_cold"][0], e["comp"][0]
-    md, mn = dc - cp, nc - cp
-    res = e["nor_cold"][3] / e["nor_cold"][2] * 100 if e["nor_cold"][2] else 0
-    print(f"{s/2**20:8.3f} {dc:9.5f} {nc:9.5f} {nc/dc:6.2f} {cp:9.5f} "
-          f"{md:9.5f} {mn:9.5f} {100*md/dc:9.1f}% {res:8.1f}%")
+    for tag, dm, nm in (("cold", "dram_cold", "nor_cold"),
+                        ("warm", "dram_warm", "nor_warm")):
+        if not {dm, nm, "comp"} <= set(e): continue
+        dc, nc, cp = e[dm][0], e[nm][0], e["comp"][0]
+        md, mn = dc - cp, nc - cp          # seconds spent reaching the weights
+        res = e[nm][3] / e[nm][2] * 100 if e[nm][2] else 0
+        print(f"{s/2**20:8.3f} {cp:9.5f} | {dc:9.5f} {md:9.5f} {100*md/dc:4.0f}% "
+              f"| {nc:9.5f} {mn:9.5f} {100*mn/nc:4.0f}% "
+              f"| {nc/dc:5.2f} {(mn/md if md>0 else float('nan')):6.2f} {res:5.0f}%  {tag}")
