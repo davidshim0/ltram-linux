@@ -32,10 +32,10 @@
 #
 #   ./repeat_large.sh [--reps 10] [--out FILE]
 set -u
-REPS=10; OUT=/scratch/hushim/large.csv
+REPS=10; OUT=/scratch/hushim/large.csv; SIZES="4096 5793 8192"
 while [ $# -gt 0 ]; do case "$1" in
-  --reps) REPS=$2; shift;; --out) OUT=$2; shift;;
-  *) echo "usage: $0 [--reps N] [--out FILE]"; exit 2;; esac; shift; done
+  --reps) REPS=$2; shift;; --out) OUT=$2; shift;; --sizes) SIZES=$2; shift;;
+  *) echo "usage: $0 [--reps N] [--out FILE] [--sizes \"N N N\"]"; exit 2;; esac; shift; done
 
 MM=$HOME/matmul; KO=$HOME/nor_eci/nor_eci_fulltest_ltram.ko
 S=/sys/kernel/ltram/stats; P=/sys/kernel/debug/ltram/pagestate
@@ -67,7 +67,7 @@ lsmod | grep -q nor_eci || sudo -n insmod $KO provide_ops=1 test=0 \
 [ -f "$OUT" ] || echo "rep,n,mode,bytes,pages,mean_s,sd_s,ns_per_line,resident,clean_before,erases_during,dirty_before" > "$OUT"
 
 for rep in $(seq 1 $REPS); do
-for N in 4096 5793 8192; do
+for N in $SIZES; do
     BYTES=$((N*N*4)); PAGES=$((BYTES/4096)); LINES=$((BYTES/128))
     # sweep.sh's own rule, so the plateau is taken over the same sample and
     # these numbers can be put beside the ones in the figures.
@@ -75,6 +75,17 @@ for N in 4096 5793 8192; do
     say "===== rep $rep/$REPS  N=$N  $((BYTES/1048576)) MiB  $PAGES pages  runs=$R ====="
 
     say "  draining to a full pool"
+    # Shake out the per-CPU lru_add folio batches FIRST. Pages the previous
+    # run released sit there with ACTIVE set and LRU clear, so they are never
+    # freed, never become dirty, and the drain loop below cannot see them --
+    # they just sit in DATA and the pool comes up short. Same thing that
+    # produced four false "stuck page" diagnoses. compact_memory reaches
+    # lru_add_drain_all().
+    echo 1 | sudo -n tee /proc/sys/vm/compact_memory >/dev/null 2>&1 || true
+    sleep 2
+    drain
+    echo 1 | sudo -n tee /proc/sys/vm/compact_memory >/dev/null 2>&1 || true
+    sleep 2
     drain
     PS0=$(ps_); CB=$(g "$PS0" clean); DB=$(g "$PS0" dirty)
     if [ "${CB:-0}" -lt 65536 ]; then
