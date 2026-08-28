@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Plot the working-set sweep as three separate figures.
 
-  1  execution-time.png   where the time goes, in seconds
-  2  slowdown.png         end-to-end ratio, NOR against DRAM
-  3  memory-share.png     memory access as a share of the pass
+  fig1-execution-time.png       where the time goes, linear y
+  fig1b-execution-time-log.png  the same, log y, so the small sizes are legible
+  fig2-slowdown.png             end-to-end ratio, NOR against DRAM
+  fig3-memory-share.png         memory access as a share of the pass
 
   ./plot_sweep.py sweep.csv [-d docs/figures]
 """
@@ -79,9 +80,23 @@ ax.set_ylim(bottom=0)
 frame(ax, "Execution time", "seconds per pass",
       "Components, not totals: a pass on either medium is Compute plus that medium's access "
       "latency.\nCompute is identical work in both cases. Linear axis, so everything below "
-      "64 MB sits on the baseline.")
+      "64 MB sits on the baseline. See fig1b for those.")
 ax.legend(fontsize=9.5, loc="upper left", frameon=False)
-fig.tight_layout(); fig.savefig(f"{a.dir}/execution-time.png", dpi=160)
+fig.tight_layout(); fig.savefig(f"{a.dir}/fig1-execution-time.png", dpi=160)
+
+# Same data, log y. Linear is honest about how steeply cost grows and hides the
+# three orders of magnitude below 64 MB entirely, which is where the cache
+# crossover happens. Both are worth having.
+fig, ax = plt.subplots(figsize=(9, 5.6))
+ax.plot(sizes, wn,   "o-", color=C_NOR,  lw=2, label="NOR access latency")
+ax.plot(sizes, wd,   "o-", color=C_DRAM, lw=2, label="DRAM access latency")
+ax.plot(sizes, comp, "s--", color=C_COMP, lw=1.6, label="Compute")
+ax.set_yscale("log")
+frame(ax, "Execution time (log scale)", "seconds per pass",
+      "The same three curves. On a log axis the constant vertical gap between the two access "
+      "latencies\nis the medium ratio, and it holds from 32 KB to 64 MB.")
+ax.legend(fontsize=9.5, loc="upper left", frameon=False)
+fig.tight_layout(); fig.savefig(f"{a.dir}/fig1b-execution-time-log.png", dpi=160)
 
 # ------------------------------------------------------------ 2. slowdown ---
 fig, ax = plt.subplots(figsize=(9, 5.6))
@@ -100,7 +115,7 @@ frame(ax, "End-to-end performance ratio (NOR / DRAM)", "times slower than DRAM",
       "Past\n256 MB both fall, because the working set no longer fits on the device and most "
       "accesses stay in DRAM.")
 ax.legend(fontsize=9.5, loc="upper left", frameon=False)
-fig.tight_layout(); fig.savefig(f"{a.dir}/slowdown.png", dpi=160)
+fig.tight_layout(); fig.savefig(f"{a.dir}/fig2-slowdown.png", dpi=160)
 
 # --------------------------------------------------------------- 3. share ---
 fig, ax = plt.subplots(figsize=(9, 5.6))
@@ -123,9 +138,9 @@ frame(ax, "Memory access latency as a share of total run time", "% of the pass s
       "Measured as (total minus compute) over total. On DRAM it is ~44% of the pass, which is "
       "why a medium\nroughly 10x slower per access yields only ~4.8x end to end.")
 ax.legend(fontsize=9.5, loc="center left", frameon=False)
-fig.tight_layout(); fig.savefig(f"{a.dir}/memory-share.png", dpi=160)
+fig.tight_layout(); fig.savefig(f"{a.dir}/fig3-memory-share.png", dpi=160)
 
-print(f"wrote {a.dir}/execution-time.png, slowdown.png, memory-share.png")
+print(f"wrote {a.dir}/fig1, fig1b, fig2, fig3")
 
 hdr = (f"\n{'size':>8} {'comp s':>9} | {'DRAM s':>9} {'wDRAM s':>9} {'w%':>4} "
        f"| {'NOR s':>9} {'wNOR s':>9} {'w%':>4} | {'e2e':>5} {'wRatio':>6} {'res':>5}")
@@ -143,3 +158,15 @@ for s in sizes:
               f"| {nc/dc:5.2f} {(mn/md if md > 0 else float('nan')):6.2f} {res:4.0f}% {tag}{flag}")
 print("\n* compute baseline inflated: the pinned row exceeds L1D above N=4096,")
 print("  so wDRAM and wNOR are understated and wRatio is overstated.")
+
+# Per cache line, cold. Nothing derived: both columns are a measured total
+# divided by the line count, so this is the honest answer to "why does the
+# ratio stop being flat above 64 MB".
+print(f"\n{'size':>8} {'lines':>10} {'DRAM ns/line':>13} {'NOR ns/line':>12} {'ratio':>6} {'res':>5}")
+for s in sizes:
+    e = d[s]
+    if not {"dram_cold", "nor_cold"} <= set(e): continue
+    lines = s / 128.0
+    dl, nl = e["dram_cold"][0] * 1e9 / lines, e["nor_cold"][0] * 1e9 / lines
+    res = e["nor_cold"][2] / e["nor_cold"][1] * 100 if e["nor_cold"][1] else 0
+    print(f"{human(s):>8} {lines:10.0f} {dl:13.1f} {nl:12.1f} {nl/dl:6.2f} {res:4.0f}%")
