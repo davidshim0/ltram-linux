@@ -42,6 +42,11 @@ plateau(){ grep "^POINT" "$1" | awk '{v[n++]=$3} END{
     printf "%.6f %.6f %d\n", m, (c>1?sqrt(q/(c-1)):0), c }'; }
 resident(){ grep "^PHYS end    weights" "$1" 2>/dev/null | sed -n 's/.*LtRAM \([0-9]*\) .*/\1/p' | tail -1; }
 
+# A full root filesystem does not stop matmul, it just makes every measurement
+# nan and every later run meaningless. Refuse rather than produce that.
+FREE_MB=$(df -m / | awk 'NR==2{print $4}')
+[ "${FREE_MB:-0}" -lt 500 ] && { echo "!! root has ${FREE_MB} MB free, need 500"; exit 6; }
+
 [ -f "$OUT" ] || echo "n,mode,bytes,pages,mean_s,sd_s,samples,resident_pages,digest" > "$OUT"
 mkdir -p "$(dirname "$OUT")" 2>/dev/null
 
@@ -62,20 +67,42 @@ for N in $NS; do
         L=/tmp/sw-$N-comp.log
         sudo -n $MM --n $N --iters 1 --runs $R --flush 32 --compute-only > $L 2>&1
         read M SD C < <(plateau $L)
-        echo "$N,comp,$BYTES,$PAGES,$M,$SD,$C,0," >> "$OUT"; say "  comp      $M s"
+        rm -f $L; echo "$N,comp,$BYTES,$PAGES,$M,$SD,$C,0," >> "$OUT"; say "  comp      $M s"
     fi
 
     if has dram_cold && ! done_already "$N" dram_cold; then
         L=/tmp/sw-$N-dc.log
         sudo -n $MM --n $N --iters 1 --runs $R --flush 32 --verify > $L 2>&1
         read M SD C < <(plateau $L); D=$(awk '/^DIGEST/{print $2}' $L)
-        echo "$N,dram_cold,$BYTES,$PAGES,$M,$SD,$C,0,$D" >> "$OUT"; say "  dram_cold $M s"
+        rm -f $L; echo "$N,dram_cold,$BYTES,$PAGES,$M,$SD,$C,0,$D" >> "$OUT"; say "  dram_cold $M s"
     fi
+
+    # ITERS, not RUNS, for the warm modes. The NOR one has to outlast migration,
+    # which needs seconds because the scanner ticks at 1 Hz, and at 31 KiB a pass
+    # is 32 us. Asking for 200,000 runs got that -- and 200,000 x 5 log lines,
+    # 103 MB a file, 352 MB across the sweep, and a full root filesystem that
+    # turned every later measurement into "nan". Longer runs are the same work
+    # with a thousandth of the output.
+    #
+    # Both warm modes use the same ITERS so the two sides stay comparable, and
+    # the recorded time is divided by it to stay per-pass.
+    DC=$(awk -F, -v n="$N" '$1==n && $2=="dram_cold"{print $5}' "$OUT")
+    IW=1
+    if [ -n "${DC:-}" ]; then
+        IW=$(awk -v d="$DC" -v r="$R" 'BEGIN{
+            if (d+0 <= 0) { print 1; exit }        # nan or empty: do not divide
+            n = 30.0 / (r * d); if (n < 1) n = 1; if (n > 20000) n = 20000
+            printf "%d", n }')
+    fi
+    [ "$IW" -gt 1 ] && say "  warm modes: --iters $IW so a run lasts ~30 s"
 
     if has dram_warm && ! done_already "$N" dram_warm; then
         L=/tmp/sw-$N-dw.log
-        sudo -n $MM --n $N --iters 1 --runs $R --verify > $L 2>&1
+        sudo -n $MM --n $N --iters $IW --runs $R --verify > $L 2>&1
         read M SD C < <(plateau $L); D=$(awk '/^DIGEST/{print $2}' $L)
+        M=$(awk -v m="$M" -v i="$IW" 'BEGIN{printf "%.8f", m/i}')
+        SD=$(awk -v v="$SD" -v i="$IW" 'BEGIN{printf "%.8f", v/i}')
+        rm -f $L
         echo "$N,dram_warm,$BYTES,$PAGES,$M,$SD,$C,0,$D" >> "$OUT"; say "  dram_warm $M s"
     fi
 
@@ -86,28 +113,15 @@ for N in $NS; do
             FL="--flush 32"
         else
             FL=""
-            # A warm run has no scrub, so its WALL time is a fraction of the cold
-            # one, and at small sizes it finishes before the scanner's 1 Hz pass
-            # can migrate anything. The first sweep produced a whole column of
-            # ratio 1.00 that way: DRAM measured twice, residency 0%, and it
-            # looked like a result.
-            #
-            # Size the run from the DRAM warm time we already have, so it lasts
-            # at least ~25 s at DRAM speed. Migration then completes inside it
-            # and gets slower as pages land, which only lengthens the plateau.
-            DW=$(awk -F, -v n="$N" '$1==n && $2=="dram_warm"{print $5}' "$OUT")
-            if [ -n "${DW:-}" ]; then
-                NEED=$(awk -v d="$DW" 'BEGIN{printf "%d", (d>0 ? 25/d : 0)}')
-                [ "${NEED:-0}" -gt "$RUNS" ] && RUNS=$NEED
-                [ "$RUNS" -gt 200000 ] && RUNS=200000
-                say "  nor_warm needs $RUNS passes to outlast migration"
-            fi
+            # Length comes from --iters, computed above, so this run outlasts
+            # migration without emitting a line per pass.
         fi
         lsmod | grep -q nor_eci || { sudo -n insmod $KO provide_ops=1 test=0 \
              inline_erase=0 verify_erased=1 || exit 5; sleep 2; }
         echo 512 | sudo -n tee $PB >/dev/null
         L=/tmp/sw-$N-$MODE.log
-        sudo -n $MM --n $N --iters 1 --runs $RUNS $FL --verify --print-ranges --phys --hold 5 > $L 2>&1 &
+        [ "$MODE" = nor_warm ] && IT=$IW || IT=1
+        sudo -n $MM --n $N --iters $IT --runs $RUNS $FL --verify --print-ranges --phys --hold 5 > $L 2>&1 &
         BG=$!
         for i in $(seq 1 120); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 1; done
         PID=$(pgrep -x matmul | head -1)
@@ -115,6 +129,8 @@ for N in $NS; do
         wait $BG
         echo 0 | sudo -n tee $TP >/dev/null
         read M SD C < <(plateau $L); D=$(awk '/^DIGEST/{print $2}' $L); RES=$(resident $L)
+        M=$(awk -v m="$M" -v i="$IT" 'BEGIN{printf "%.8f", m/i}')
+        SD=$(awk -v v="$SD" -v i="$IT" 'BEGIN{printf "%.8f", v/i}')
         # A NOR row with no residency is DRAM measured twice. Record it as a
         # failure rather than a data point, so the plot cannot quietly show a
         # ratio of 1.00 that means "the experiment did not happen".
@@ -124,6 +140,7 @@ for N in $NS; do
             echo "$N,$MODE,$BYTES,$PAGES,$M,$SD,$C,${RES:-0},$D" >> "$OUT"
             say "  $MODE  $M s   resident ${RES:-0}/$PAGES"
         fi
+        rm -f $L
 
         # Recycle before the next point. Promoted pages are DIRTY now, and the
         # pool is 65,536 sectors, so without this the sweep runs out of clean
