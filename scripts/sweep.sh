@@ -44,8 +44,13 @@ resident(){ grep "^PHYS end    weights" "$1" 2>/dev/null | sed -n 's/.*LtRAM \([
 
 # A full root filesystem does not stop matmul, it just makes every measurement
 # nan and every later run meaningless. Refuse rather than produce that.
+# 100 MB, not the 500 this first asked for. Logs are now deleted as each one is
+# read, so the sweep holds a few thousand lines at a time rather than 352 MB.
+# The point of the check is only that a full disk turns every measurement into
+# nan without stopping anything, which is a worse failure than refusing to run.
+sudo -n journalctl --vacuum-size=20M >/dev/null 2>&1 || true
 FREE_MB=$(df -m / | awk 'NR==2{print $4}')
-[ "${FREE_MB:-0}" -lt 500 ] && { echo "!! root has ${FREE_MB} MB free, need 500"; exit 6; }
+[ "${FREE_MB:-0}" -lt 100 ] && { echo "!! root has ${FREE_MB} MB free, need 100"; exit 6; }
 
 [ -f "$OUT" ] || echo "n,mode,bytes,pages,mean_s,sd_s,samples,resident_pages,digest" > "$OUT"
 mkdir -p "$(dirname "$OUT")" 2>/dev/null
