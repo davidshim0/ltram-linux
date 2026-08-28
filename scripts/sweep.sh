@@ -81,12 +81,33 @@ for N in $NS; do
 
     for MODE in nor_cold nor_warm; do
         has $MODE || continue; done_already "$N" $MODE && continue
-        [ "$MODE" = nor_cold ] && FL="--flush 32" || FL=""
+        RUNS=$R
+        if [ "$MODE" = nor_cold ]; then
+            FL="--flush 32"
+        else
+            FL=""
+            # A warm run has no scrub, so its WALL time is a fraction of the cold
+            # one, and at small sizes it finishes before the scanner's 1 Hz pass
+            # can migrate anything. The first sweep produced a whole column of
+            # ratio 1.00 that way: DRAM measured twice, residency 0%, and it
+            # looked like a result.
+            #
+            # Size the run from the DRAM warm time we already have, so it lasts
+            # at least ~25 s at DRAM speed. Migration then completes inside it
+            # and gets slower as pages land, which only lengthens the plateau.
+            DW=$(awk -F, -v n="$N" '$1==n && $2=="dram_warm"{print $5}' "$OUT")
+            if [ -n "${DW:-}" ]; then
+                NEED=$(awk -v d="$DW" 'BEGIN{printf "%d", (d>0 ? 25/d : 0)}')
+                [ "${NEED:-0}" -gt "$RUNS" ] && RUNS=$NEED
+                [ "$RUNS" -gt 200000 ] && RUNS=200000
+                say "  nor_warm needs $RUNS passes to outlast migration"
+            fi
+        fi
         lsmod | grep -q nor_eci || { sudo -n insmod $KO provide_ops=1 test=0 \
              inline_erase=0 verify_erased=1 || exit 5; sleep 2; }
         echo 512 | sudo -n tee $PB >/dev/null
         L=/tmp/sw-$N-$MODE.log
-        sudo -n $MM --n $N --iters 1 --runs $R $FL --verify --print-ranges --phys --hold 5 > $L 2>&1 &
+        sudo -n $MM --n $N --iters 1 --runs $RUNS $FL --verify --print-ranges --phys --hold 5 > $L 2>&1 &
         BG=$!
         for i in $(seq 1 120); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 1; done
         PID=$(pgrep -x matmul | head -1)
@@ -94,8 +115,15 @@ for N in $NS; do
         wait $BG
         echo 0 | sudo -n tee $TP >/dev/null
         read M SD C < <(plateau $L); D=$(awk '/^DIGEST/{print $2}' $L); RES=$(resident $L)
-        echo "$N,$MODE,$BYTES,$PAGES,$M,$SD,$C,${RES:-0},$D" >> "$OUT"
-        say "  $MODE  $M s   resident ${RES:-0}/$PAGES"
+        # A NOR row with no residency is DRAM measured twice. Record it as a
+        # failure rather than a data point, so the plot cannot quietly show a
+        # ratio of 1.00 that means "the experiment did not happen".
+        if [ "${RES:-0}" -lt $((PAGES / 2)) ] && [ $PAGES -le 65536 ]; then
+            say "  !! $MODE resident ${RES:-0}/$PAGES -- never migrated, NOT recorded"
+        else
+            echo "$N,$MODE,$BYTES,$PAGES,$M,$SD,$C,${RES:-0},$D" >> "$OUT"
+            say "  $MODE  $M s   resident ${RES:-0}/$PAGES"
+        fi
 
         # Recycle before the next point. Promoted pages are DIRTY now, and the
         # pool is 65,536 sectors, so without this the sweep runs out of clean
