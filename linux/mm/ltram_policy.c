@@ -102,13 +102,28 @@ static unsigned int erase_poll_ms    = 30;
  */
 static unsigned int erase_idle_ms    = 1000;
 /*
- * Erases per worker invocation. One per poll would cap the engine at
- * 1000/erase_poll_ms per second -- 33/s at a 30 ms poll -- when the device
- * sustains ~61/s. Each erase blocks ~16.4 ms, so 16 of them is ~260 ms in one
- * work item, which is why this runs on the unbound queue and re-arms with no
- * delay while there is still a backlog.
+ * Erases per worker invocation. ONE, because batching buys nothing and costs
+ * the thing that matters.
+ *
+ * It buys nothing because the delay, not the batch, sets the rate: an erase
+ * blocks ~16.4 ms inside the worker, so one erase at a 0 ms re-arm and sixteen
+ * back to back both run at the device's ~61/s.
+ *
+ * It costs read latency. NOR cannot serve a read while a sector is erasing, so
+ * sixteen erases back to back is a quarter of a second during which every read
+ * that misses cache waits, up to 16.4 ms each. One erase per 30 ms leaves a
+ * 13.6 ms window after each one for reads to get through, and 33/s still
+ * matches the demand: every dirty sector exists because a page was promoted, so
+ * the erase rate is pinned to the promotion rate, which is 32/s at the default
+ * promote_batch and is capped at 41.5/s by the wear budget regardless. The
+ * spare capacity up to 61/s was never needed.
+ *
+ * The idle gate cannot substitute for this spacing. It samples the device over
+ * 3 ms and then commits to a 16.4 ms operation, so it can say the device was
+ * quiet a moment ago and cannot say nothing will arrive during the erase.
+ * Spacing is the only mechanism that actually limits interference.
  */
-static unsigned int erase_batch = 16;
+static unsigned int erase_batch = 1;
 /*
  * One sample cannot tell a quiet device from the gap between two reads, so the
  * device must look idle this many times in a row before a ~16.4 ms erase is
@@ -419,6 +434,14 @@ out:
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 }
 
+/*
+ * Which process the scanner is watching, or 0 for none. Declared here rather
+ * than with the rest of the targeting code because the erase worker reads it:
+ * "is a workload running" is what decides whether erases may run flat out or
+ * must leave gaps for reads.
+ */
+static pid_t target_pid;
+
 /* ---- the background erase engine ------------------------------------------
  *
  * THIS IS THE POINT OF THE WHOLE STATE MACHINE. ft_ltram_write_page() erases
@@ -471,7 +494,7 @@ static void lt_erase_work_fn(struct work_struct *w)
 	unsigned long flags, idx;
 	bool have_op = ltram_have_erase_op();
 	unsigned int done = 0;
-	bool backlog = false;
+	unsigned int delay_ms;
 	int rc;
 
 	if (!lt_ready)
@@ -556,33 +579,47 @@ static void lt_erase_work_fn(struct work_struct *w)
 		if (rc)
 			break;
 		done++;
-		backlog = true;
 		cond_resched();
 	}
 
 again:
 	/*
-	 * Three paces, because "did nothing" covers two very different states.
+	 * How fast to come back, decided by who is waiting on the device.
 	 *
-	 *   backlog        erased something, more is waiting. The device is the
-	 *                  limit, so come straight back.
-	 *   engine on      wanted to erase and could not: the idle gate saw the
-	 *                  device serving reads, or there was nothing dirty
-	 *                  left. Retry soon. This is the case that matters --
-	 *                  one run tonight deferred 931 times, and at the idle
-	 *                  tick that would have been 931 seconds of erase
-	 *                  opportunity thrown away instead of 28.
-	 *   engine off     free is above the high mark and no erase is wanted.
-	 *                  Nothing is going to change quickly. Tick slowly.
+	 *   engine off              1000 ms  clean is above the high mark. Just
+	 *                                    checking whether it has dropped.
+	 *   a workload is attached    30 ms  POLITE. Leave a 13.6 ms window after
+	 *                                    each erase for reads to get through.
+	 *                                    33/s still matches promotion demand,
+	 *                                    since every dirty sector exists
+	 *                                    because a page was promoted.
+	 *   nothing attached           0 ms  no reads to disturb. Drain at the
+	 *                                    device's own ~61/s, which keeps a
+	 *                                    full 65,536-sector wipe at ~18
+	 *                                    minutes rather than 33.
 	 *
-	 * lt_erase_engine_on is read without the lock. It is a bool, it cannot
-	 * tear, and being one tick stale only picks a different polling
-	 * interval.
+	 * target_pid alone decides this, not the idle gate. The gate samples the
+	 * DEVICE over 3 ms, and a compute-bound workload between two reads looks
+	 * exactly like an idle machine for that long. target_pid is unambiguous:
+	 * either something is attached or nothing is.
+	 *
+	 * One accepted cost. With nothing attached and the gate refusing anyway,
+	 * because something outside the policy is using the device, this re-arms
+	 * at 0 ms and spins on the gate at roughly 300 checks a second. Each is
+	 * one readq, and it stops the moment the device frees up.
+	 *
+	 * Read without the lock. It cannot tear, and being one tick stale only
+	 * picks a different polling interval.
 	 */
+	if (!lt_erase_engine_on)
+		delay_ms = erase_idle_ms;
+	else if (READ_ONCE(target_pid))
+		delay_ms = erase_poll_ms;
+	else
+		delay_ms = 0;
+
 	queue_delayed_work(system_unbound_wq, &lt_erase_work,
-			   backlog ? 0 :
-			   msecs_to_jiffies(lt_erase_engine_on ? erase_poll_ms
-							       : erase_idle_ms));
+			   msecs_to_jiffies(delay_ms));
 }
 
 /* migrate_pages() callbacks */
@@ -734,7 +771,6 @@ static atomic64_t stat_was_written,
 		  stat_chosen, stat_lru_refused, stat_write_protected, stat_dirty_but_readonly;
 
 /* ---- targeting ------------------------------------------------------------ */
-static pid_t target_pid;
 static DEFINE_MUTEX(target_lock);
 
 /* ---- the scan ------------------------------------------------------------- */
