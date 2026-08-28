@@ -14,10 +14,17 @@
 #
 #   2. The erase engine is pinned OFF during every measurement. At 256 MB the
 #      run promotes all 65,536 sectors, so clean reaches 0, crosses the low
-#      watermark, and the engine starts erasing WHILE the workload reads. NOR
-#      cannot serve a read mid-erase, so that would inflate NOR and leave DRAM
-#      alone, which is the shape we are chasing. erase_high_water=0 makes the
-#      latch's "off" test true unconditionally.
+#      watermark, and the engine turns on WHILE the workload reads. NOR cannot
+#      serve a read mid-erase, so that would inflate NOR and leave DRAM alone,
+#      which is the shape we are chasing. erase_high_water=0 makes the latch's
+#      "off" test true unconditionally.
+#
+#      Note this only bites when DIRTY sectors are lying around: promotion
+#      moves clean->data, never clean->dirty, so a run on a fully drained pool
+#      gives the engine nothing to erase no matter where clean lands. The two
+#      conditions are therefore the same condition, and the sweep had both --
+#      it drained only below 40,000, so the large sizes ran with both a
+#      depleted pool and a backlog of dirty sectors to chew through.
 #
 # Cost is dominated by erase and is not reducible: every promoted page must be
 # blanked at ~16.4 ms. Ten repetitions of all three sizes promotes 1.15M pages,
@@ -57,34 +64,38 @@ engine_off(){ echo 0 | sudo -n tee $HW >/dev/null; echo 0 | sudo -n tee $LW >/de
 
 lsmod | grep -q nor_eci || sudo -n insmod $KO provide_ops=1 test=0 \
     inline_erase=0 verify_erased=1 || exit 4
-[ -f "$OUT" ] || echo "rep,n,mode,bytes,pages,mean_s,sd_s,ns_per_line,resident,clean_before,erases_during" > "$OUT"
+[ -f "$OUT" ] || echo "rep,n,mode,bytes,pages,mean_s,sd_s,ns_per_line,resident,clean_before,erases_during,dirty_before" > "$OUT"
 
 for rep in $(seq 1 $REPS); do
 for N in 4096 5793 8192; do
     BYTES=$((N*N*4)); PAGES=$((BYTES/4096)); LINES=$((BYTES/128))
-    say "===== rep $rep/$REPS  N=$N  $((BYTES/1048576)) MiB  $PAGES pages ====="
+    # sweep.sh's own rule, so the plateau is taken over the same sample and
+    # these numbers can be put beside the ones in the figures.
+    if [ $PAGES -le 32768 ]; then R=200; else R=120; fi
+    say "===== rep $rep/$REPS  N=$N  $((BYTES/1048576)) MiB  $PAGES pages  runs=$R ====="
 
     say "  draining to a full pool"
     drain
-    CB=$(g "$(ps_)" clean)
+    PS0=$(ps_); CB=$(g "$PS0" clean); DB=$(g "$PS0" dirty)
     if [ "${CB:-0}" -lt 65536 ]; then
         say "  !! clean=$CB, not 65536 -- something is still holding sectors"
     fi
     engine_off
-    say "  pool clean=$CB, erase engine pinned off"
+    sleep 2                   # let the latch see the new watermark
+    say "  pool clean=$CB dirty=$DB, erase engine pinned off"
     echo 512 | sudo -n tee $PB >/dev/null
 
     L=/tmp/rl-dram.log
-    sudo -n $MM --n $N --iters 1 --runs 120 --flush 32 --verify > $L 2>&1
+    sudo -n $MM --n $N --iters 1 --runs $R --flush 32 --verify > $L 2>&1
     read M SD < <(plateau $L)
     NSL=$(awk -v m="$M" -v l="$LINES" 'BEGIN{printf "%.1f", m*1e9/l}')
-    echo "$rep,$N,dram_cold,$BYTES,$PAGES,$M,$SD,$NSL,0,$CB,0" >> "$OUT"
+    echo "$rep,$N,dram_cold,$BYTES,$PAGES,$M,$SD,$NSL,0,$CB,0,$DB" >> "$OUT"
     say "  dram $M s   $NSL ns/line"
     rm -f $L
 
     E0=$(gs erases_done)
     L=/tmp/rl-nor.log
-    sudo -n $MM --n $N --iters 1 --runs 120 --flush 32 --verify --print-ranges --phys --hold 5 > $L 2>&1 &
+    sudo -n $MM --n $N --iters 1 --runs $R --flush 32 --verify --print-ranges --phys --hold 5 > $L 2>&1 &
     BG=$!
     for i in $(seq 1 180); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 1; done
     PID=$(pgrep -x matmul | head -1); [ -n "${PID:-}" ] && echo $PID | sudo -n tee $TP >/dev/null
@@ -93,7 +104,7 @@ for N in 4096 5793 8192; do
     RES=$(grep "^PHYS end    weights" $L | sed -n 's/.*LtRAM \([0-9]*\) .*/\1/p' | tail -1)
     ED=$(( $(gs erases_done) - E0 ))
     NSL=$(awk -v m="$M" -v l="$LINES" 'BEGIN{printf "%.1f", m*1e9/l}')
-    echo "$rep,$N,nor_cold,$BYTES,$PAGES,$M,$SD,$NSL,${RES:-0},$CB,$ED" >> "$OUT"
+    echo "$rep,$N,nor_cold,$BYTES,$PAGES,$M,$SD,$NSL,${RES:-0},$CB,$ED,$DB" >> "$OUT"
     say "  nor  $M s   $NSL ns/line   resident ${RES:-0}/$PAGES   erases during run $ED"
     [ "$ED" -gt 0 ] && say "  !! the engine ran during the measurement -- this point is contaminated"
     rm -f $L
