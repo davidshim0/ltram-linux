@@ -103,6 +103,24 @@ tar -C "$OUT/modroot/lib/modules" -czf "/tmp/modules-$KREL.tar.gz" "$KREL"
 echo "    $(du -h /tmp/modules-$KREL.tar.gz | cut -f1) compressed"
 scp -q "/tmp/modules-$KREL.tar.gz" zuestoll08:/tmp/
 
+# VERIFY IT LANDED. scp onto a full disk fails, and on 2026-08-28 it left a
+# ZERO-byte file behind while this script carried on and printed instructions
+# as though everything were fine. The failure then surfaced minutes later as
+# "gzip: stdin: unexpected end of file" from tar, a long way from the cause.
+# Size plus a gzip integrity check, because a short file can still be a valid
+# prefix and tar will happily extract half a module tree from one.
+LOCAL_SZ=$(stat -c %s "/tmp/modules-$KREL.tar.gz")
+REMOTE_SZ=$(ssh -q zuestoll08 "stat -c %s /tmp/modules-$KREL.tar.gz 2>/dev/null || echo 0")
+if [ "$LOCAL_SZ" != "$REMOTE_SZ" ] || ! ssh -q zuestoll08 "gzip -t /tmp/modules-$KREL.tar.gz"; then
+    echo "!! MODULE TARBALL DID NOT LAND INTACT"
+    echo "!!   local  $LOCAL_SZ bytes"
+    echo "!!   z08    $REMOTE_SZ bytes"
+    ssh -q zuestoll08 "df -h / | tail -1"
+    echo "!! Almost always a full root on z08. Free space and re-run deploy."
+    exit 7
+fi
+echo "    tarball verified on z08: $LOCAL_SZ bytes, gzip intact"
+
 # The kernel config, as /boot/config-$KREL. Not cosmetic: mkinitramfs reads it to check
 # the kernel can decompress the compressor initramfs.conf asks for. Without it you get
 #   W: Kernel configuration /boot/config-$KREL is missing, cannot check for zstd ...
