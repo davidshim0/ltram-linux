@@ -75,7 +75,7 @@ lsmod | grep -q nor_eci || sudo -n insmod $KO provide_ops=1 test=0 \
 
 for rep in $(seq 1 $REPS); do
 for N in $SIZES; do
-    BYTES=$((N*N*4)); PAGES=$((BYTES/4096)); LINES=$((BYTES/128))
+    BYTES=$((N*N*4)); PAGES=$((BYTES/4096)); NLINES=$((BYTES/128))   # NOT "LINES": bash resets that to the terminal height
     # sweep.sh's own rule, so the plateau is taken over the same sample and
     # these numbers can be put beside the ones in the figures.
     if [ $PAGES -le 32768 ]; then R=200; else R=120; fi
@@ -110,7 +110,7 @@ for N in $SIZES; do
         sudo -n $MM --n $N --iters 1 --runs $R --flush 32 --verify > $L 2>&1
         read M SD < <(plateau $L)
         series $L "r${rep}-N${N}-dram"
-        NSL=$(awk -v m="$M" -v l="$LINES" 'BEGIN{printf "%.1f", m*1e9/l}')
+        NSL=$(awk -v m="$M" -v l="$NLINES" 'BEGIN{printf "%.1f", m*1e9/l}')
         echo "$rep,$N,dram_cold,$BYTES,$PAGES,$M,$SD,$NSL,0,$CB,0,$DB" >> "$OUT"
         say "  dram $M s   $NSL ns/line"
         rm -f $L
@@ -128,7 +128,7 @@ for N in $SIZES; do
     series $L "r${rep}-N${N}-nor"
     RES=$(grep "^PHYS end    weights" $L | sed -n 's/.*LtRAM \([0-9]*\) .*/\1/p' | tail -1)
     ED=$(( $(gs erases_done) - E0 ))
-    NSL=$(awk -v m="$M" -v l="$LINES" 'BEGIN{printf "%.1f", m*1e9/l}')
+    NSL=$(awk -v m="$M" -v l="$NLINES" 'BEGIN{printf "%.1f", m*1e9/l}')
     echo "$rep,$N,nor_cold,$BYTES,$PAGES,$M,$SD,$NSL,${RES:-0},$CB,$ED,$DB" >> "$OUT"
     PCT=$(awk -v m="$M" -v v="$SD" 'BEGIN{printf "%.2f", (m>0?100*v/m:0)}')
     WU=$(grep "^WARMUP done" $L | tail -1)
