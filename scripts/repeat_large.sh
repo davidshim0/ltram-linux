@@ -43,6 +43,12 @@ TP=/sys/kernel/ltram/target_pid; PB=/sys/module/ltram_policy/parameters/promote_
 HW=/sys/module/ltram_policy/parameters/erase_high_water
 LW=/sys/module/ltram_policy/parameters/erase_low_water
 say(){ echo "[$(date +%H:%M:%S)] $*"; }
+SER=/scratch/hushim/series; mkdir -p $SER
+# Keep the per-pass series. The mean alone cannot tell a run that is still
+# decaying from one that is bimodal, and at 128 and 256 MB the NOR sd is 17%
+# against 0.10% at 64 MB, so the mean there is an average over something that
+# is still moving rather than a latency. 120 numbers per point.
+series(){ grep "^POINT" "$1" | awk '{print NR, $3}' > "$SER/$2.txt"; }
 ps_(){ sudo -n cat $P; }
 g(){ awk -v k="$2" '$1==k{print $2; exit}' <<<"$1"; }
 gs(){ awk -v k="$1" '$1==k{print $2; exit}' $S; }
@@ -99,6 +105,7 @@ for N in $SIZES; do
     L=/tmp/rl-dram.log
     sudo -n $MM --n $N --iters 1 --runs $R --flush 32 --verify > $L 2>&1
     read M SD < <(plateau $L)
+    series $L "r${rep}-N${N}-dram"
     NSL=$(awk -v m="$M" -v l="$LINES" 'BEGIN{printf "%.1f", m*1e9/l}')
     echo "$rep,$N,dram_cold,$BYTES,$PAGES,$M,$SD,$NSL,0,$CB,0,$DB" >> "$OUT"
     say "  dram $M s   $NSL ns/line"
@@ -112,11 +119,15 @@ for N in $SIZES; do
     PID=$(pgrep -x matmul | head -1); [ -n "${PID:-}" ] && echo $PID | sudo -n tee $TP >/dev/null
     wait $BG; echo 0 | sudo -n tee $TP >/dev/null
     read M SD < <(plateau $L)
+    series $L "r${rep}-N${N}-nor"
     RES=$(grep "^PHYS end    weights" $L | sed -n 's/.*LtRAM \([0-9]*\) .*/\1/p' | tail -1)
     ED=$(( $(gs erases_done) - E0 ))
     NSL=$(awk -v m="$M" -v l="$LINES" 'BEGIN{printf "%.1f", m*1e9/l}')
     echo "$rep,$N,nor_cold,$BYTES,$PAGES,$M,$SD,$NSL,${RES:-0},$CB,$ED,$DB" >> "$OUT"
-    say "  nor  $M s   $NSL ns/line   resident ${RES:-0}/$PAGES   erases during run $ED"
+    PCT=$(awk -v m="$M" -v v="$SD" 'BEGIN{printf "%.2f", (m>0?100*v/m:0)}')
+    say "  nor  $M s   $NSL ns/line   sd ${PCT}%   resident ${RES:-0}/$PAGES   erases $ED"
+    awk -v p="$PCT" 'BEGIN{exit !(p>2)}' && \
+        say "  !! sd ${PCT}% -- this run never settled, the mean is not a latency"
     [ "$ED" -gt 0 ] && say "  !! the engine ran during the measurement -- this point is contaminated"
     rm -f $L
 
