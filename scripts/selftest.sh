@@ -62,6 +62,33 @@ LW0=$(cat $PAR/erase_low_water); HW0=$(cat $PAR/erase_high_water)
 PB0=$(cat $PAR/promote_batch)
 EG0=$(cat $PAR/ec_grain 2>/dev/null || echo 1000)
 setw(){ echo "$1" | sudo -n tee $PAR/erase_high_water >/dev/null; echo "$2" | sudo -n tee $PAR/erase_low_water >/dev/null; }
+# Make the pool meet a section's needs instead of inspecting whatever the
+# previous one left behind.
+#
+# H skipped with "only 4287 clean sectors, need 6141" -- which is the suite
+# failing to set up, not a condition worth reporting. The sectors were there,
+# they were just dirty, and recycling them is exactly what the erase engine is
+# for. ~1,850 erases at the observed ~44/s is under a minute.
+#
+# Leaves the engine PINNED OFF, because every caller is about to measure
+# something and a background erase is interference. Sections that want it
+# running (I, J) set their own watermarks straight after.
+ensure_clean(){         # $1 = clean sectors needed; returns 1 if unreachable
+    local want=$1 i
+    [ "$(ps_ clean)" -ge "$want" ] && { setw 0 0; return 0; }
+    if [ "$(ps_ dirty)" -eq 0 ]; then
+        setw 0 0; return 1                      # nothing left to recycle
+    fi
+    echo "     recycling: clean $(ps_ clean) -> $want (dirty $(ps_ dirty))"
+    setw 65536 65535                            # engine unconditionally on
+    for i in $(seq 1 900); do
+        [ "$(ps_ clean)" -ge "$want" ] && break
+        [ "$(ps_ dirty)" -eq 0 ] && break
+        sleep 1
+    done
+    setw 0 0
+    [ "$(ps_ clean)" -ge "$want" ]
+}
 restore(){ setp ec_grain $EG0 2>/dev/null; setp promote_batch $PB0; setp wear_epoch $E0; setp wear_days $D0; setp wear_cycles $C0
            setp wear_governor $G0; setp erase_low_water $LW0; setp erase_high_water $HW0; }
 # INT and TERM too, not just EXIT. A Ctrl-C part way through left matmul
@@ -452,8 +479,8 @@ hdr "H. SELECTIVITY -- does the policy pick the RIGHT pages?"
 # MAJORITY tests, not absolutes. A page can cross between being armed and being
 # written again, so some wrong promotions are expected and fine.
 WPAGES=$(( 1448 * 1448 * 4 / 4096 ))
-if [ "$(ps_ clean)" -lt $((WPAGES * 3)) ]; then
-    skip "H  only $(ps_ clean) clean sectors, need $((WPAGES * 3)) to tell selection from starvation"
+if ! ensure_clean $((WPAGES * 3)); then
+    skip "H  could not reach $((WPAGES * 3)) clean sectors (have $(ps_ clean), dirty $(ps_ dirty))"
 else
     D0=$(ps_ data)
     L=/tmp/st-h.log
@@ -581,6 +608,10 @@ read_run(){     # $1 = tag; echoes ns/line
     echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
     plateau_ns $L $JLINES; rm -f $L
 }
+# J needs BOTH: clean sectors to fill into, and dirty ones for the engine to
+# chew on during the second run. Recycling everything would leave nothing to
+# erase, so aim for the clean target and check dirty afterwards.
+ensure_clean $((JPAGES * 2)) || true
 if [ "$(ps_ clean)" -lt $((JPAGES * 2)) ] || [ "$(ps_ dirty)" -lt 2000 ]; then
     skip "J  needs $((JPAGES*2)) clean and 2000 dirty; have $(ps_ clean) and $(ps_ dirty)"
 else
@@ -615,8 +646,8 @@ hdr "K. FILL EFFICIENCY -- how long, and at what cost in allocations"
 # Pacing is pinned to something predictable first: promote_batch=1 and the
 # governor at a short life, so the model is simply one promotion per tick.
 KN=1448; KPAGES=$(( KN * KN * 4 / 4096 ))
-if [ "$(ps_ clean)" -lt $((KPAGES * 2)) ]; then
-    skip "K  only $(ps_ clean) clean sectors, need $((KPAGES * 2))"
+if ! ensure_clean $((KPAGES * 2)); then
+    skip "K  could not reach $((KPAGES * 2)) clean sectors (have $(ps_ clean), dirty $(ps_ dirty))"
 else
     setp promote_batch 1
     setp wear_governor 1
@@ -696,8 +727,8 @@ hdr "L. WRITE-FAULT DEMOTION -- do pages come BACK?"
 # last, because writing the weights changes the result and every digest has to
 # have been taken first.
 LN=1448; LPAGES=$(( LN * LN * 4 / 4096 ))
-if [ "$(ps_ clean)" -lt $((LPAGES * 2)) ]; then
-    skip "L  only $(ps_ clean) clean sectors, need $((LPAGES * 2))"
+if ! ensure_clean $((LPAGES * 2)); then
+    skip "L  could not reach $((LPAGES * 2)) clean sectors (have $(ps_ clean), dirty $(ps_ dirty))"
 else
     H0=$(gs freed_via_hook); DIRTY0=$(ps_ dirty)
     L=/tmp/st-l.log
@@ -751,8 +782,8 @@ if [ -z "$G0" ]; then
     skip "M  this kernel has no ec_grain parameter (deploy the newer kernel)"
 elif ! command -v python3 >/dev/null 2>&1; then
     skip "M  needs python3 to build the synthetic blob"
-elif [ "$(ps_ clean)" -lt 3000 ]; then
-    skip "M  only $(ps_ clean) clean sectors, need 3000 to see a bucket drain"
+elif ! ensure_clean 3000; then
+    skip "M  could not reach 3000 clean sectors (have $(ps_ clean), dirty $(ps_ dirty))"
 else
     sudo -n $EC save >/dev/null 2>&1
     cp -f $F $MREAL
