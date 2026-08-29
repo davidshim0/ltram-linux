@@ -16,10 +16,16 @@ from matplotlib.ticker import FuncFormatter
 
 LLC = 16 * 1024**2
 NOR = 256 * 1024**2
-# Above N=4096 the compute-only row plus x exceeds the 32 KiB L1D, so the
-# "compute floor" starts carrying real memory traffic. Everything derived from
-# it beyond here is a bound, not a value, and the figures say so.
-COMP_VALID_TO = 64 * 1024**2
+# The compute floor is now valid at EVERY size: matmul --compute-only wraps
+# both operands into a fixed 2048-float prefix (16 KiB), L1D-resident at any N.
+# It measures 112.4 ns/line flat from 32 MB to 1 GB. Before that fix it pinned
+# a whole row, which exceeded L1D above N=4096 and inflated the floor by 22% at
+# the large sizes -- so fig1's components and fig3's shares were bounds there
+# rather than values, and both were shaded. No longer.
+#
+# The wrap costs one AND per iteration, which shows up as a constant ~1.5%
+# ADDED to the floor at every size. That direction understates the memory
+# terms slightly and uniformly, which is the harmless way round.
 
 C_COMP, C_DRAM, C_NOR = "#6B7280", "#1F5F7A", "#9E2F33"
 
@@ -131,16 +137,10 @@ for mode, lab, c, ls in [("nor_cold",  "NOR, cold cache",  C_NOR,  "o-"),
     ax.plot(sizes, [100 * (x - k) / x if x and x > k else float("nan")
                     for x, k in zip(t, comp)], ls, color=c, lw=1.8, label=lab, alpha=0.95)
 ax.set_ylim(0, 100)
-# Past 64 MB the compute baseline itself carries memory traffic, so every share
-# derived from it is understated. Shade it rather than letting it be read as data.
-ax.axvspan(COMP_VALID_TO, sizes[-1] * 1.4, color="#868E8A", alpha=0.13, lw=0)
-ax.text(COMP_VALID_TO * 1.15, 6,
-        "compute baseline unreliable beyond here:\nthe pinned row no longer fits L1,\n"
-        "so these shares are understated",
-        fontsize=7.5, color="#535B58", va="bottom")
 frame(ax, "Memory access latency as a share of total run time", "% of the pass spent reaching the weights",
-      "Measured as (total minus compute) over total. On DRAM it is ~44% of the pass, which is "
-      "why a medium\nroughly 10x slower per access yields only ~4.8x end to end.")
+      "Measured as (total minus compute) over total, with the compute floor held L1-resident "
+      "at every size.\nOn DRAM it is roughly half the pass, which is why a medium ~9x slower "
+      "per access costs only ~4.6x end to end.")
 ax.legend(fontsize=9.5, loc="center left", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig3-memory-share.png", dpi=160)
 
@@ -156,12 +156,10 @@ for s in sizes:
         dc, nc, cp = e[dm][0], e[nm][0], e["comp"][0]
         md, mn = dc - cp, nc - cp
         res = e[nm][2] / e[nm][1] * 100 if e[nm][1] else 0
-        flag = " *" if s > COMP_VALID_TO else ""
+        flag = ""
         print(f"{human(s):>8} {cp:9.5f} | {dc:9.5f} {md:9.5f} {100*md/dc:3.0f}% "
               f"| {nc:9.5f} {mn:9.5f} {100*mn/nc:3.0f}% "
               f"| {nc/dc:5.2f} {(mn/md if md > 0 else float('nan')):6.2f} {res:4.0f}% {tag}{flag}")
-print("\n* compute baseline inflated: the pinned row exceeds L1D above N=4096,")
-print("  so wDRAM and wNOR are understated and wRatio is overstated.")
 
 # Per cache line, cold. Nothing derived: both columns are a measured total
 # divided by the line count, so this is the honest answer to "why does the
