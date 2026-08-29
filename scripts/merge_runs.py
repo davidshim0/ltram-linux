@@ -18,20 +18,42 @@ import csv, argparse, sys
 ap = argparse.ArgumentParser()
 ap.add_argument("base"); ap.add_argument("overlay")
 ap.add_argument("-o", "--out", required=True)
+ap.add_argument("--pool", type=int, default=65536,
+                help="LtRAM sectors, for the residency check")
 a = ap.parse_args()
 
 rows = list(csv.reader(open(a.base)))
 hdr, body = rows[0], rows[1:]
 COL = {name: i for i, name in enumerate(hdr)}
 
-over = {}
+over, rejected = {}, []
 for r in csv.DictReader(open(a.overlay)):
     try:
         if not float(r["mean_s"]) > 0:
             continue
     except (ValueError, KeyError):
         continue
+
+    # A NOR row that did not reach the residency its size ALLOWS is a blend of
+    # both media, not a medium latency, and merging it silently replaces a
+    # good number with a worse one. "Last wins" cannot catch that on its own:
+    # the 512 MB cold row measured at 43.7% arrived after the sweep's 50% row
+    # and would have overwritten it.
+    #
+    # The ceiling is set by the pool, not by the working set: a 1 GB run can
+    # never exceed 65,536/262,144 = 25%, and 25% there is complete, not short.
+    if r["mode"].startswith("nor_"):
+        pages = int(r["pages"])
+        reach = 100.0 * min(pages, a.pool) / pages
+        got = 100.0 * int(r.get("resident", 0) or 0) / pages
+        if got < 0.95 * reach:
+            rejected.append((r["n"], r["mode"], got, reach))
+            continue
     over[(r["n"], r["mode"])] = r          # last wins
+
+for n, mode, got, reach in rejected:
+    print(f"REJECTED N={n} {mode}: {got:.1f}% resident, this size allows {reach:.1f}% "
+          f"-- a blend, not a latency")
 
 out, seen, replaced = [], set(), 0
 for r in body:

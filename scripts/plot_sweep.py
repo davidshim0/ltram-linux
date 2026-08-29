@@ -39,12 +39,19 @@ def col(mode):
     return [d[s][mode][0] if mode in d[s] else float("nan") for s in sizes]
 
 def human(b, _=None):
-    """32 KB, 1 MB, 256 MB. The measured sizes are N*N*4 so they are near, not
-    on, the powers of two; label the intent rather than the arithmetic."""
-    e = round(math.log2(b)); v = 2 ** e
+    """32 KB, 1 MB, 192 MB. The measured sizes are N*N*4 so they land near, not
+    on, round numbers -- 201,299,536 bytes is 191.97 MB and means 192.
+
+    Do NOT snap to a power of two. That worked while every size was one, and
+    silently mislabelled 192 MB as 256 MB the moment a size in between was
+    measured: round(log2(201299536)) is 28."""
     for u, n in (("GB", 2**30), ("MB", 2**20), ("KB", 2**10)):
-        if v >= n: return f"{v // n} {u}"
-    return f"{v} B"
+        if b >= n:
+            v = b / n
+            if v >= 10 or abs(v - round(v)) < 0.05:
+                return f"{round(v):g} {u}"
+            return f"{v:.1f} {u}"
+    return f"{b} B"
 
 def frame(ax, title, ylab, note=None):
     ax.set_xscale("log", base=2)
