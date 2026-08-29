@@ -1816,9 +1816,10 @@ static int lt_wear_show(struct seq_file *m, void *v)
 	seq_printf(m, "epoch            %lu\n", wear_epoch);
 	seq_printf(m, "service_days     %u\n", wear_days);
 	seq_printf(m, "cycles_per_sect  %u\n", wear_cycles);
-	seq_printf(m, "erases_total     %llu\n", total);
-	seq_printf(m, "erases_used      %llu\n", used);
-	seq_printf(m, "erases_left      %llu\n", total > used ? total - used : 0);
+	seq_printf(m, "basis            allocations (upper bound on erases)\n");
+	seq_printf(m, "cycles_total     %llu\n", total);
+	seq_printf(m, "cycles_used      %llu\n", used);
+	seq_printf(m, "cycles_left      %llu\n", total > used ? total - used : 0);
 	seq_printf(m, "seconds_left     %lld\n", secs);
 	if (ms == LT_WEAR_STOP)
 		seq_puts(m, "interval_ms      STOPPED\n");

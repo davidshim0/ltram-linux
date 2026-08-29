@@ -67,7 +67,7 @@ if [ "$MODE" = "--pre" ]; then
     hdr "PRE-REBOOT STAMP"
     [ -x $EC ] || { echo "  erase-count unit not installed -- nothing to test"; exit 1; }
     sudo -n $EC save >/dev/null || { echo "  save FAILED"; exit 1; }
-    { echo "used $(w erases_used)"
+    { echo "used $(w cycles_used)"
       echo "data $(ps_ data)"; echo "dirty $(ps_ dirty)"; echo "clean $(ps_ clean)"
       echo "pages $NPG"
       echo "md5 $(sudo -n md5sum /var/lib/ltram/erase_counts | cut -d" " -f1)"
@@ -81,7 +81,7 @@ if [ "$MODE" = "--post" ]; then
     hdr "POST-REBOOT COMPARISON"
     [ -f $STAMP ] || { echo "  no stamp at $STAMP -- run --pre before rebooting"; exit 1; }
     P_USED=$(awk '/^used/{print $2}' $STAMP); P_PG=$(awk '/^pages/{print $2}' $STAMP)
-    N_USED=$(w erases_used)
+    N_USED=$(w cycles_used)
     [ "$NPG" = "$P_PG" ] && ok "R1 window is the same size ($NPG pages)"         || no "R1 window changed $P_PG -> $NPG; a blob from the old size is refused BY DESIGN"
     # A LOWER bound: the shutdown save may have caught erases after the stamp,
     # and a few sectors can be erased at boot before the restore lands.
@@ -89,7 +89,7 @@ if [ "$MODE" = "--post" ]; then
     [ "${N_USED:-0}" -ge "$P_USED" ]         && ok "R3 restored count >= the stamp ($N_USED >= $P_USED)"         || no "R3 restored $N_USED is BELOW the stamp $P_USED -- more was lost than the shutdown delta"
     # The epoch is a date, not a measurement: it must come back bit-identical.
     # A kernel default that quietly reasserts itself changes seconds_left, and
-    # the whole budget is erases_left divided by that.
+    # the whole budget is cycles_left divided by that.
     P_EP=$(awk '/^epoch/{print $2}' $STAMP); N_EP=$(w epoch)
     if [ -n "${P_EP:-}" ]; then
         [ "$N_EP" = "$P_EP" ] && ok "R8 wear epoch survived unchanged ($N_EP)" || no "R8 epoch was $P_EP, is now $N_EP -- the compiled default reasserted itself"
@@ -111,24 +111,24 @@ fi
 # =====================================================================
 hdr "A. WEAR BUDGET -- arithmetic (no erases)"
 
-TOT=$(w erases_total); USED=$(w erases_used); LEFT=$(w erases_left)
+TOT=$(w cycles_total); USED=$(w cycles_used); LEFT=$(w cycles_left)
 NP=$(( $(cat $DBG/end_pfn) - $(cat $DBG/start_pfn) ))
-[ "$TOT" = "$((NP * C0))" ] && ok "A1 erases_total = nr_pages x cycles ($NP x $C0)" \
-    || no "A1 erases_total $TOT != $((NP * C0))"
-[ "$LEFT" = "$((TOT - USED))" ] && ok "A2 erases_left = total - used" \
-    || no "A2 erases_left $LEFT != $((TOT - USED))"
+[ "$TOT" = "$((NP * C0))" ] && ok "A1 cycles_total = nr_pages x cycles ($NP x $C0)" \
+    || no "A1 cycles_total $TOT != $((NP * C0))"
+[ "$LEFT" = "$((TOT - USED))" ] && ok "A2 cycles_left = total - used" \
+    || no "A2 cycles_left $LEFT != $((TOT - USED))"
 
-# erases_used must equal the sum of the per-sector counts, or the budget is
+# cycles_used must equal the sum of the per-sector counts, or the budget is
 # being computed from a number that drifted away from the array it describes.
 SUM=$(sudo -n cat $DBG/erase_counts | od -An -tu4 -j16 -v | tr -s ' ' '\n' | \
       grep -v '^$' | awk '{s+=$1} END{print s+0}')
-[ "$SUM" = "$USED" ] && ok "A3 erases_used matches the sum of erase_counts ($SUM)" \
-    || no "A3 erases_used $USED != sum of erase_counts $SUM -- the O(1) total drifted"
+[ "$SUM" = "$USED" ] && ok "A3 cycles_used matches the sum of erase_counts ($SUM)" \
+    || no "A3 cycles_used $USED != sum of erase_counts $SUM -- the O(1) total drifted"
 
-# interval = 1000 * seconds_left / erases_left, the whole governor in one line
+# interval = 1000 * seconds_left / cycles_left, the whole governor in one line
 SL=$(w seconds_left); IV=$(w interval_ms)
 EXP=$(awk -v s="$SL" -v l="$LEFT" 'BEGIN{printf "%d", 1000*s/l}')
-near "$IV" "$EXP" 1 && ok "A4 interval_ms $IV = 1000 x seconds_left / erases_left ($EXP)" \
+near "$IV" "$EXP" 1 && ok "A4 interval_ms $IV = 1000 x seconds_left / cycles_left ($EXP)" \
     || no "A4 interval_ms $IV != $EXP"
 
 hdr "B. WEAR BUDGET -- the knobs move the rate the right way"
@@ -195,9 +195,9 @@ if [ -x $EC ]; then
     dmesg 2>/dev/null | tail -30 | grep -q "erase-count blob rejected" \
         && ok "D3b kernel logged the rejection" || skip "D3b no rejection line in dmesg"
     sudo -n $EC restore >/dev/null 2>&1 && ok "D4 full blob restores" || no "D4 restore failed"
-    near "$(w erases_used)" "$USED" 200 \
-        && ok "D5 erases_used survives a restore ($(w erases_used) vs $USED)" \
-        || no "D5 erases_used $(w erases_used) != $USED after restore"
+    near "$(w cycles_used)" "$USED" 200 \
+        && ok "D5 cycles_used survives a restore ($(w cycles_used) vs $USED)" \
+        || no "D5 cycles_used $(w cycles_used) != $USED after restore"
     if [ -f $EPF ]; then
         [ "$(cat $EPF)" = "$(w epoch)" ] && ok "D6 saved epoch matches the live parameter ($(w epoch))" || no "D6 saved epoch $(cat $EPF) != live $(w epoch)"
     else no "D6 no $EPF -- restore has never stamped the epoch"; fi

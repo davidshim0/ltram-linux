@@ -42,7 +42,7 @@ HDR=16
 # by the time remaining from it. The kernel carries a compiled-in default, so
 # without a file on disk the date silently resets on every boot -- and moves
 # again the first time the kernel is rebuilt with a different constant. Then
-# "erases_left / seconds_left" is dividing by a number that changed for
+# "cycles_left / seconds_left" is dividing by a number that changed for
 # reasons having nothing to do with the device.
 #
 # So the FILE is the authority, and it is written once. restore pushes it into
@@ -136,7 +136,7 @@ show)
     if [ -r $EPOCHP ]; then
         E=$(cat $EPOCHP)
         echo "epoch: $E ($(date -u -d @$E 2>/dev/null))$([ -f $EPOCHF ] && [ "$(cat $EPOCHF)" != "$E" ] && echo "  != saved $(cat $EPOCHF)")"
-        [ -r /sys/kernel/debug/ltram/wear ] && awk '/^interval_ms|^erases_left|^seconds_left/{printf "  %-14s %s\n", $1, $2}' /sys/kernel/debug/ltram/wear
+        [ -r /sys/kernel/debug/ltram/wear ] && awk '/^interval_ms|^cycles_left|^seconds_left/{printf "  %-14s %s\n", $1, $2}' /sys/kernel/debug/ltram/wear
     fi
     ;;
 *)
