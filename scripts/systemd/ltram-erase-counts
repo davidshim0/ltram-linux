@@ -34,6 +34,7 @@ STATE=/var/lib/ltram
 F=$STATE/erase_counts
 EPOCHF=$STATE/wear_epoch
 EPOCHP=/sys/module/ltram_policy/parameters/wear_epoch
+HIST=$STATE/wear-history.tsv
 HDR=16
 
 # THE EPOCH IS A DATE, NOT A MEASUREMENT.
@@ -56,6 +57,54 @@ HDR=16
 die(){ echo "ltram-erase-counts: $*" >&2; exit 1; }
 note(){ echo "ltram-erase-counts: $*"; }
 
+# A row of wear distribution, appended on every save and every restore -- which
+# is already boot, plus before and after every measured point.
+#
+# NOT a pass/fail, for a sharper reason than I first thought.
+#
+# The ALLOCATOR's buckets are LT_EC_GRAIN = 1000 erases wide (101 of them,
+# covering 0..100,000). The log2 "ec_histogram" printed beside them in
+# pagestate is display only. So with counts around 20-35, every sector sits in
+# bucket 0 and will keep sitting there until one reaches 1000 erases -- about
+# 65 million more erases away at the current mean.
+#
+# Which means the bucket ORDER is doing nothing yet: inside a bucket the free
+# list is FIFO, so today's levelling is pure round-robin over the pool. That
+# is why the spread stays tight, and why a bucket-based assertion would be
+# testing machinery that has not started working.
+#
+# What is left to watch is the spread, and only as a trend -- a single reading
+# cannot show one. This records it.
+#
+# The interesting column is spread against mean. Levelling is working if that
+# ratio falls as erases accumulate: it went from 8/9.9 = 81% to 10/23.6 = 42%
+# over the first campaign, which is the distribution tightening, not widening.
+wear_row(){
+    local ev="$1" ps mn mx sp tot nb
+    [ -r $DBG/pagestate ] || return 0
+    ps=$(cat $DBG/pagestate 2>/dev/null) || return 0
+    mn=$(sed -n 's/.*erase_count *min \([0-9]*\).*/\1/p' <<<"$ps")
+    mx=$(sed -n 's/.*max \([0-9]*\) *spread.*/\1/p' <<<"$ps")
+    sp=$(sed -n 's/.*spread \([0-9]*\).*/\1/p' <<<"$ps")
+    tot=$(awk '/^total_allocs/{print $2; exit}' <<<"$ps")
+    # ONLY the allocator's clean_buckets, not the log2 display histogram
+    # that precedes it -- counting both gave 3 on a pool entirely in bucket 0.
+    nb=$(sed -n '/^clean_buckets/,$p' <<<"$ps" | grep -c '^  \[')
+    mkdir -p $STATE
+    [ -f $HIST ] || echo -e "when\tevent\ttotal\tmin\tmax\tspread\tmean\tbuckets\tdata\tdirty\tclean" > $HIST
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "$(date -Iseconds)" "$ev" "${tot:-?}" "${mn:-?}" "${mx:-?}" "${sp:-?}" \
+      "$(awk -v t="${tot:-0}" 'BEGIN{printf "%.1f", t/65536}')" "${nb:-?}" \
+      "$(awk '/^data/{print $2; exit}' <<<"$ps")" \
+      "$(awk '/^dirty/{print $2; exit}' <<<"$ps")" \
+      "$(awk '/^clean/{print $2; exit}' <<<"$ps")" >> $HIST
+    # Root sits at 99%, so bound it rather than letting a long campaign grow
+    # a file nobody is watching.
+    if [ "$(wc -l < $HIST)" -gt 5000 ]; then
+        { head -1 $HIST; tail -4000 $HIST; } > $HIST.tmp && mv -f $HIST.tmp $HIST
+    fi
+}
+
 expected_size(){
     local lo hi n
     lo=$(cat $DBG/start_pfn 2>/dev/null) || return 1
@@ -65,6 +114,19 @@ expected_size(){
 }
 
 case "${1:-}" in
+history)
+    [ -f $HIST ] || { note "no history yet at $HIST"; exit 0; }
+    N=${2:-20}
+    { head -1 $HIST; tail -n "$N" $HIST; } | column -t -s $'\t'
+    echo
+    echo "spread/mean is the number to watch. buckets are 1000 erases wide, so"
+    echo "everything stays in bucket 0 until a sector reaches 1000 -- inside a"
+    echo "bucket the free list is FIFO, so levelling today is round-robin."
+    ;;
+mark)
+    # For pinning a point in the trend by hand, e.g. before a campaign.
+    wear_row "${2:-mark}"; note "recorded '${2:-mark}' in $HIST"
+    ;;
 epoch)
     [ -r $EPOCHP ] || die "no $EPOCHP -- this kernel has no wear governor"
     if [ -n "${2:-}" ]; then
@@ -96,6 +158,7 @@ save)
     [ -f $F ] && cp -f $F $F.prev 2>/dev/null
     mv -f $F.tmp $F
     sync -f $F 2>/dev/null || sync
+    wear_row save
     note "saved $GOT bytes to $F"
     ;;
 restore)
@@ -124,6 +187,7 @@ restore)
     # loops on partial writes; dd reports them and moves on.
     cat $F > $DBG/erase_counts || die "restore failed -- check dmesg for a rejected header"
     note "restored $GOT bytes from $F"
+    wear_row restore
     dmesg 2>/dev/null | tail -20 | grep -E "ltram: (erase counts restored|erase-count blob rejected)" | tail -1
     ;;
 show)
@@ -140,5 +204,5 @@ show)
     fi
     ;;
 *)
-    echo "usage: $0 {save|restore|show|epoch [UNIX_SECONDS]}"; exit 2;;
+    echo "usage: $0 {save|restore|show|epoch [UNIX_SECONDS]|history [N]|mark [LABEL]}"; exit 2;;
 esac
