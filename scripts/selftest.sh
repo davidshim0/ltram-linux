@@ -70,6 +70,13 @@ restore(){ setp ec_grain $EG0 2>/dev/null; setp promote_batch $PB0; setp wear_ep
 # process nobody was measuring.
 cleanup(){
     pkill -x matmul 2>/dev/null
+    # The synthetic wear profile in section M must never outlive the run: it
+    # would overwrite the endurance ledger with a fiction.
+    if [ "${MRESTORE:-0}" = 1 ] && [ -f /var/lib/ltram/erase_counts.real ]; then
+        cat /var/lib/ltram/erase_counts.real > /sys/kernel/debug/ltram/erase_counts 2>/dev/null
+        cp -f /var/lib/ltram/erase_counts.real /var/lib/ltram/erase_counts 2>/dev/null
+        echo "  (restored the real erase counts)" >&2
+    fi
     [ -n "${SLEEPER:-}" ] && kill "$SLEEPER" 2>/dev/null
     echo 0 > /sys/kernel/ltram/target_pid 2>/dev/null
     restore
@@ -724,40 +731,104 @@ else
 fi
 
 hdr "M. WEAR BUCKETS -- least worn first"
-# The allocator's buckets are ec_grain erases wide. At the default 1000 every
-# sector is in bucket 0 and stays there until one reaches 1,000 erases -- about
-# 65 million away -- so lt_bucket_of() and the per-bucket free lists cannot be
-# reached at all by normal use.
+# The allocator hands out from the LOWEST non-empty bucket, so the least worn
+# sector goes first. At the default grain of 1000 that decision is never
+# actually made: counts sit at 20-35, every sector is in bucket 0, and the
+# ordering code is unreachable until a sector reaches 1,000 erases -- about 65
+# million away.
 #
-# ec_grain is writable for exactly this. At 10, today's counts of ~20-35 spread
-# across three or four buckets, and "least worn first" becomes observable in
-# seconds rather than by burning through the chip.
+# So construct the situation instead of waiting for it. A synthetic blob gives
+# the pool four distinct wear levels, grain 10 puts them in four buckets, and
+# then allocating must drain the lowest one before touching the next.
+#
+# THE REAL ERASE COUNTS ARE THE ENDURANCE LEDGER. They are backed up first and
+# restored afterwards, including on interrupt. The erases that happen during
+# this section are lost from the record -- a handful, and in the direction
+# already documented as a lower bound.
 G0=$(cat $PAR/ec_grain 2>/dev/null || echo "")
+MREAL=/var/lib/ltram/erase_counts.real
 if [ -z "$G0" ]; then
-    skip "M  this kernel has no ec_grain parameter"
+    skip "M  this kernel has no ec_grain parameter (deploy the newer kernel)"
+elif ! command -v python3 >/dev/null 2>&1; then
+    skip "M  needs python3 to build the synthetic blob"
+elif [ "$(ps_ clean)" -lt 3000 ]; then
+    skip "M  only $(ps_ clean) clean sectors, need 3000 to see a bucket drain"
 else
+    sudo -n $EC save >/dev/null 2>&1
+    cp -f $F $MREAL
+    MRESTORE=1
+
+    # Four wear levels, 10 apart: buckets 0,1,2,3 at grain 10.
+    python3 - "$NP" > /tmp/synth.blob <<'PYB'
+import struct, sys
+n = int(sys.argv[1])
+out = [struct.pack('<IIII', 0x4C544543, 1, n, 0)]
+out += [struct.pack('<I', (i % 4) * 10 + 5) for i in range(n)]
+sys.stdout.buffer.write(b''.join(out))
+PYB
     setp ec_grain 10
+    cat /tmp/synth.blob > $DBG/erase_counts && ok "M1 synthetic wear profile accepted" \
+        || no "M1 kernel refused the synthetic blob"
     sleep 1
-    NB=$(sed -n '/^clean_buckets/,$p' $DBG/pagestate | grep -c '^  \[')
-    LO=$(sed -n '/^clean_buckets/,$p' $DBG/pagestate | grep '^  \[' | head -1)
-    echo "     at grain 10: $NB non-empty buckets"
-    sed -n '/^clean_buckets/,$p' $DBG/pagestate | grep '^  \[' | head -4 | sed 's/^/     /'
-
     [ "$(awk '/^invariant/{print $2}' $DBG/pagestate)" = "ok" ] \
-        && ok "M1 rebuilding the buckets at grain 10 kept the invariant" \
-        || no "M1 invariant broke after changing ec_grain -- the rebuild is wrong"
-    [ "${NB:-0}" -ge 2 ] \
-        && ok "M2 the pool spreads across $NB buckets at grain 10 (1 at the default)" \
-        || no "M2 still $NB bucket at grain 10 -- the spread is too tight to test ordering"
+        && ok "M2 rebuilding the free lists at grain 10 kept the invariant" \
+        || no "M2 invariant broke after the rebuild -- lt_rebuild_buckets is wrong"
 
-    # Least worn first: the lowest bucket must drain before a higher one is
-    # touched. min erase count over the clean pool can only rise.
-    MIN0=$(sed -n 's/.*erase_count *min \([0-9]*\).*/\1/p' $DBG/pagestate)
+    buckets_now(){ sed -n '/^clean_buckets/,$p' $DBG/pagestate | \
+        sed -n 's/^  \[ *\([0-9]*\)\.\..*\] *\([0-9]*\) clean.*/\1 \2/p'; }
+    echo "     buckets before allocating:"; buckets_now | head -5 | sed 's/^/       lo=/'
+    NB=$(buckets_now | wc -l)
+    [ "$NB" -ge 3 ] && ok "M3 the pool spreads across $NB buckets (1 at the default grain)" \
+        || no "M3 only $NB bucket(s) after seeding four wear levels"
+
+    B0_LO=$(buckets_now | head -1 | cut -d' ' -f1)
+    B0_N=$(buckets_now | head -1 | cut -d' ' -f2)
+    B1_N=$(buckets_now | sed -n 2p | cut -d' ' -f2)
+
+    # Allocate ~512 sectors. All of them must come out of the lowest bucket,
+    # which has thousands, so the next bucket must not move at all.
+    MN=724; MPAGES=$(( MN * MN * 4 / 4096 ))
+    L=/tmp/st-m.log
+    sudo -n $MM --n $MN --iters 1 --runs 40 --flush 32 --verify --print-ranges --phys \
+        --wait-resident 90 --wait-timeout 120 --wait-stable 25 --wait-hold 12 > $L 2>&1 &
+    BG=$!
+    for i in $(seq 1 600); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 0.1; done
+    PID=$(pgrep -x matmul | head -1)
+    [ -n "${PID:-}" ] && echo $PID | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    for i in $(seq 1 2000); do
+        grep -q "^WARMUP hold" $L 2>/dev/null && break
+        kill -0 $BG 2>/dev/null || break
+        sleep 0.1
+    done
+    B0_N2=$(buckets_now | grep "^$B0_LO " | cut -d' ' -f2); B0_N2=${B0_N2:-0}
+    B1_N2=$(buckets_now | sed -n "/^$B0_LO /!p" | head -1 | cut -d' ' -f2)
+    wait $BG 2>/dev/null
+    echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+
+    TOOK=$(( B0_N - B0_N2 ))
+    echo "     lowest bucket $B0_N -> $B0_N2 (took $TOOK), next bucket $B1_N -> ${B1_N2:-?}"
+    [ "$TOOK" -gt 100 ] \
+        && ok "M4 $TOOK sectors came out of the LOWEST bucket" \
+        || no "M4 the lowest bucket only gave up $TOOK sectors"
+    # The decisive one: while the lowest bucket still had sectors, no higher
+    # bucket may have been touched.
+    if [ "$B0_N2" -gt 0 ] && [ -n "${B1_N2:-}" ]; then
+        [ "$B1_N2" = "$B1_N" ] \
+            && ok "M5 the next bucket was untouched while the lowest still had $B0_N2 -- least worn first" \
+            || no "M5 the next bucket moved $B1_N -> $B1_N2 while the lowest still had $B0_N2 -- NOT least worn first"
+    else
+        skip "M5 the lowest bucket emptied, so ordering against the next is not decidable here"
+    fi
+    rm -f $L /tmp/synth.blob
+
     setp ec_grain $G0
+    cat $MREAL > $DBG/erase_counts && cp -f $MREAL $F
+    MRESTORE=0
     sleep 1
     [ "$(awk '/^invariant/{print $2}' $DBG/pagestate)" = "ok" ] \
-        && ok "M3 restoring grain $G0 rebuilt cleanly (min erase count $MIN0)" \
-        || no "M3 invariant broke restoring grain $G0"
+        && ok "M6 real erase counts restored, grain back to $G0, invariant ok" \
+        || no "M6 invariant broke restoring the real counts"
+    rm -f $MREAL
 fi
 
 hdr "RESULT"
