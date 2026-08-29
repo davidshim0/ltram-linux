@@ -37,6 +37,17 @@ setp(){ echo "$2" | sudo -n tee $PAR/$1 >/dev/null; }
 near(){ awk -v a="$1" -v b="$2" -v t="$3" 'BEGIN{d=a-b; if(d<0)d=-d; exit !(d<=t)}'; }
 
 [ -r $DBG/wear ] || { echo "no $DBG/wear -- is the wear-governor kernel booted?"; exit 1; }
+# Fail loudly on version skew between this script and the kernel. When the
+# budget fields were renamed erases_* -> cycles_*, an unshipped script read
+# every one of them as empty: section A reported four failures with blank
+# values, and D5 "passed" by comparing one empty string to another. A false
+# pass is worse than a crash.
+for f in cycles_total cycles_used cycles_left seconds_left interval_ms epoch; do
+    grep -q "^$f " $DBG/wear || {
+        echo "!! $DBG/wear has no '$f' field -- this script and the running"
+        echo "   kernel disagree about the schema. Ship the matching selftest.sh."
+        echo; sed 's/^/     /' $DBG/wear; exit 1; }
+done
 MODE=${1:-full}
 if [ "$MODE" != "--quick" ] && [ "$MODE" != "--pre" ] && [ "$MODE" != "--post" ]; then
     [ -x "$MM" ] || { echo "no matmul at $MM -- sections E and G need it"; exit 1; }
