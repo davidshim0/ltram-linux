@@ -35,7 +35,13 @@ set -u
 REPS=10; OUT=/scratch/hushim/large.csv; SIZES="4096 5793 8192"
 WAIT=99.5; DO_DRAM=1; MODES="nor_cold"; WARM_ENGINE=0
 while [ $# -gt 0 ]; do case "$1" in
-  --reps) REPS=$2; shift;; --out) OUT=$2; shift;; --sizes) SIZES=$2; shift;; --wait) WAIT=$2; shift;; --nor-only) DO_DRAM=0;;   # accepted and ignored: --modes decides now --modes) MODES=$2; shift;; --warm-engine) WARM_ENGINE=1;;
+  --reps)        REPS=$2; shift;;
+  --out)         OUT=$2; shift;;
+  --sizes)       SIZES=$2; shift;;
+  --wait)        WAIT=$2; shift;;
+  --modes)       MODES=$2; shift;;
+  --warm-engine) WARM_ENGINE=1;;
+  --nor-only)    DO_DRAM=0;;
   *) echo "usage: $0 [--reps N] [--out FILE] [--sizes \"N N N\"] [--wait PCT] [--nor-only] [--modes \"...\"] [--warm-engine]"; exit 2;; esac; shift; done
 
 MM=$HOME/matmul; KO=$HOME/nor_eci/nor_eci_fulltest_ltram.ko
