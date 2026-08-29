@@ -57,6 +57,7 @@ fi
 # Restore every knob we touch, however we leave.
 E0=$(w epoch); D0=$(w service_days); C0=$(w cycles_per_sect); G0=$(cat $PAR/wear_governor)
 LW0=$(cat $PAR/erase_low_water); HW0=$(cat $PAR/erase_high_water)
+setw(){ echo "$1" | sudo -n tee $PAR/erase_high_water >/dev/null; echo "$2" | sudo -n tee $PAR/erase_low_water >/dev/null; }
 restore(){ setp wear_epoch $E0; setp wear_days $D0; setp wear_cycles $C0
            setp wear_governor $G0; setp erase_low_water $LW0; setp erase_high_water $HW0; }
 # INT and TERM too, not just EXIT. A Ctrl-C part way through left matmul
@@ -65,6 +66,7 @@ restore(){ setp wear_epoch $E0; setp wear_days $D0; setp wear_cycles $C0
 # process nobody was measuring.
 cleanup(){
     pkill -x matmul 2>/dev/null
+    [ -n "${SLEEPER:-}" ] && kill "$SLEEPER" 2>/dev/null
     echo 0 > /sys/kernel/ltram/target_pid 2>/dev/null
     restore
 }
@@ -392,6 +394,105 @@ else
             || no "H3 result vector ${YRES}% resident -- a written region was promoted and kept"
     else skip "H3 no PHYS end line for the result vector"; fi
     rm -f $L
+fi
+
+hdr "I. ERASE HYSTERESIS, SPACING, AND WHAT IT COSTS READS"
+# Section F is called "hysteresis and spacing" and tests neither. This does.
+#
+# The trick is to move the WATERMARKS rather than the pool. With clean at C,
+# setting low=C+1 turns the engine on at once (clean < low) and high=C+N stops
+# it after exactly N erases -- so both edges of the latch and the per-erase
+# period come out of one N-erase window, with no promotion needed.
+period_of(){    # $1 = erases to time; echoes ms per erase, or "" on timeout
+    local c n t0 t1 i
+    c=$(ps_ clean); n=$(( c + $1 ))
+    setw $n $(( c + 1 ))
+    t0=$(date +%s.%N)
+    for i in $(seq 1 2000); do
+        [ "$(ps_ clean)" -ge "$n" ] && break
+        sleep 0.1
+    done
+    t1=$(date +%s.%N)
+    [ "$(ps_ clean)" -ge "$n" ] || { echo ""; return; }
+    awk -v a="$t0" -v b="$t1" -v k="$1" 'BEGIN{printf "%.1f", 1000*(b-a)/k}'
+}
+
+if [ "$(ps_ dirty)" -lt 1200 ]; then
+    skip "I  only $(ps_ dirty) dirty sectors, need 1200 to time an erase window"
+else
+    echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    P_IDLE=$(period_of 400)
+    # I1: the latch must STOP at the high mark, not run the pool dry.
+    C_AT_HIGH=$(ps_ clean); sleep 4; C_AFTER=$(ps_ clean)
+    [ -n "$P_IDLE" ] && [ "$C_AFTER" = "$C_AT_HIGH" ] \
+        && ok "I1 engine started below the low mark and STOPPED at the high mark (clean held at $C_AFTER)" \
+        || no "I1 clean went $C_AT_HIGH -> $C_AFTER after reaching the high mark -- the latch did not stop it"
+    [ -n "$P_IDLE" ] && ok "I2 idle period ${P_IDLE} ms per erase ($(awk -v p="$P_IDLE" 'BEGIN{printf "%.0f", 1000/p}')/s)" \
+        || no "I2 idle window never completed 400 erases"
+
+    # I3: with a pid attached the worker re-arms at erase_poll_ms instead of 0,
+    # so the period must grow by roughly that much. This is the whole
+    # read-latency argument -- spacing, not batching, is what limits
+    # interference, and nothing had ever checked the spacing was applied.
+    POLL=$(cat $PAR/erase_poll_ms)
+    # A real pid with almost no anonymous memory. The erase worker only tests
+    # target_pid for non-zero, so anything works for the spacing -- but the
+    # SCANNER walks whatever it points at, and aiming it at this script would
+    # have it promoting bash's heap as a side effect of an erase test.
+    sleep 300 & SLEEPER=$!
+    echo $SLEEPER | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    P_BUSY=$(period_of 300)
+    echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    kill $SLEEPER 2>/dev/null; wait $SLEEPER 2>/dev/null
+    if [ -n "$P_BUSY" ] && [ -n "$P_IDLE" ]; then
+        GREW=$(awk -v a="$P_IDLE" -v b="$P_BUSY" 'BEGIN{printf "%.1f", b-a}')
+        awk -v g="$GREW" -v p="$POLL" 'BEGIN{exit !(g > p*0.5)}' \
+            && ok "I3 a targeted pid spaces erases: ${P_IDLE} -> ${P_BUSY} ms (+${GREW}, erase_poll_ms=${POLL})" \
+            || no "I3 period grew only ${GREW} ms with a pid attached, expected ~${POLL}"
+    else skip "I3 could not time the busy window"; fi
+    setw $HW0 $LW0
+fi
+
+hdr "J. READ LATENCY WHILE ERASING"
+# NOR cannot serve a read while a sector is erasing, so background erase is
+# paid for in read latency. That cost is the entire reason erase_batch is 1 and
+# the worker spaces at erase_poll_ms -- and it had never been measured.
+plateau_ns(){ grep "^POINT" "$1" | awk -v l="$2" '{v[n++]=$3} END{
+    if(!n){print ""; exit} s=int(n*0.7); c=0; t=0
+    for(i=s;i<n;i++){c++; t+=v[i]}
+    printf "%.1f", (t/c)*1e9/l }'; }
+JN=1448; JPAGES=$(( JN * JN * 4 / 4096 )); JLINES=$(( JN * JN * 4 / 128 ))
+read_run(){     # $1 = tag; echoes ns/line
+    local L=/tmp/st-j-$1.log bg pid
+    sudo -n $MM --n $JN --iters 1 --runs 200 --flush 32 --verify --print-ranges --phys \
+        --wait-resident 90 --wait-timeout 240 --wait-stable 30 > $L 2>&1 &
+    bg=$!
+    for i in $(seq 1 600); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 0.1; done
+    pid=$(pgrep -x matmul | head -1)
+    [ -n "${pid:-}" ] && echo $pid | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    wait $bg 2>/dev/null
+    echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    plateau_ns $L $JLINES; rm -f $L
+}
+if [ "$(ps_ clean)" -lt $((JPAGES * 2)) ] || [ "$(ps_ dirty)" -lt 2000 ]; then
+    skip "J  needs $((JPAGES*2)) clean and 2000 dirty; have $(ps_ clean) and $(ps_ dirty)"
+else
+    setw 0 0; sleep 2       # engine pinned off for the baseline run
+    NS_QUIET=$(read_run quiet)
+    setw 65536 65535          # engine wide open for the second run
+    NS_BUSY=$(read_run busy)
+    setw $HW0 $LW0
+    if [ -n "$NS_QUIET" ] && [ -n "$NS_BUSY" ]; then
+        RATIO=$(awk -v a="$NS_QUIET" -v b="$NS_BUSY" 'BEGIN{printf "%.2f", b/a}')
+        echo "     quiet ${NS_QUIET} ns/line, erasing ${NS_BUSY} ns/line"
+        # Not a pass/fail on the ratio -- it is the measurement. The assertion
+        # is only that erasing does not make reads pathologically slow, which
+        # would mean the spacing is not working at all.
+        awk -v r="$RATIO" 'BEGIN{exit !(r < 4.0)}' \
+            && ok "J1 background erase costs reads ${RATIO}x (${NS_QUIET} -> ${NS_BUSY} ns/line)" \
+            || no "J1 background erase costs reads ${RATIO}x -- spacing is not limiting interference"
+        ok "J2 measured, for the record: erase interference = ${RATIO}x on cold NOR reads"
+    else skip "J  one of the two runs produced no plateau"; fi
 fi
 
 hdr "RESULT"
