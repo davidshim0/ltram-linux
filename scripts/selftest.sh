@@ -80,12 +80,21 @@ NPG=$(( $(cat $DBG/end_pfn) - $(cat $DBG/start_pfn) ))
 if [ "$MODE" = "--pre" ]; then
     hdr "PRE-REBOOT STAMP"
     [ -x $EC ] || { echo "  erase-count unit not installed -- nothing to test"; exit 1; }
+    # Freeze the pool. The boot-scan check below predicts the post-reboot
+    # classification from these exact counts, and a background erase between
+    # the stamp and the reboot would move dirty into clean and break the
+    # prediction for reasons that have nothing to do with the scan.
+    setw 0 0
+    sleep 2
     sudo -n $EC save >/dev/null || { echo "  save FAILED"; exit 1; }
     { echo "used $(w cycles_used)"
       echo "data $(ps_ data)"; echo "dirty $(ps_ dirty)"; echo "clean $(ps_ clean)"
       echo "pages $NPG"
       echo "md5 $(sudo -n md5sum /var/lib/ltram/erase_counts | cut -d" " -f1)"
     } | sudo -n tee $STAMP
+    echo
+    echo "  Erase engine PINNED OFF so the pool cannot drift before the reboot."
+    echo "  (module parameters reset at boot, so this undoes itself)"
     echo
     echo "  Stamped. Now reboot, then run:  $0 --post"
     echo "  Do not run a workload in between, or the totals will legitimately differ."
@@ -118,6 +127,48 @@ if [ "$MODE" = "--post" ]; then
         dmesg | grep -i "ltram.*scan" | tail -2 | sed 's/^/     /'
         ok "R7 the boot scan ran"
     else no "R7 no boot scan in dmesg -- scan_pool=0?"; fi
+    # --- boot scan CORRECTNESS, not just that it ran ---------------------
+    # Every sector holding data before the reboot is non-blank, whether it was
+    # live (data) or awaiting erase (dirty). The scan reads the array, so it
+    # must classify exactly those as dirty and the rest as blank:
+    #
+    #     scan_dirty = data_before + dirty_before
+    #     scan_blank = clean_before
+    #
+    # R7 only checked the scan ran. A scan that marked everything blank would
+    # pass R7 and then let the policy program over live data -- which with
+    # inline erase off yields the bitwise AND of old and new, silently.
+    P_DATA=$(awk '/^data/{print $2}' $STAMP)
+    P_DIRTY=$(awk '/^dirty/{print $2}' $STAMP)
+    P_CLEAN=$(awk '/^clean/{print $2}' $STAMP)
+    SCAN=$(dmesg 2>/dev/null | sed -n 's/.*pool scan \([0-9]*\) blank, \([0-9]*\) dirty.*/\1 \2/p' | tail -1)
+    if [ -n "${SCAN:-}" ] && [ -n "${P_DATA:-}" ]; then
+        S_BLANK=${SCAN%% *}; S_DIRTY=${SCAN##* }
+        WANT_DIRTY=$(( P_DATA + P_DIRTY ))
+        echo "     before: data $P_DATA + dirty $P_DIRTY = $WANT_DIRTY programmed, clean $P_CLEAN"
+        echo "     scan:   $S_DIRTY dirty, $S_BLANK blank"
+
+        [ $(( S_BLANK + S_DIRTY )) = "$NPG" ] \
+            && ok "R9 the scan classified every sector ($S_BLANK + $S_DIRTY = $NPG)" \
+            || no "R9 scan covered $(( S_BLANK + S_DIRTY )) of $NPG sectors"
+
+        D=$(( S_DIRTY - WANT_DIRTY )); [ "$D" -lt 0 ] && D=$(( -D ))
+        if [ "$D" -le 16 ]; then
+            ok "R10 scan found $S_DIRTY programmed sectors, expected $WANT_DIRTY (off by $D)"
+        elif [ "$S_DIRTY" -lt "$WANT_DIRTY" ]; then
+            no "R10 scan called $(( WANT_DIRTY - S_DIRTY )) PROGRAMMED sectors blank -- the policy may now program over live data"
+        else
+            no "R10 scan called $(( S_DIRTY - WANT_DIRTY )) blank sectors dirty -- safe, but those erases are wasted"
+        fi
+
+        D2=$(( S_BLANK - P_CLEAN )); [ "$D2" -lt 0 ] && D2=$(( -D2 ))
+        [ "$D2" -le 16 ] \
+            && ok "R11 scan found $S_BLANK blank sectors, expected $P_CLEAN (off by $D2)" \
+            || no "R11 scan found $S_BLANK blank, expected $P_CLEAN"
+    else
+        skip "R9-R11 no 'pool scan' line in dmesg, or the stamp predates this check"
+    fi
+
     hdr "RESULT"; echo "  $PASS passed, $FAIL failed, $SKIP skipped"
     exit $((FAIL > 0))
 fi
