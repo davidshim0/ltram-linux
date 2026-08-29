@@ -16,7 +16,11 @@ set -u
 [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
 DBG=/sys/kernel/debug/ltram
 PAR=/sys/module/ltram_policy/parameters
-MM=$HOME/matmul
+# The re-exec above makes $HOME /root, but matmul and the backend live in the
+# INVOKING user's home. sudo leaves SUDO_USER set, so resolve through that.
+REAL_HOME=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)
+MM=$REAL_HOME/matmul
+KO=$REAL_HOME/nor_eci/nor_eci_fulltest_ltram.ko
 EC=/usr/local/sbin/ltram-erase-counts
 F=/var/lib/ltram/erase_counts
 EPF=/var/lib/ltram/wear_epoch
@@ -33,6 +37,10 @@ near(){ awk -v a="$1" -v b="$2" -v t="$3" 'BEGIN{d=a-b; if(d<0)d=-d; exit !(d<=t
 
 [ -r $DBG/wear ] || { echo "no $DBG/wear -- is the wear-governor kernel booted?"; exit 1; }
 MODE=${1:-full}
+if [ "$MODE" != "--quick" ] && [ "$MODE" != "--pre" ] && [ "$MODE" != "--post" ]; then
+    [ -x "$MM" ] || { echo "no matmul at $MM -- sections E and G need it"; exit 1; }
+    [ -f "$KO" ] || { echo "no backend module at $KO"; exit 1; }
+fi
 
 # Restore every knob we touch, however we leave.
 E0=$(w epoch); D0=$(w service_days); C0=$(w cycles_per_sect); G0=$(cat $PAR/wear_governor)
@@ -194,7 +202,7 @@ else skip "D  erase-count unit not installed (run ~/ltram-systemd/install.sh)"; 
 # =====================================================================
 hdr "E. SCANNER -- rate, batch size, and the no-clean-sector stall"
 
-lsmod | grep -q nor_eci || sudo -n insmod $HOME/nor_eci/nor_eci_fulltest_ltram.ko \
+lsmod | grep -q nor_eci || sudo -n insmod $KO \
     provide_ops=1 test=0 inline_erase=0 verify_erased=1 2>/dev/null
 SCANPID=$(pgrep -f ltram_scan | head -1)
 
