@@ -722,7 +722,19 @@ int main(int argc, char **argv)
                 break;
             /* Stopped climbing: the working set does not fit, or the pool has
              * no slack left. Either way more passes will not help. */
-            if (share > best) { best = share; flat = 0; } else { flat++; }
+            /*
+             * Only once the fill has actually STARTED. Residency sits at 0
+             * until something targets this process, and the harness attaches
+             * target_pid a moment after it sees our RANGE lines -- so a
+             * plateau detector that counts zeros calls the fill finished
+             * before it begins, and every page then migrates inside the timed
+             * run. Measured: "residency 0.00%, 21 passes, plateaued" followed
+             * by a run that ended at 100%.
+             */
+            if (share > best) { best = share; flat = 0; }
+            else if (best > 0.0) { flat++; }
+            else if (pass % 20 == 0)
+                printf("WARMUP still 0%% after %d passes -- is target_pid set?\n", pass);
             if (flat >= wait_stable) {
                 why = "plateaued -- does not fit, or no slack left in the pool";
                 break;

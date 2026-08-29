@@ -136,7 +136,11 @@ for N in $SIZES; do
     sudo -n $MM --n $N --iters 1 --runs $R $FL --verify --print-ranges --phys \
         --wait-resident $WAIT --wait-timeout 900 > $L 2>&1 &
     BG=$!
-    for i in $(seq 1 180); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 1; done
+    # Attach target_pid BEFORE the warmup gets going. matmul starts its
+    # untimed fill immediately after printing RANGE, so a 1 s poll loses the
+    # race and the fill sees nothing targeting it. 0.1 s, and matmul now
+    # refuses to call 0% a plateau, so both ends are covered.
+    for i in $(seq 1 1800); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 0.1; done
     PID=$(pgrep -x matmul | head -1); [ -n "${PID:-}" ] && echo $PID | sudo -n tee $TP >/dev/null
     wait $BG; echo 0 | sudo -n tee $TP >/dev/null
     read M SD < <(plateau $L)
