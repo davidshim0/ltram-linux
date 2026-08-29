@@ -1170,11 +1170,27 @@ static int ltram_scan_thread(void *unused)
 		}
 
 		/*
-		 * THE INTERVAL IS THE PACING. Sleep it, and on waking promote if
+		 * THE INTERVAL IS A GAP, NOT A PERIOD. Sleep it, and on waking
+		 * promote if
 		 * there is somewhere to put a page and a candidate inside
 		 * scan_ptes_per_pass. No token bucket and no deadline: a tick
 		 * that finds nothing just sleeps again, and the budget it did
-		 * not spend stays in erases_left and buys a faster rate later.
+		 * not spend stays in cycles_left and buys a faster rate later.
+		 *
+		 * The real period is this sleep PLUS the work: a scan of up to
+		 * scan_ptes_per_pass, then one migration -- a page copy, a ~1.2 ms
+		 * flash program, and the TLB work. Measured at ~3 ms, and it fits
+		 * both arms of the selftest with one constant:
+		 *
+		 *	5 ms sleep + 3 ms work = 8 ms -> 125/s   (measured 125.0)
+		 *	1 ms sleep + 3 ms work = 4 ms -> 250/s   (measured 249.9)
+		 *
+		 * So the governor DELIVERS LESS than it budgets: 24 ms asks for
+		 * 41.5/s and gets ~37/s, about 11% under. Deliberately left
+		 * alone. Subtracting a measured work estimate would tighten the
+		 * rate towards the ceiling, and the error is already in the only
+		 * safe direction -- spending less wear than allowed, so the array
+		 * outlives its target rather than falling short of it.
 		 */
 		msleep_interruptible(ms);
 		if (kthread_should_stop())
