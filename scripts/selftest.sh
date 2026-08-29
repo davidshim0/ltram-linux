@@ -156,13 +156,24 @@ if [ -x $EC ]; then
         || no "D1 blob is $SZ, want $((16 + 4*NP))"
     H=$(sudo -n head -c16 /var/lib/ltram/erase_counts | od -An -tx4 | tr -s ' ')
     echo "$H" | grep -q "4c544543" && ok "D2 header magic is LTEC" || no "D2 header: $H"
-    # a short blob must be REFUSED: the kernel rebuilds the wear buckets only
-    # when the last byte lands, so a partial restore desyncs the free lists
-    sudo -n head -c 1000 /var/lib/ltram/erase_counts > /tmp/short.blob
-    if sudo -n dd if=/tmp/short.blob of=$DBG/erase_counts bs=1000 2>/dev/null; then
-        no "D3 kernel ACCEPTED a truncated blob -- buckets may now be desynced"
-    else ok "D3 kernel refuses a truncated blob"; fi
-    rm -f /tmp/short.blob
+    # A blob whose header does not describe THIS kernel must be refused. That
+    # is the guard the kernel actually implements: magic, version and nr_pages
+    # are validated on the FIRST write and the whole transfer is rejected.
+    #
+    # This used to feed it a truncated blob and read dd's exit status, which
+    # asked the wrong question twice over. The kernel's first write consumes
+    # exactly the 16-byte header and returns 16, so dd sees a partial write,
+    # reports 0+1 records out, and exits 0 -- while the body never went in and
+    # lt_rebuild_buckets was never called. Nothing was accepted and nothing
+    # was corrupted; the test just could not tell.
+    cp $F /tmp/bad.blob
+    printf '\x00\x00\x00\x00' | dd of=/tmp/bad.blob bs=1 seek=8 count=4 conv=notrunc 2>/dev/null
+    if cat /tmp/bad.blob > $DBG/erase_counts 2>/dev/null; then
+        no "D3 kernel ACCEPTED a blob whose header claims nr_pages=0"
+    else ok "D3 kernel refuses a blob with a mismatched header"; fi
+    rm -f /tmp/bad.blob
+    dmesg 2>/dev/null | tail -30 | grep -q "erase-count blob rejected" \
+        && ok "D3b kernel logged the rejection" || skip "D3b no rejection line in dmesg"
     sudo -n $EC restore >/dev/null 2>&1 && ok "D4 full blob restores" || no "D4 restore failed"
     near "$(w erases_used)" "$USED" 200 \
         && ok "D5 erases_used survives a restore ($(w erases_used) vs $USED)" \
@@ -171,6 +182,10 @@ if [ -x $EC ]; then
     if [ -f $EPF ]; then
         [ "$(cat $EPF)" = "$(w epoch)" ] && ok "D6 saved epoch matches the live parameter ($(w epoch))" || no "D6 saved epoch $(cat $EPF) != live $(w epoch)"
     else no "D6 no $EPF -- restore has never stamped the epoch"; fi
+    DATA2=$(ps_ data); DIRTY2=$(ps_ dirty); CLEAN2=$(ps_ clean)
+    [ $((DATA2 + DIRTY2 + CLEAN2)) = "$NP" ] \
+        && ok "D7 invariant still holds after the restore tests" \
+        || no "D7 $DATA2+$DIRTY2+$CLEAN2 != $NP -- a restore desynced the free lists"
 else skip "D  erase-count unit not installed (run ~/ltram-systemd/install.sh)"; fi
 
 [ "$MODE" = "--quick" ] && { hdr "RESULT"; echo "  $PASS passed, $FAIL failed, $SKIP skipped"; exit $((FAIL>0)); }
