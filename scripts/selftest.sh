@@ -325,6 +325,75 @@ dmesg | tail -200 | grep -q "NOT ERASED" \
     || ok "G2 no sector was programmed without an erase"
 rm -f /tmp/st.log /tmp/st-d.log /tmp/st-n.log
 
+hdr "H. SELECTIVITY -- does the policy pick the RIGHT pages?"
+# Everything above measures how FAST pages are promoted. Nothing measured
+# WHICH, so a policy that promoted everything, or the wrong thing, passed the
+# whole suite.
+#
+# The scrub buffer is the discriminator. --flush 32 allocates 32 MiB -- 8,192
+# pages, four times the weights -- of anonymous memory that is WRITTEN one word
+# per page every pass, and mmap places it BELOW the weights, so the scanner
+# walking from address 0 meets it first. It is the most attractive wrong answer
+# in the process, and the policy must take the weights and refuse it.
+#
+# This is not hypothetical. When the fill loop did not call cache_scrub(), the
+# buffer sat unwritten and read-mostly, the scanner promoted all 8,192 pages of
+# it, and the pool was capped at 65,536 - 8,192 for the rest of the run.
+#
+# MAJORITY tests, not absolutes. A page can cross between being armed and being
+# written again, so some wrong promotions are expected and fine.
+WPAGES=$(( 1448 * 1448 * 4 / 4096 ))
+if [ "$(ps_ clean)" -lt $((WPAGES * 3)) ]; then
+    skip "H  only $(ps_ clean) clean sectors, need $((WPAGES * 3)) to tell selection from starvation"
+else
+    D0=$(ps_ data)
+    L=/tmp/st-h.log
+    sudo -n $MM --n 1448 --iters 1 --runs 400 --flush 32 --verify --print-ranges --phys \
+        --wait-resident 90 --wait-timeout 240 --wait-stable 30 --wait-hold 20 > $L 2>&1 &
+    BG=$!
+    for i in $(seq 1 600); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 0.1; done
+    PID=$(pgrep -x matmul | head -1)
+    [ -n "${PID:-}" ] && echo $PID | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    # Sample DURING the hold matmul opens after the fill. Sampling after the
+    # process exits measures nothing: every page it promoted is freed on exit.
+    for i in $(seq 1 3000); do
+        grep -q "^WARMUP hold" $L 2>/dev/null && break
+        kill -0 $BG 2>/dev/null || break
+        sleep 0.1
+    done
+    D1=$(ps_ data)
+    WRES=$(grep "^WARMUP done" $L | sed -n 's/.*residency \([0-9.]*\)%.*/\1/p' | tail -1)
+    wait $BG 2>/dev/null
+    echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    MOVED=$((D1 - D0))
+    echo "     weights $WPAGES pages, scrub buffer 8192 pages (written every pass)"
+    echo "     weights reached ${WRES:-?}% resident; $MOVED pages promoted in total"
+
+    # H1: the criterion ACCEPTS read-mostly. 90%, not 100% -- the last few
+    # pages arrive slowly and the point is the bulk, not the tail.
+    awk -v r="${WRES:-0}" 'BEGIN{exit !(r >= 90)}' \
+        && ok "H1 weights reached ${WRES}% -- read-mostly pages ARE promoted" \
+        || no "H1 weights only reached ${WRES:-0}% -- read-mostly pages are NOT being promoted"
+
+    # H2: the criterion REFUSES written pages. If the 8,192-page scrub buffer
+    # had been taken, MOVED would be ~5x the weight count rather than ~1x.
+    # 1.5x leaves room for transients without admitting a 4x mistake.
+    LIM=$(( WPAGES * 3 / 2 ))
+    [ "$MOVED" -le "$LIM" ] \
+        && ok "H2 $MOVED promoted vs $WPAGES weight pages -- the written 8192-page buffer was refused" \
+        || no "H2 $MOVED promoted for $WPAGES weight pages (limit $LIM) -- something written was promoted too"
+
+    # H3: and the result vector, written every single iteration, is the
+    # smallest and most-written region there is.
+    YRES=$(grep "^PHYS end    result" $L | sed -n 's/.*(\([0-9.]*\)%).*/\1/p' | tail -1)
+    if [ -n "${YRES:-}" ]; then
+        awk -v r="$YRES" 'BEGIN{exit !(r <= 50)}' \
+            && ok "H3 result vector ${YRES}% resident -- a continuously written region stays in DRAM" \
+            || no "H3 result vector ${YRES}% resident -- a written region was promoted and kept"
+    else skip "H3 no PHYS end line for the result vector"; fi
+    rm -f $L
+fi
+
 hdr "RESULT"
 echo "  $PASS passed, $FAIL failed, $SKIP skipped"
 echo
