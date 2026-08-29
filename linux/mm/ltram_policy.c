@@ -290,9 +290,16 @@ static struct list_head	*lt_node;		/* per-page link into a bucket */
 static struct list_head	 lt_clean_by_ec[LT_EC_BUCKETS];
 static unsigned long	 lt_clean_count;		/* O(1) for the watermark */
 /*
- * Erases since counting began, maintained as the erases happen. The same
- * number as summing lt_ec[], which is 65,536 adds -- too much to repeat on
- * every scan tick just to divide by it.
+ * Erases since counting began: the sum of lt_ec[], maintained incrementally
+ * because 65,536 adds is too much to repeat on every scan tick just to divide
+ * by it. It must equal that sum exactly -- selftest A3 asserts it, and the
+ * whole wear budget is computed from it.
+ *
+ * Counted at ALLOCATION, in lt_to_data(), which is where lt_ec[] itself is
+ * counted. That is an upper bound on erases: every allocated sector is erased
+ * before it is programmed, so the two are one-to-one except when a migration
+ * fails after allocating, which over-counts by one. Wrong in the conservative
+ * direction, and identical to what the persisted blob holds.
  */
 static atomic64_t	 lt_ec_total;
 static u32		 lt_erasing = LT_ERASING_IDLE;
@@ -323,6 +330,24 @@ static void lt_to_data(unsigned long idx)
 	__set_bit(idx, lt_bm[LT_DATA]);
 	if (lt_ec[idx] < U32_MAX)
 		lt_ec[idx]++;
+	/*
+	 * And the running total, HERE, with the per-sector count it must equal.
+	 *
+	 * This lived in lt_erasing_to_clean() at first, which counts a different
+	 * event: erase COMPLETIONS rather than allocations. The two differ by
+	 * however many sectors are allocated but not yet erased, so the total
+	 * drifted below the array by exactly the current data+dirty -- measured
+	 * 4,219 against a pool that had 57,344 dirty at boot and 61,563 later.
+	 *
+	 * It also made restore incoherent: lt_rebuild_buckets() seeds the total
+	 * from sum(lt_ec[]), the allocation basis, after which it accrued on the
+	 * erase basis and drifted again from the moment it was made correct.
+	 *
+	 * The wear budget divides by this, and undercounting overstates
+	 * erases_left, which lets the governor promote FASTER than the budget
+	 * allows -- the unsafe direction.
+	 */
+	atomic64_inc(&lt_ec_total);
 }
 
 /* VALID -> FREE, for a sector that was never programmed. */
@@ -372,7 +397,6 @@ static void lt_erasing_to_clean(unsigned long idx)
 	lt_clean_count++;
 	__set_bit(idx, ltram_clean_bitmap);
 	atomic64_dec(&ltram_pages_in_use);
-	atomic64_inc(&lt_ec_total);		/* the wear budget's ground truth */
 }
 
 /* Erase failed, or the idle gate refused. The page never left DIRTY, so just
