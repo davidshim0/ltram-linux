@@ -10,6 +10,10 @@
 # COST. The behavioural tests promote and erase real sectors: about 6,200
 # erases, ~0.0001% of the array's budget. The arithmetic tests cost nothing.
 set -u
+# debugfs is 0700 root, and the helpers below read it directly, so the guard
+# fails as an ordinary user even when everything is fine. Re-exec rather than
+# sprinkling sudo through every reader.
+[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
 DBG=/sys/kernel/debug/ltram
 PAR=/sys/module/ltram_policy/parameters
 MM=$HOME/matmul

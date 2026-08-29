@@ -30,21 +30,30 @@ if pgrep -x matmul >/dev/null 2>&1; then
 fi
 
 say "1/4  persisting erase counts (via the unit's ExecStop)"
-if systemctl list-unit-files ltram-erase-counts.service >/dev/null 2>&1; then
-    BEFORE=$(stat -c %Y "$F" 2>/dev/null || echo 0)
+# Stopping an ALREADY-STOPPED unit runs nothing: systemd has no ExecStop to
+# run, exits 0, and the blob is never rewritten. That is not a failure to
+# save, it is a failure to try -- and the freshness check below would then
+# refuse a perfectly good reboot. So dispatch on whether it is actually
+# active, and fall back to calling save directly.
+if systemctl is-active --quiet ltram-erase-counts.service 2>/dev/null; then
     systemctl stop ltram-erase-counts.service || die "systemctl stop failed"
-    AFTER=$(stat -c %Y "$F" 2>/dev/null || echo 0)
-    # Verify the save LANDED. ExecStop failing silently is the whole failure
-    # mode this script exists to prevent, and after the reboot there is no
-    # evidence left to diagnose it with.
-    [ "$AFTER" -gt "$BEFORE" ] || [ "$BEFORE" = 0 ] \
-        || die "$F was not rewritten -- ExecStop did not save. Reboot aborted."
-    NOW=$(date +%s)
-    [ $((NOW - AFTER)) -lt 120 ] || die "$F is $((NOW - AFTER))s old -- the save did not land"
-else
-    [ -x $EC ] || die "no $EC and no unit -- nothing can persist the counts"
+    STOPPED=1
+elif [ -x $EC ]; then
+    echo "  (unit not active -- saving directly)"
     $EC save || die "save failed"
+    STOPPED=0
+else
+    die "no $EC and the unit is not running -- nothing can persist the counts"
 fi
+
+# Verify the save LANDED, by age rather than by mtime moving: two saves inside
+# one second leave mtime equal, and a false refusal here is as bad as a silent
+# loss. ExecStop failing quietly is the whole reason this script exists, and
+# after the reboot there is no evidence left to diagnose it with.
+[ -f "$F" ] || die "$F does not exist -- nothing was saved"
+AGE=$(( $(date +%s) - $(stat -c %Y "$F") ))
+[ "$AGE" -lt 120 ] || die "$F is ${AGE}s old -- the save did not land. Reboot aborted."
+echo "  saved $(stat -c %s "$F") bytes, ${AGE}s ago"
 
 say "2/4  what was saved"
 [ -x $EC ] && $EC show
@@ -56,7 +65,10 @@ sync
 sync
 
 if [ "$GO" = 0 ]; then
-    say "--save given: not rebooting"
+    # Put the unit back, or the next shutdown has no ExecStop to run and the
+    # dry run has quietly disarmed the very thing it was checking.
+    [ "$STOPPED" = 1 ] && systemctl start ltram-erase-counts.service
+    say "--save given: not rebooting (unit restarted)"
     exit 0
 fi
 
