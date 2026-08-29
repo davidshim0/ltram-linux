@@ -57,6 +57,21 @@ static int    do_verify = 0, do_protect = 0, do_ranges = 0, do_phys = 0, hold_se
  * it just is not the number we wanted. */
 static double wait_res = 0.0;    /* --wait-resident PCT: 0 disables */
 static int    wait_max = 900;    /* --wait-timeout SECS */
+/*
+ * Passes with no residency gain before the fill is called finished.
+ *
+ * A fixed target cannot work for every size. The pool is 65,536 sectors, so a
+ * 512 MiB working set saturates at 50% and 1 GiB at 25% -- asking either for
+ * 99.5% just burns the timeout. And even at 256 MiB, where the working set
+ * exactly equals the pool, full residency is unreachable: a failed migration
+ * programs its sector and hands it back DIRTY, and with the erase engine
+ * pinned off for the measurement nothing recycles it. Measured 87.3%.
+ *
+ * So the honest stop condition is "it stopped climbing", not "it reached a
+ * number". With promote_batch=512 at 1 Hz, twenty passes with no gain at all
+ * is unambiguous -- a live fill moves thousands of pages in that time.
+ */
+static int    wait_stable = 20;  /* --wait-stable PASSES */
 static int    compute_only = 0;   /* --compute-only: pin every row to row 0 */
 static int    do_chase = 0;       /* --chase: dependent-load latency over W */
 static volatile uint64_t chase_sink;
@@ -564,7 +579,7 @@ int main(int argc, char **argv)
         {"print-ranges",0,0,'R'}, {"phys",0,0,'A'},
         {"hold",1,0,'H'}, {"seed",1,0,'S'}, {"flush",1,0,'F'},
         {"compute-only",0,0,'C'}, {"chase",0,0,'H'+128},
-        {"wait-resident",1,0,'W'}, {"wait-timeout",1,0,'W'+128}, {0,0,0,0}
+        {"wait-resident",1,0,'W'}, {"wait-timeout",1,0,'W'+128}, {"wait-stable",1,0,'W'+129}, {0,0,0,0}
     };
     int c;
     while ((c = getopt_long(argc, argv, "n:i:r:VPRAH:S:F:W:", lo, NULL)) != -1) {
@@ -579,6 +594,7 @@ int main(int argc, char **argv)
         case 'H': hold_secs = atoi(optarg); break;
         case 'W': wait_res = atof(optarg); break;
         case 'W'+128: wait_max = atoi(optarg); break;
+        case 'W'+129: wait_stable = atoi(optarg); break;
         case 'S': SEED = strtoull(optarg, NULL, 0); break;
         case 'F': flush_mb = strtoul(optarg, NULL, 0); break;
         case 'C': compute_only = 1; break;
@@ -681,8 +697,9 @@ int main(int argc, char **argv)
      * only difference is that nothing here lands in t[]. y is zeroed after,
      * and every timed run memsets it anyway, so --verify is unaffected. */
     if (wait_res > 0.0) {
-        double tw = now(), share = 0.0;
-        int pass = 0;
+        double tw = now(), share = 0.0, best = -1.0;
+        int pass = 0, flat = 0;
+        const char *why = "target reached";
 
         if (!phys_ready)
             phys_open();
@@ -703,15 +720,21 @@ int main(int argc, char **argv)
             fflush(stdout);
             if (share >= wait_res)
                 break;
+            /* Stopped climbing: the working set does not fit, or the pool has
+             * no slack left. Either way more passes will not help. */
+            if (share > best) { best = share; flat = 0; } else { flat++; }
+            if (flat >= wait_stable) {
+                why = "plateaued -- does not fit, or no slack left in the pool";
+                break;
+            }
             if (now() - tw > (double)wait_max) {
-                printf("WARMUP TIMEOUT after %.1f s at %.2f%% -- measuring anyway,"
-                       " treat this point as contaminated\n", now() - tw, share);
+                why = "TIMEOUT -- treat this point as contaminated";
                 break;
             }
         }
         memset(y, 0, ybytes);
-        printf("WARMUP done  residency %.2f%%  %d passes  %.1f s\n",
-               share, pass, now() - tw);
+        printf("WARMUP done  residency %.2f%%  %d passes  %.1f s  (%s)\n",
+               share, pass, now() - tw, why);
         fflush(stdout);
     }
 
