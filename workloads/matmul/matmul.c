@@ -86,6 +86,11 @@ static int    wait_hold = 0;     /* --wait-hold SECS */
 static int    compute_only = 0;   /* --compute-only: pin every row to row 0 */
 static int    do_chase = 0;       /* --chase: dependent-load latency over W */
 static volatile uint64_t chase_sink;
+/* Floats of W and of x the compute floor touches. 2048 each = 16 KiB, half
+ * the 32 KiB L1D, so it stays resident at every N. Power of two: the inner
+ * loop masks with COMP_FLOATS-1. */
+#define COMP_FLOATS 2048u
+
 static size_t flush_mb = 0;             /* 0 = off; LLC scrub between runs */
 static unsigned char *scrub_buf = NULL;
 static size_t scrub_bytes = 0;
@@ -840,9 +845,35 @@ int main(int argc, char **argv)
                  * terms are directly comparable. The result is wrong on purpose
                  * (every row is row 0), so --verify is refused below.
                  */
-                const float *row = compute_only ? W : W + i * N;
                 float acc = 0.0f;
-                for (size_t j = 0; j < N; j++) acc += row[j] * x[j];
+
+                if (compute_only) {
+                    /*
+                     * Both operands wrapped into a fixed 8 KiB prefix, so the
+                     * compute floor is L1D-resident AT ANY N.
+                     *
+                     * Pinning to row 0 was not enough. The row is N*4 bytes and
+                     * x is another N*4, so above N=4096 they exceed the 32 KiB
+                     * L1D and the "compute floor" starts carrying real memory
+                     * traffic -- which is exactly what it exists to exclude.
+                     * That is why everything derived from it was a bound rather
+                     * than a value above 64 MB, and why fig1 and fig3 were
+                     * shaded there.
+                     *
+                     * 2048 floats each is 16 KiB total and fits at every size.
+                     * Same trip count, same FMA count, same y. The cost is one
+                     * AND per iteration -- constant in N, so it cannot create a
+                     * size-dependent artifact, which is the only kind that
+                     * would matter here.
+                     */
+                    for (size_t j = 0; j < N; j++) {
+                        size_t k = j & (COMP_FLOATS - 1);
+                        acc += W[k] * x[k];
+                    }
+                } else {
+                    const float *row = W + i * N;
+                    for (size_t j = 0; j < N; j++) acc += row[j] * x[j];
+                }
                 y[i] += acc;
             }
         }
