@@ -25,6 +25,7 @@ EC=/usr/local/sbin/ltram-erase-counts
 F=/var/lib/ltram/erase_counts
 EPF=/var/lib/ltram/wear_epoch
 STAMP=/var/lib/ltram/selftest-pre.txt
+SDIR=/var/lib/ltram/selftest
 PASS=0; FAIL=0; SKIP=0
 ok(){   printf "  \033[32mPASS\033[0m %s\n" "$*"; PASS=$((PASS+1)); }
 no(){   printf "  \033[31mFAIL\033[0m %s\n" "$*"; FAIL=$((FAIL+1)); }
@@ -49,7 +50,8 @@ for f in cycles_total cycles_used cycles_left seconds_left interval_ms epoch; do
         echo; sed 's/^/     /' $DBG/wear; exit 1; }
 done
 MODE=${1:-full}
-if [ "$MODE" != "--quick" ] && [ "$MODE" != "--pre" ] && [ "$MODE" != "--post" ]; then
+if [ "$MODE" != "--quick" ] && [ "$MODE" != "--pre" ] && [ "$MODE" != "--post" ] \
+   && [ "$MODE" != "--resume" ]; then
     [ -x "$MM" ] || { echo "no matmul at $MM -- sections E and G need it"; exit 1; }
     [ -f "$KO" ] || { echo "no backend module at $KO"; exit 1; }
 fi
@@ -77,6 +79,49 @@ trap cleanup EXIT INT TERM
 # The reboot pair. Persistence is the one design that cannot be tested
 # inside a single boot, because the thing being tested IS the boot.
 NPG=$(( $(cat $DBG/end_pfn) - $(cat $DBG/start_pfn) ))
+if [ "$MODE" = "--cycle" ]; then
+    # One command for the whole thing. Runs every in-boot section, saves the
+    # output and the pre-reboot stamp, arms a systemd unit to finish the job
+    # after the power cycle, and reboots. Nothing to remember and nothing to
+    # type at the far end -- the reboot is IN the test rather than around it.
+    mkdir -p $SDIR
+    rm -f $SDIR/pending $SDIR/report.txt
+    echo "Running every in-boot section, then rebooting to finish."
+    echo
+    "$0" full 2>&1 | tee $SDIR/pre-output.txt
+    PRE_RC=${PIPESTATUS[0]}
+    "$0" --pre  2>&1 | tee -a $SDIR/pre-output.txt
+    { echo "script=$(readlink -f "$0")"; echo "started=$(date -Iseconds)"; echo "pre_rc=$PRE_RC"
+    } > $SDIR/pending
+    hdr "REBOOTING to run the power-cycle checks"
+    echo "  Results so far are in $SDIR/pre-output.txt"
+    echo "  After the reboot the full report appears in $SDIR/report.txt"
+    echo
+    sleep 3
+    exec /usr/local/sbin/ltram-reboot
+fi
+
+if [ "$MODE" = "--resume" ]; then
+    # Invoked by ltram-selftest-resume.service after the reboot. Replays what
+    # ran before the power cycle, then runs the checks that need one, and
+    # reports a single combined total -- so a cycle reads as one test rather
+    # than two halves the reader has to add up.
+    [ -f $SDIR/pending ] || { echo "no self-test was pending"; exit 0; }
+    [ -f $SDIR/pre-output.txt ] && cat $SDIR/pre-output.txt
+    PRE_PASS=$(grep -c "PASS" $SDIR/pre-output.txt 2>/dev/null || echo 0)
+    PRE_FAIL=$(grep -c "FAIL" $SDIR/pre-output.txt 2>/dev/null || echo 0)
+    PRE_SKIP=$(grep -c "SKIP" $SDIR/pre-output.txt 2>/dev/null || echo 0)
+    hdr "=== resumed after the power cycle ==="
+    "$0" --post
+    POST_RC=$?
+    P2=$(( PRE_PASS )); F2=$(( PRE_FAIL )); S2=$(( PRE_SKIP ))
+    rm -f $SDIR/pending
+    hdr "COMBINED RESULT (both sides of the reboot)"
+    echo "  before the reboot: $P2 passed, $F2 failed, $S2 skipped"
+    echo "  see above for the power-cycle section"
+    exit $POST_RC
+fi
+
 if [ "$MODE" = "--pre" ]; then
     hdr "PRE-REBOOT STAMP"
     [ -x $EC ] || { echo "  erase-count unit not installed -- nothing to test"; exit 1; }
@@ -152,19 +197,21 @@ if [ "$MODE" = "--post" ]; then
             && ok "R9 the scan classified every sector ($S_BLANK + $S_DIRTY = $NPG)" \
             || no "R9 scan covered $(( S_BLANK + S_DIRTY )) of $NPG sectors"
 
-        D=$(( S_DIRTY - WANT_DIRTY )); [ "$D" -lt 0 ] && D=$(( -D ))
-        if [ "$D" -le 16 ]; then
-            ok "R10 scan found $S_DIRTY programmed sectors, expected $WANT_DIRTY (off by $D)"
+        # EXACT. --pre pins the erase engine and nothing else is running, so
+        # the pool is frozen between the stamp and the reboot: every sector
+        # that was data or dirty was programmed, and every clean one was
+        # blank. Any difference at all is information, not tolerance.
+        if [ "$S_DIRTY" = "$WANT_DIRTY" ]; then
+            ok "R10 scan found exactly the $S_DIRTY programmed sectors"
         elif [ "$S_DIRTY" -lt "$WANT_DIRTY" ]; then
             no "R10 scan called $(( WANT_DIRTY - S_DIRTY )) PROGRAMMED sectors blank -- the policy may now program over live data"
         else
             no "R10 scan called $(( S_DIRTY - WANT_DIRTY )) blank sectors dirty -- safe, but those erases are wasted"
         fi
 
-        D2=$(( S_BLANK - P_CLEAN )); [ "$D2" -lt 0 ] && D2=$(( -D2 ))
-        [ "$D2" -le 16 ] \
-            && ok "R11 scan found $S_BLANK blank sectors, expected $P_CLEAN (off by $D2)" \
-            || no "R11 scan found $S_BLANK blank, expected $P_CLEAN"
+        [ "$S_BLANK" = "$P_CLEAN" ] \
+            && ok "R11 scan found exactly the $S_BLANK blank sectors" \
+            || no "R11 scan found $S_BLANK blank, expected exactly $P_CLEAN (off by $(( S_BLANK - P_CLEAN )))"
     else
         skip "R9-R11 no 'pool scan' line in dmesg, or the stamp predates this check"
     fi

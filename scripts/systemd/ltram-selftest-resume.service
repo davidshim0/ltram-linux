@@ -1,0 +1,18 @@
+[Unit]
+Description=Finish an LtRAM self-test that spans a reboot
+Documentation=file:/usr/local/sbin/ltram-selftest-resume
+RequiresMountsFor=/sys/kernel/debug /var/lib
+# The power-cycle checks are about what ltram-erase-counts restored, so they
+# must run after it has.
+After=ltram-erase-counts.service
+Wants=ltram-erase-counts.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ltram-selftest-resume
+# A pending run that cannot finish must not fail the boot.
+SuccessExitStatus=0 1
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+#!/bin/bash
+# Finish a self-test that reboots half way through.
+#
+# selftest.sh --cycle runs every in-boot section, stamps the pool, arms this,
+# and reboots. The unit below runs it after ltram-erase-counts has restored,
+# because the power-cycle checks are ABOUT that restore.
+#
+# Silent no-op when nothing is pending, so it costs a disabled boot nothing.
+set -u
+SDIR=/var/lib/ltram/selftest
+[ -f "$SDIR/pending" ] || exit 0
+
+SCRIPT=$(awk -F= '/^script=/{print $2}' "$SDIR/pending")
+if [ ! -x "${SCRIPT:-}" ]; then
+    echo "ltram-selftest-resume: $SCRIPT is gone -- cannot finish the run" >&2
+    mv -f "$SDIR/pending" "$SDIR/pending.orphaned"
+    exit 1
+fi
+"$SCRIPT" --resume > "$SDIR/report.txt" 2>&1
+RC=$?
+cat "$SDIR/report.txt"
+exit $RC
