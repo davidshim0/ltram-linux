@@ -33,10 +33,10 @@
 #   ./repeat_large.sh [--reps 10] [--out FILE]
 set -u
 REPS=10; OUT=/scratch/hushim/large.csv; SIZES="4096 5793 8192"
-WAIT=99.5; DO_DRAM=1
+WAIT=99.5; DO_DRAM=1; MODES="nor_cold"
 while [ $# -gt 0 ]; do case "$1" in
-  --reps) REPS=$2; shift;; --out) OUT=$2; shift;; --sizes) SIZES=$2; shift;; --wait) WAIT=$2; shift;; --nor-only) DO_DRAM=0;;
-  *) echo "usage: $0 [--reps N] [--out FILE] [--sizes \"N N N\"] [--wait PCT] [--nor-only]"; exit 2;; esac; shift; done
+  --reps) REPS=$2; shift;; --out) OUT=$2; shift;; --sizes) SIZES=$2; shift;; --wait) WAIT=$2; shift;; --nor-only) DO_DRAM=0;; --modes) MODES=$2; shift;;
+  *) echo "usage: $0 [--reps N] [--out FILE] [--sizes \"N N N\"] [--wait PCT] [--nor-only] [--modes \"nor_cold nor_warm\"]"; exit 2;; esac; shift; done
 
 MM=$HOME/matmul; KO=$HOME/nor_eci/nor_eci_fulltest_ltram.ko
 S=/sys/kernel/ltram/stats; P=/sys/kernel/debug/ltram/pagestate
@@ -122,28 +122,40 @@ for N in $SIZES; do
         rm -f $L
     fi
 
+    for MODE in $MODES; do
+    [ "$MODE" = nor_warm ] && FL="" || FL="--flush 32"
+    # Re-drain between modes: the first mode leaves the pool spent, and a
+    # depleted pool is what produced every wrong number in this experiment.
+    if [ "$MODE" != "${MODES%% *}" ]; then
+        echo 1 | sudo -n tee /proc/sys/vm/compact_memory >/dev/null 2>&1 || true
+        sleep 2; drain; engine_off; sleep 2
+        say "  redrained for $MODE, clean=$(g "$(ps_)" clean)"
+    fi
     E0=$(gs erases_done)
     L=/tmp/rl-nor.log
-    sudo -n $MM --n $N --iters 1 --runs $R --flush 32 --verify --print-ranges --phys \
+    sudo -n $MM --n $N --iters 1 --runs $R $FL --verify --print-ranges --phys \
         --wait-resident $WAIT --wait-timeout 900 > $L 2>&1 &
     BG=$!
     for i in $(seq 1 180); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 1; done
     PID=$(pgrep -x matmul | head -1); [ -n "${PID:-}" ] && echo $PID | sudo -n tee $TP >/dev/null
     wait $BG; echo 0 | sudo -n tee $TP >/dev/null
     read M SD < <(plateau $L)
-    series $L "r${rep}-N${N}-nor"
+    series $L "r${rep}-N${N}-${MODE}"
     RES=$(grep "^PHYS end    weights" $L | sed -n 's/.*LtRAM \([0-9]*\) .*/\1/p' | tail -1)
     ED=$(( $(gs erases_done) - E0 ))
     NSL=$(awk -v m="$M" -v l="$NLINES" 'BEGIN{printf "%.1f", m*1e9/l}')
-    echo "$rep,$N,nor_cold,$BYTES,$PAGES,$M,$SD,$NSL,${RES:-0},$CB,$ED,$DB" >> "$OUT"
+    echo "$rep,$N,$MODE,$BYTES,$PAGES,$M,$SD,$NSL,${RES:-0},$CB,$ED,$DB" >> "$OUT"
     PCT=$(awk -v m="$M" -v v="$SD" 'BEGIN{printf "%.2f", (m>0?100*v/m:0)}')
-    WU=$(grep "^WARMUP done" $L | tail -1)
-    [ -n "$WU" ] && say "  $WU"
-    say "  nor  $M s   $NSL ns/line   sd ${PCT}%   resident ${RES:-0}/$PAGES   erases $ED"
+    RPC=$(awk -v r="${RES:-0}" -v p="$PAGES" 'BEGIN{printf "%.1f", (p?100*r/p:0)}')
+    WU=$(grep "^WARMUP done" $L | tail -1); [ -n "$WU" ] && say "  $WU"
+    say "  $MODE  $M s   $NSL ns/line   sd ${PCT}%   resident ${RES:-0}/$PAGES (${RPC}%)   erases $ED"
     awk -v p="$PCT" 'BEGIN{exit !(p>2)}' && \
         say "  !! sd ${PCT}% -- this run never settled, the mean is not a latency"
+    awk -v r="$RPC" 'BEGIN{exit !(r<99)}' && \
+        say "  !! only ${RPC}% reached flash -- this is a BLEND of both media, not a NOR latency"
     [ "$ED" -gt 0 ] && say "  !! the engine ran during the measurement -- this point is contaminated"
     rm -f $L
+    done
 
     echo 8192 | sudo -n tee $HW >/dev/null; echo 2048 | sudo -n tee $LW >/dev/null
     ec_save
