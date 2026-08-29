@@ -176,6 +176,7 @@ static unsigned int idle_sample_us = 1000;
 module_param(scan_interval_ms, uint, 0644);
 module_param(promote_batch, uint, 0644);
 module_param(scan_ptes_per_pass, uint, 0644);
+
 module_param(wear_epoch, ulong, 0644);
 module_param(wear_days, uint, 0644);
 module_param(wear_cycles, uint, 0644);
@@ -261,8 +262,25 @@ static atomic64_t ltram_pages_in_use;
  * that does not exist.
  * ===========================================================================
  */
-#define LT_EC_GRAIN	1000u
-#define LT_EC_BUCKETS	101u			/* 0 .. 100,000 erases */
+#define LT_EC_BUCKETS	101u
+/*
+ * Bucket width, in erases. 101 buckets at the default 1,000 covers the whole
+ * 100,000-cycle endurance of a sector.
+ *
+ * WRITABLE, because at the default the bucket machinery is unreachable. Real
+ * counts sit around 20-35, so every sector is in bucket 0 and stays there
+ * until one reaches 1,000 -- roughly 65 million erases away. Inside a bucket
+ * the free list is FIFO, so what actually runs today is round-robin, and
+ * lt_bucket_of() plus the per-bucket lists are dead code that cannot be
+ * exercised without burning through the chip.
+ *
+ * Set it to 10 and the same counts spread across three or four buckets at
+ * once, so "least worn first" becomes observable in seconds instead of years.
+ * Changing it moves every free page to a different bucket, so the setter
+ * rebuilds the lists -- writing it without that would leave lt_pop_clean()
+ * handing out by the old order and trip LT_ERR_BUCKET_MEMBER.
+ */
+static unsigned int ec_grain = 1000;
 #define LT_ERASING_IDLE	0xFFFFFFFFu
 
 enum lt_bmstate { LT_DATA = 0, LT_DIRTY, LT_NR_BM };
@@ -284,7 +302,6 @@ static unsigned long	*lt_scratch;		/* derivations and ANDs */
  * the clean pool holding data, and with inline_erase=0 the next promotion
  * programmed on top of them. verify_erased caught it; nothing else would have.
  */
-static unsigned long	*lt_written;
 static u32		*lt_ec;			/* erase count, per page */
 static struct list_head	*lt_node;		/* per-page link into a bucket */
 static struct list_head	 lt_clean_by_ec[LT_EC_BUCKETS];
@@ -307,10 +324,32 @@ static bool		 lt_ready;
 
 static inline unsigned int lt_bucket_of(u32 ec)
 {
-	unsigned int b = ec / LT_EC_GRAIN;
+	unsigned int b = ec / (ec_grain ? ec_grain : 1);
 
 	return b < LT_EC_BUCKETS ? b : LT_EC_BUCKETS - 1;
 }
+
+static void lt_rebuild_buckets(void);
+static int lt_set_ec_grain(const char *val, const struct kernel_param *kp)
+{
+	unsigned int old = ec_grain;
+	int rc = param_set_uint(val, kp);
+
+	if (rc)
+		return rc;
+	if (!ec_grain) {
+		ec_grain = old;
+		return -EINVAL;
+	}
+	if (ec_grain != old && lt_ready)
+		lt_rebuild_buckets();	/* every page changes bucket */
+	return 0;
+}
+static const struct kernel_param_ops lt_ec_grain_ops = {
+	.set = lt_set_ec_grain,
+	.get = param_get_uint,
+};
+module_param_cb(ec_grain, &lt_ec_grain_ops, &ec_grain, 0644);
 
 /*
  * FREE -> VALID. The erase count is incremented HERE, which is an upper bound:
@@ -350,15 +389,6 @@ static void lt_to_data(unsigned long idx)
 	atomic64_inc(&lt_ec_total);
 }
 
-/* VALID -> FREE, for a sector that was never programmed. */
-static void lt_to_clean(unsigned long idx)
-{
-	if (!lt_ready)
-		return;
-	__clear_bit(idx, lt_bm[LT_DATA]);
-	list_add_tail(&lt_node[idx], &lt_clean_by_ec[lt_bucket_of(lt_ec[idx])]);
-	lt_clean_count++;
-}
 
 /*
  * VALID -> DIRTY. The sector holds data we wrote, so it cannot be handed out
@@ -392,7 +422,6 @@ static void lt_erasing_to_clean(unsigned long idx)
 {
 	lt_erasing = LT_ERASING_IDLE;
 	__clear_bit(idx, lt_bm[LT_DIRTY]);
-	__clear_bit(idx, lt_written);		/* the erase is what makes it blank */
 	list_add_tail(&lt_node[idx], &lt_clean_by_ec[lt_bucket_of(lt_ec[idx])]);
 	lt_clean_count++;
 	__set_bit(idx, ltram_clean_bitmap);
@@ -486,7 +515,7 @@ static struct page *ltram_alloc_page(void)
  * 16.4 ms erase for nothing; get it wrong the other way and a sector is handed
  * out still holding the last tenant's data.
  */
-static void ltram_free_page_back(struct page *p, bool was_programmed)
+static void ltram_free_page_back(struct page *p)
 {
 	unsigned long idx = page_to_pfn(p) - ltram_start_pfn;
 	unsigned long flags;
@@ -498,15 +527,19 @@ static void ltram_free_page_back(struct page *p, bool was_programmed)
 	    test_bit(idx, ltram_clean_bitmap))
 		goto out;			/* not ours, or already free */
 
-	if (was_programmed && lt_ready) {
-		/* Stays out of ltram_clean_bitmap: it is not allocatable until
-		 * the erase worker has blanked it. */
+	/*
+	 * DIRTY, always. Every path that releases an LtRAM page -- the write
+	 * fault, the exit backstop, and a failed migration -- is releasing a
+	 * sector that either holds data or cannot be proven not to. It stays
+	 * out of ltram_clean_bitmap so it is not allocatable until the erase
+	 * worker has blanked it.
+	 *
+	 * There is deliberately no "return it clean" branch any more. It
+	 * existed for sectors that were allocated but never programmed, and the
+	 * only way to identify those was a bit that a FAILED write never set.
+	 */
+	if (lt_ready)
 		lt_to_dirty(idx);
-	} else {
-		__set_bit(idx, ltram_clean_bitmap);
-		atomic64_dec(&ltram_pages_in_use);
-		lt_to_clean(idx);
-	}
 out:
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
 }
@@ -613,7 +646,7 @@ static void lt_erase_work_fn(struct work_struct *w)
 		 * No erase op means no way to blank a sector. Recycling anyway
 		 * used to be safe, because write_page() erased inline before
 		 * every program; with inline_erase=0 it is exactly the bug
-		 * lt_written exists to prevent, one level up. Put it back and
+		 * put_new_folio exists to prevent, one level up. Put it back and
 		 * say so once: a pool that stops recovering is a visible
 		 * problem, and a pool that recycles unerased sectors is not.
 		 */
@@ -723,16 +756,40 @@ static struct folio *ltram_get_new_folio(struct folio *src, unsigned long privat
  * "Failed" does NOT mean "untouched". ltram_copy_to_flash() runs before
  * folio_migrate_mapping(), on purpose, so that a flash error aborts with
  * nothing published -- which means a mapping failure arrives here on a sector
- * that has already been programmed. Ask lt_written rather than assume.
+ * that has already been programmed.
  */
 static void ltram_put_new_folio(struct folio *dst, unsigned long private)
 {
-	unsigned long idx = page_to_pfn(&dst->page) - ltram_start_pfn;
-	bool programmed = lt_written && idx < ltram_nr_pages &&
-			  test_bit(idx, lt_written);
-
+	/*
+	 * ALWAYS dirty. The sector needs an erase, and asking whether it was
+	 * actually programmed cannot be answered safely.
+	 *
+	 * migrate_pages() reaches here in four ways. Before the copy: lock
+	 * contention, the source turning unmigratable, an early -EAGAIN --
+	 * sector allocated, never programmed, still blank. After a successful
+	 * copy: folio_migrate_mapping() returns -EAGAIN on an unexpected
+	 * refcount -- sector programmed. Retry exhaustion resolves to one of
+	 * those two.
+	 *
+	 * And the fourth: ltram_copy_to_flash() itself failed. That is the one
+	 * that made the old test unsafe. ltram_write_page() only calls
+	 * ltram_record_promotion() when rc == 0, so a failed write leaves
+	 * lt_written CLEAR -- while the backend may have programmed the sector
+	 * before failing, and a multi-page folio may have written earlier pages
+	 * before erroring on a later one. The bit said "blank", the sector held
+	 * data, and it went back to the clean pool to be programmed again
+	 * without an erase: the bitwise AND of old and new, silently.
+	 *
+	 * So do not ask. A blank sector sent for erase costs one erase out of a
+	 * budget of 6.55e9; a programmed sector called blank corrupts data.
+	 * Wrong in the only direction that is survivable.
+	 *
+	 * Nothing is owed to the application either way. folio_migrate_mapping()
+	 * never ran, so the PTE still points at the DRAM source and the process
+	 * carries on using it, unaware.
+	 */
 	atomic64_inc(&stat_dst_released);
-	ltram_free_page_back(&dst->page, programmed);
+	ltram_free_page_back(&dst->page);
 }
 
 /*
@@ -747,7 +804,7 @@ static void ltram_put_new_folio(struct folio *dst, unsigned long private)
 void ltram_free_folio(struct folio *folio)
 {
 	atomic64_inc(&stat_freed_via_hook);
-	ltram_free_page_back(&folio->page, true);
+	ltram_free_page_back(&folio->page);
 }
 
 /*
@@ -762,7 +819,7 @@ void ltram_free_folio(struct folio *folio)
 void ltram_free_page(struct page *page)
 {
 	atomic64_inc(&stat_freed_via_backstop);
-	ltram_free_page_back(page, true);
+	ltram_free_page_back(page);
 }
 
 void ltram_note_demotion(void)
@@ -1525,7 +1582,7 @@ static int lt_state_show(struct seq_file *m, void *v)
 	for (b = 0; b < LT_EC_BUCKETS; b++)
 		if (lt_blen[b])
 			seq_printf(m, "  [%6u..%6u] %u clean\n",
-				   b * LT_EC_GRAIN, (b + 1) * LT_EC_GRAIN - 1, lt_blen[b]);
+				   b * ec_grain, (b + 1) * ec_grain - 1, lt_blen[b]);
 
 	seq_printf(m, "invariant            %s\n", err ? "FAIL" : "ok");
 	if (err & LT_ERR_OVERLAP)
@@ -1581,18 +1638,12 @@ void ltram_record_promotion(unsigned long dst_pfn, unsigned long src_pfn)
 	 * it would be paying a real cost for a cosmetic one.
 	 */
 	/*
-	 * The sector now holds data, whatever happens to the migration after
-	 * this. ltram_put_new_folio() reads this to decide DIRTY or CLEAN, so
-	 * getting it here is what keeps a failed migration from returning a
-	 * programmed sector to the clean pool.
+	 * No "was it programmed" bit any more. It was read in exactly one place
+	 * -- ltram_put_new_folio() -- which now sends every released sector to
+	 * DIRTY regardless, because a FAILED write never set the bit while the
+	 * sector might still hold data. Setting it here also took
+	 * ltram_alloc_lock on the promotion path for a purely advisory answer.
 	 */
-	if (lt_written) {
-		unsigned long flags;
-
-		spin_lock_irqsave(&ltram_alloc_lock, flags);
-		__set_bit(idx, lt_written);
-		spin_unlock_irqrestore(&ltram_alloc_lock, flags);
-	}
 	lt_prov[idx].src_pfn = (u32)src_pfn;
 	lt_prov[idx].seq     = (u32)atomic_inc_return(&lt_prov_seq);
 	lt_prov[idx].pid     = target_pid;
@@ -1925,7 +1976,6 @@ static long __init lt_scan_pool(void)
 			 * pages_in_use goes negative.
 			 */
 			set_bit(i, lt_bm[LT_DIRTY]);
-			set_bit(i, lt_written);		/* it demonstrably holds data */
 			__clear_bit(i, ltram_clean_bitmap);
 			atomic64_inc(&ltram_pages_in_use);
 		}
@@ -1954,11 +2004,10 @@ static int __init lt_tracking_init(void)
 			goto nomem;
 	}
 	lt_scratch = bitmap_zalloc(ltram_nr_pages, GFP_KERNEL);
-	lt_written = bitmap_zalloc(ltram_nr_pages, GFP_KERNEL);
 	lt_ec   = kvcalloc(ltram_nr_pages, sizeof(*lt_ec), GFP_KERNEL);
 	lt_node = kvmalloc_array(ltram_nr_pages, sizeof(*lt_node), GFP_KERNEL);
 	lt_prov = kvcalloc(ltram_nr_pages, sizeof(*lt_prov), GFP_KERNEL);
-	if (!lt_scratch || !lt_written || !lt_ec || !lt_node || !lt_prov)
+	if (!lt_scratch || !lt_ec || !lt_node || !lt_prov)
 		goto nomem;
 
 	for (b = 0; b < LT_EC_BUCKETS; b++)
@@ -1984,7 +2033,6 @@ static int __init lt_tracking_init(void)
 		 * the pool back.
 		 */
 		bitmap_fill(lt_bm[LT_DIRTY], ltram_nr_pages);
-		bitmap_fill(lt_written, ltram_nr_pages);
 		bitmap_zero(ltram_clean_bitmap, ltram_nr_pages);
 		atomic64_set(&ltram_pages_in_use, ltram_nr_pages);
 		pr_warn("ltram: pool not scanned -- assuming all %lu sectors dirty\n",
@@ -2016,7 +2064,6 @@ nomem:
 		lt_bm[st] = NULL;
 	}
 	bitmap_free(lt_scratch); lt_scratch = NULL;
-	bitmap_free(lt_written); lt_written = NULL;
 	kvfree(lt_ec);   lt_ec = NULL;
 	kvfree(lt_node); lt_node = NULL;
 	kvfree(lt_prov); lt_prov = NULL;

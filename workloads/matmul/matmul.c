@@ -83,6 +83,20 @@ static int    wait_stable = 20;  /* --wait-stable PASSES */
  * is the window in which the engine gets pinned off again.
  */
 static int    wait_hold = 0;     /* --wait-hold SECS */
+/*
+ * After the measured runs, write one word per page of the weights until they
+ * come BACK out of flash.
+ *
+ * The promotion side has been exercised to death; the demotion side never has.
+ * A promoted page is write-protected, so the first store to it faults, the
+ * policy demotes it to DRAM and marks its sector dirty. That path --
+ * freed_via_hook -- is the one that matters under any workload that writes,
+ * and matmul never writes to W, so it had never run here.
+ *
+ * Strictly last: writing W changes the result, so every digest must already
+ * have been taken and compared.
+ */
+static int    do_evict = 0;      /* --evict */
 static int    compute_only = 0;   /* --compute-only: pin every row to row 0 */
 static int    do_chase = 0;       /* --chase: dependent-load latency over W */
 static volatile uint64_t chase_sink;
@@ -595,10 +609,10 @@ int main(int argc, char **argv)
         {"print-ranges",0,0,'R'}, {"phys",0,0,'A'},
         {"hold",1,0,'H'}, {"seed",1,0,'S'}, {"flush",1,0,'F'},
         {"compute-only",0,0,'C'}, {"chase",0,0,'H'+128},
-        {"wait-resident",1,0,'W'}, {"wait-timeout",1,0,'W'+128}, {"wait-stable",1,0,'W'+129}, {"wait-hold",1,0,'W'+130}, {0,0,0,0}
+        {"wait-resident",1,0,'W'}, {"wait-timeout",1,0,'W'+128}, {"wait-stable",1,0,'W'+129}, {"wait-hold",1,0,'W'+130}, {"evict",0,0,'E'}, {0,0,0,0}
     };
     int c;
-    while ((c = getopt_long(argc, argv, "n:i:r:VPRAH:S:F:W:", lo, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "n:i:r:VPRAH:S:F:W:E", lo, NULL)) != -1) {
         switch (c) {
         case 'n': N = strtoul(optarg, NULL, 0); break;
         case 'i': ITERS = atoi(optarg); break;
@@ -612,6 +626,7 @@ int main(int argc, char **argv)
         case 'W'+128: wait_max = atoi(optarg); break;
         case 'W'+129: wait_stable = atoi(optarg); break;
         case 'W'+130: wait_hold = atoi(optarg); break;
+        case 'E': do_evict = 1; break;
         case 'S': SEED = strtoull(optarg, NULL, 0); break;
         case 'F': flush_mb = strtoul(optarg, NULL, 0); break;
         case 'C': compute_only = 1; break;
@@ -621,7 +636,7 @@ int main(int argc, char **argv)
               "usage: %s [--n DIM] [--iters K] [--runs R] [--verify]\n"
               "          [--protect-weights] [--print-ranges] [--phys]\n"
               "          [--hold SECS] [--seed S] [--flush MB] [--compute-only] [--chase]\n"
-              "          [--wait-resident PCT] [--wait-timeout SECS]\n", argv[0]);
+              "          [--wait-resident PCT] [--wait-timeout SECS] [--evict]\n", argv[0]);
             return 2;
         }
     }
@@ -912,6 +927,30 @@ int main(int argc, char **argv)
 
     printf("RESULT mean %.3f s   sd %.3f s   (%.2f%%)\n", mean, sd, mean ? 100.0 * sd / mean : 0.0);
     if (do_verify) printf("DIGEST %s\n", digest);
+    if (do_evict) {
+        double te = now(), share = 100.0;
+        int pass;
+
+        printf("EVICT writing one word per page of the weights to force demotion\n");
+        fflush(stdout);
+        for (pass = 1; pass <= 200; pass++) {
+            size_t off;
+
+            for (off = 0; off < Wbytes; off += (size_t)page_sz)
+                ((volatile unsigned char *)W)[off]++;
+            share = weights_ltram_pct();
+            if (pass <= 3 || pass % 10 == 0 || share < 1.0)
+                printf("EVICT pass %3d  residency %6.2f%%  %6.1f s\n",
+                       pass, share, now() - te);
+            fflush(stdout);
+            if (share < 1.0)
+                break;
+        }
+        printf("EVICT done  residency %.2f%%  %d passes  %.1f s\n",
+               share, pass, now() - te);
+        fflush(stdout);
+    }
+
     phys_report("end");
     phys_verdict();
     printf("%s\n", (mean && 100.0 * sd / mean <= 2.0)

@@ -60,8 +60,9 @@ fi
 E0=$(w epoch); D0=$(w service_days); C0=$(w cycles_per_sect); G0=$(cat $PAR/wear_governor)
 LW0=$(cat $PAR/erase_low_water); HW0=$(cat $PAR/erase_high_water)
 PB0=$(cat $PAR/promote_batch)
+EG0=$(cat $PAR/ec_grain 2>/dev/null || echo 1000)
 setw(){ echo "$1" | sudo -n tee $PAR/erase_high_water >/dev/null; echo "$2" | sudo -n tee $PAR/erase_low_water >/dev/null; }
-restore(){ setp promote_batch $PB0; setp wear_epoch $E0; setp wear_days $D0; setp wear_cycles $C0
+restore(){ setp ec_grain $EG0 2>/dev/null; setp promote_batch $PB0; setp wear_epoch $E0; setp wear_days $D0; setp wear_cycles $C0
            setp wear_governor $G0; setp erase_low_water $LW0; setp erase_high_water $HW0; }
 # INT and TERM too, not just EXIT. A Ctrl-C part way through left matmul
 # running in the background with target_pid still pointing at it -- the knobs
@@ -674,6 +675,89 @@ else
         && ok "K3 residency climbed monotonically (largest fall ${DROP} points)" \
         || no "K3 residency fell by ${DROP} points during the fill -- pages were demoted while filling"
     rm -f $L
+fi
+
+hdr "L. WRITE-FAULT DEMOTION -- do pages come BACK?"
+# The promotion side has been exercised to death; the demotion side never had.
+# A promoted page is write-protected, so the first store to it faults, the
+# policy demotes it to DRAM and marks its sector dirty. That path --
+# freed_via_hook -- is the one that matters under any workload that writes,
+# and matmul never wrote to its weights, so it had never run here.
+#
+# matmul --evict does a second phase after the measured runs: one word per
+# page of the weights, repeatedly, until residency collapses. It is strictly
+# last, because writing the weights changes the result and every digest has to
+# have been taken first.
+LN=1448; LPAGES=$(( LN * LN * 4 / 4096 ))
+if [ "$(ps_ clean)" -lt $((LPAGES * 2)) ]; then
+    skip "L  only $(ps_ clean) clean sectors, need $((LPAGES * 2))"
+else
+    H0=$(gs freed_via_hook); DIRTY0=$(ps_ dirty)
+    L=/tmp/st-l.log
+    sudo -n $MM --n $LN --iters 1 --runs 60 --flush 32 --verify --print-ranges --phys \
+        --wait-resident 90 --wait-timeout 240 --wait-stable 30 --evict > $L 2>&1 &
+    BG=$!
+    for i in $(seq 1 600); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 0.1; done
+    PID=$(pgrep -x matmul | head -1)
+    [ -n "${PID:-}" ] && echo $PID | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    wait $BG 2>/dev/null
+    echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+
+    FILLED=$(grep "^WARMUP done" $L | sed -n 's/.*residency \([0-9.]*\)%.*/\1/p' | tail -1)
+    LEFTPC=$(grep "^EVICT done" $L | sed -n 's/.*residency \([0-9.]*\)%.*/\1/p' | tail -1)
+    HOOK=$(( $(gs freed_via_hook) - H0 )); DIRTYD=$(( $(ps_ dirty) - DIRTY0 ))
+    echo "     filled to ${FILLED:-?}%, after writing every page: ${LEFTPC:-?}%"
+    echo "     freed_via_hook +$HOOK, dirty +$DIRTYD, over $LPAGES weight pages"
+
+    awk -v f="${FILLED:-0}" 'BEGIN{exit !(f >= 90)}' \
+        && ok "L1 the weights filled to ${FILLED}% before the eviction phase" \
+        || no "L1 only reached ${FILLED:-0}% -- nothing to evict, L2/L3 mean nothing"
+    # Not zero: the scanner keeps running, so a handful can be re-promoted
+    # between the write that evicted them and the sample.
+    awk -v r="${LEFTPC:-100}" 'BEGIN{exit !(r <= 5)}' \
+        && ok "L2 writing every page drove residency to ${LEFTPC}% -- written pages ARE demoted" \
+        || no "L2 residency still ${LEFTPC:-?}% after writing every page -- demotion is not happening"
+    [ "$HOOK" -ge $(( LPAGES / 2 )) ] \
+        && ok "L3 freed_via_hook +$HOOK -- the write-fault path, not the exit backstop, did it" \
+        || no "L3 freed_via_hook only +$HOOK for $LPAGES pages -- they left by some other route"
+    rm -f $L
+fi
+
+hdr "M. WEAR BUCKETS -- least worn first"
+# The allocator's buckets are ec_grain erases wide. At the default 1000 every
+# sector is in bucket 0 and stays there until one reaches 1,000 erases -- about
+# 65 million away -- so lt_bucket_of() and the per-bucket free lists cannot be
+# reached at all by normal use.
+#
+# ec_grain is writable for exactly this. At 10, today's counts of ~20-35 spread
+# across three or four buckets, and "least worn first" becomes observable in
+# seconds rather than by burning through the chip.
+G0=$(cat $PAR/ec_grain 2>/dev/null || echo "")
+if [ -z "$G0" ]; then
+    skip "M  this kernel has no ec_grain parameter"
+else
+    setp ec_grain 10
+    sleep 1
+    NB=$(sed -n '/^clean_buckets/,$p' $DBG/pagestate | grep -c '^  \[')
+    LO=$(sed -n '/^clean_buckets/,$p' $DBG/pagestate | grep '^  \[' | head -1)
+    echo "     at grain 10: $NB non-empty buckets"
+    sed -n '/^clean_buckets/,$p' $DBG/pagestate | grep '^  \[' | head -4 | sed 's/^/     /'
+
+    [ "$(awk '/^invariant/{print $2}' $DBG/pagestate)" = "ok" ] \
+        && ok "M1 rebuilding the buckets at grain 10 kept the invariant" \
+        || no "M1 invariant broke after changing ec_grain -- the rebuild is wrong"
+    [ "${NB:-0}" -ge 2 ] \
+        && ok "M2 the pool spreads across $NB buckets at grain 10 (1 at the default)" \
+        || no "M2 still $NB bucket at grain 10 -- the spread is too tight to test ordering"
+
+    # Least worn first: the lowest bucket must drain before a higher one is
+    # touched. min erase count over the clean pool can only rise.
+    MIN0=$(sed -n 's/.*erase_count *min \([0-9]*\).*/\1/p' $DBG/pagestate)
+    setp ec_grain $G0
+    sleep 1
+    [ "$(awk '/^invariant/{print $2}' $DBG/pagestate)" = "ok" ] \
+        && ok "M3 restoring grain $G0 rebuilt cleanly (min erase count $MIN0)" \
+        || no "M3 invariant broke restoring grain $G0"
 fi
 
 hdr "RESULT"
