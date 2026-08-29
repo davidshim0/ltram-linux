@@ -719,6 +719,25 @@ int main(int argc, char **argv)
                " (timeout %d s)\n", wait_res, wait_max);
         fflush(stdout);
         for (;;) {
+            /*
+             * SCRUB HERE TOO, not just in the timed loop.
+             *
+             * cache_scrub() dirties one word per page precisely so the scrub
+             * buffer stays pte_write() and the policy rejects it. A fill that
+             * skips it leaves 32 MiB of anonymous, read-mostly memory sitting
+             * below the weights -- which is the single most attractive
+             * promotion candidate in the process, and the scanner walks from
+             * address 0.
+             *
+             * Measured: the fill promoted all 8,192 scrub pages, the first
+             * timed scrub wrote them, they faulted back to DRAM, and their
+             * sectors were left DIRTY with the erase engine pinned off. That
+             * capped the pool at 65,536 - 8,192 = 57,344 sectors, which is
+             * exactly where 256 MiB cold (57,342) and 512 MiB cold (57,336)
+             * both stalled. The warm runs, having no scrub buffer at all,
+             * reached 99.8%.
+             */
+            cache_scrub();
             for (size_t i = 0; i < N; i++) {
                 const float *row = W + i * N;
                 float acc = 0.0f;
