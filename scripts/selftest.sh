@@ -32,6 +32,7 @@ skip(){ printf "  \033[33mSKIP\033[0m %s\n" "$*"; SKIP=$((SKIP+1)); }
 hdr(){  printf "\n\033[1m%s\033[0m\n" "$*"; }
 w(){ awk -v k="$1" '$1==k{print $2; exit}' $DBG/wear; }
 ps_(){ awk -v k="$1" '$1==k{print $2; exit}' $DBG/pagestate; }
+gs(){ awk -v k="$1" '$1==k{print $2; exit}' /sys/kernel/ltram/stats; }
 setp(){ echo "$2" | sudo -n tee $PAR/$1 >/dev/null; }
 near(){ awk -v a="$1" -v b="$2" -v t="$3" 'BEGIN{d=a-b; if(d<0)d=-d; exit !(d<=t)}'; }
 
@@ -47,7 +48,16 @@ E0=$(w epoch); D0=$(w service_days); C0=$(w cycles_per_sect); G0=$(cat $PAR/wear
 LW0=$(cat $PAR/erase_low_water); HW0=$(cat $PAR/erase_high_water)
 restore(){ setp wear_epoch $E0; setp wear_days $D0; setp wear_cycles $C0
            setp wear_governor $G0; setp erase_low_water $LW0; setp erase_high_water $HW0; }
-trap restore EXIT
+# INT and TERM too, not just EXIT. A Ctrl-C part way through left matmul
+# running in the background with target_pid still pointing at it -- the knobs
+# came back but the workload did not, so the scanner kept promoting into a
+# process nobody was measuring.
+cleanup(){
+    pkill -x matmul 2>/dev/null
+    echo 0 > /sys/kernel/ltram/target_pid 2>/dev/null
+    restore
+}
+trap cleanup EXIT INT TERM
 
 # =====================================================================
 # The reboot pair. Persistence is the one design that cannot be tested
