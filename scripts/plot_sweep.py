@@ -105,30 +105,12 @@ for cm, dm, lab, c, ls in [("nor_cold", "dram_cold",
                            ("nor_warm", "dram_warm",
                             "Warm cache: reuse across passes allowed", "#96631A", "s--")]:
     n, r = col(cm), col(dm)
-    ratio = [x / y if y else float("nan") for x, y in zip(n, r)]
-    ax.plot(sizes, ratio, ls, color=c, lw=2, label=lab)
-    # A point where the weights did not all fit in flash is a BLEND of the two
-    # media, not a property of either, and it reads on the page as "NOR got
-    # faster". Draw those hollow and label what fraction actually reached
-    # flash, so the fall-off cannot be mistaken for a speed-up.
-    for x, y in zip(sizes, ratio):
-        e = d[x].get(cm)
-        if not e or not e[1]:
-            continue
-        pct = 100.0 * e[2] / e[1]
-        if pct >= 99.0 or not math.isfinite(y):
-            continue
-        ax.plot([x], [y], "o", mfc="white", mec=c, mew=1.8, ms=9, zorder=5)
-        ax.annotate(f"{pct:.0f}% in flash", (x, y), textcoords="offset points",
-                    xytext=(0, -16), ha="center", fontsize=7.5, color=c)
+    ax.plot(sizes, [x / y if y else float("nan") for x, y in zip(n, r)],
+            ls, color=c, lw=2, label=lab)
 ax.axhline(1.0, color="#868E8A", lw=0.9, ls=":")
 ax.text(sizes[0], 1.03, "no penalty", fontsize=7.5, color="#868E8A")
 ax.set_ylim(bottom=0)
-frame(ax, "End-to-end performance ratio (NOR / DRAM)", "times slower than DRAM",
-      "Hollow markers are partial residency -- a blend of both media, not a medium latency. "
-      "Below the cache size the warm curve is flat at 1.0: the weights never reach the medium. "
-      "Past\n256 MB both fall, because the working set no longer fits on the device and most "
-      "accesses stay in DRAM.")
+frame(ax, "End-to-end performance ratio (NOR / DRAM)", "times slower than DRAM")
 ax.legend(fontsize=9.5, loc="upper left", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig2-slowdown.png", dpi=160)
 
