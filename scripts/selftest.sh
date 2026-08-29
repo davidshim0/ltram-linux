@@ -57,8 +57,9 @@ fi
 # Restore every knob we touch, however we leave.
 E0=$(w epoch); D0=$(w service_days); C0=$(w cycles_per_sect); G0=$(cat $PAR/wear_governor)
 LW0=$(cat $PAR/erase_low_water); HW0=$(cat $PAR/erase_high_water)
+PB0=$(cat $PAR/promote_batch)
 setw(){ echo "$1" | sudo -n tee $PAR/erase_high_water >/dev/null; echo "$2" | sudo -n tee $PAR/erase_low_water >/dev/null; }
-restore(){ setp wear_epoch $E0; setp wear_days $D0; setp wear_cycles $C0
+restore(){ setp promote_batch $PB0; setp wear_epoch $E0; setp wear_days $D0; setp wear_cycles $C0
            setp wear_governor $G0; setp erase_low_water $LW0; setp erase_high_water $HW0; }
 # INT and TERM too, not just EXIT. A Ctrl-C part way through left matmul
 # running in the background with target_pid still pointing at it -- the knobs
@@ -493,6 +494,88 @@ else
             || no "J1 background erase costs reads ${RATIO}x -- spacing is not limiting interference"
         ok "J2 measured, for the record: erase interference = ${RATIO}x on cold NOR reads"
     else skip "J  one of the two runs produced no plateau"; fi
+fi
+
+hdr "K. FILL EFFICIENCY -- how long, and at what cost in allocations"
+# Three questions the suite could not answer: how long an empty pool takes to
+# fill, whether that matches the pacing we think we configured, and whether
+# pages are promoted ONCE or bounced back and forth.
+#
+# The last is the one nothing else would notice. A page promoted, demoted and
+# re-promoted spends two erases and leaves residency unchanged, so a churning
+# policy looks identical to a working one from every other angle -- while
+# burning the budget to stand still.
+#
+# Pacing is pinned to something predictable first: promote_batch=1 and the
+# governor at a short life, so the model is simply one promotion per tick.
+KN=1448; KPAGES=$(( KN * KN * 4 / 4096 ))
+if [ "$(ps_ clean)" -lt $((KPAGES * 2)) ]; then
+    skip "K  only $(ps_ clean) clean sectors, need $((KPAGES * 2))"
+else
+    setp promote_batch 1
+    setp wear_governor 1
+    setp wear_days 40
+    IV=$(w interval_ms)
+    # Period = the sleep PLUS the work: a scan of up to scan_ptes_per_pass, one
+    # migration, a ~1.2 ms flash program and the TLB work. E1 measured that
+    # work at ~3 ms and both of its arms fit with that one constant.
+    WORK=3
+    PRED=$(awk -v p="$KPAGES" -v i="$IV" -v w="$WORK" 'BEGIN{printf "%.1f", p*(i+w)/1000.0}')
+
+    A0=$(gs dst_allocated)
+    L=/tmp/st-k.log
+    sudo -n $MM --n $KN --iters 1 --runs 400 --flush 32 --verify --print-ranges --phys \
+        --wait-resident 95 --wait-timeout 300 --wait-stable 40 --wait-hold 15 > $L 2>&1 &
+    BG=$!
+    for i in $(seq 1 600); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 0.1; done
+    PID=$(pgrep -x matmul | head -1)
+    TSTART=$(date +%s.%N)
+    [ -n "${PID:-}" ] && echo $PID | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    for i in $(seq 1 4000); do
+        grep -q "^WARMUP hold" $L 2>/dev/null && break
+        kill -0 $BG 2>/dev/null || break
+        sleep 0.1
+    done
+    A1=$(gs dst_allocated)
+    wait $BG 2>/dev/null
+    echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    setp promote_batch $PB0; setp wear_days $D0
+
+    FILL=$(grep "^WARMUP done" $L | sed -n 's/.*passes  *\([0-9.]*\) s.*/\1/p' | tail -1)
+    KRES=$(grep "^WARMUP done" $L | sed -n 's/.*residency \([0-9.]*\)%.*/\1/p' | tail -1)
+    ALLOC=$(( A1 - A0 ))
+    RESPG=$(awk -v r="${KRES:-0}" -v p="$KPAGES" 'BEGIN{printf "%.0f", r*p/100}')
+
+    echo "     $KPAGES weight pages, interval ${IV} ms + ~${WORK} ms work"
+    echo "     predicted ${PRED} s, actual ${FILL:-?} s, reached ${KRES:-?}%"
+    echo "     $ALLOC allocations for $RESPG resident pages"
+
+    # K1: one allocation per page that ended up resident. This is the churn
+    # test. 1.25 allows the handful that legitimately cross and come back.
+    if [ "$RESPG" -gt 0 ]; then
+        EFF=$(awk -v a="$ALLOC" -v r="$RESPG" 'BEGIN{printf "%.2f", a/r}')
+        awk -v e="$EFF" 'BEGIN{exit !(e <= 1.25)}' \
+            && ok "K1 ${EFF} allocations per resident page -- pages are promoted once, not bounced" \
+            || no "K1 ${EFF} allocations per resident page -- pages are being promoted and demoted repeatedly"
+    else no "K1 nothing became resident, cannot judge efficiency"; fi
+
+    # K2: does the fill match the pacing we configured? Reported either way --
+    # a mismatch is information about the scanner, not necessarily a fault.
+    if [ -n "${FILL:-}" ]; then
+        RAT=$(awk -v a="$FILL" -v p="$PRED" 'BEGIN{printf "%.2f", a/p}')
+        awk -v r="$RAT" 'BEGIN{exit !(r >= 0.5 && r <= 2.5)}' \
+            && ok "K2 fill took ${FILL} s against ${PRED} s predicted (${RAT}x)" \
+            || no "K2 fill took ${FILL} s against ${PRED} s predicted (${RAT}x) -- pacing model is wrong"
+    else skip "K2 no fill time reported"; fi
+
+    # K3: residency must climb, not oscillate. Reads the per-pass series the
+    # fill prints and requires no drop bigger than 1 percentage point.
+    DROP=$(grep "^WARMUP pass" $L | sed -n 's/.*residency *\([0-9.]*\)%.*/\1/p' | \
+        awk 'NR>1 && prev-$1 > d {d=prev-$1} {prev=$1} END{printf "%.2f", d+0}')
+    awk -v d="${DROP:-0}" 'BEGIN{exit !(d <= 1.0)}' \
+        && ok "K3 residency climbed monotonically (largest fall ${DROP} points)" \
+        || no "K3 residency fell by ${DROP} points during the fill -- pages were demoted while filling"
+    rm -f $L
 fi
 
 hdr "RESULT"
