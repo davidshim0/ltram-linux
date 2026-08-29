@@ -18,6 +18,8 @@ DBG=/sys/kernel/debug/ltram
 PAR=/sys/module/ltram_policy/parameters
 MM=$HOME/matmul
 EC=/usr/local/sbin/ltram-erase-counts
+F=/var/lib/ltram/erase_counts
+EPF=/var/lib/ltram/wear_epoch
 STAMP=/var/lib/ltram/selftest-pre.txt
 PASS=0; FAIL=0; SKIP=0
 ok(){   printf "  \033[32mPASS\033[0m %s\n" "$*"; PASS=$((PASS+1)); }
@@ -151,10 +153,10 @@ ERR=$(awk '/^errors/{print $2}' $DBG/pagestate 2>/dev/null || echo 0)
 hdr "D. ERASE-COUNT PERSISTENCE"
 if [ -x $EC ]; then
     sudo -n $EC save >/dev/null 2>&1
-    SZ=$(stat -c %s /var/lib/ltram/erase_counts 2>/dev/null || echo 0)
+    SZ=$(stat -c %s $F 2>/dev/null || echo 0)
     [ "$SZ" = "$((16 + 4*NP))" ] && ok "D1 blob is 16 + 4 x $NP = $SZ bytes" \
         || no "D1 blob is $SZ, want $((16 + 4*NP))"
-    H=$(sudo -n head -c16 /var/lib/ltram/erase_counts | od -An -tx4 | tr -s ' ')
+    H=$(head -c16 $F | od -An -tx4 | tr -s ' ')
     echo "$H" | grep -q "4c544543" && ok "D2 header magic is LTEC" || no "D2 header: $H"
     # A blob whose header does not describe THIS kernel must be refused. That
     # is the guard the kernel actually implements: magic, version and nr_pages
@@ -178,7 +180,6 @@ if [ -x $EC ]; then
     near "$(w erases_used)" "$USED" 200 \
         && ok "D5 erases_used survives a restore ($(w erases_used) vs $USED)" \
         || no "D5 erases_used $(w erases_used) != $USED after restore"
-    EPF=/var/lib/ltram/wear_epoch
     if [ -f $EPF ]; then
         [ "$(cat $EPF)" = "$(w epoch)" ] && ok "D6 saved epoch matches the live parameter ($(w epoch))" || no "D6 saved epoch $(cat $EPF) != live $(w epoch)"
     else no "D6 no $EPF -- restore has never stamped the epoch"; fi
