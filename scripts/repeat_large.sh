@@ -240,8 +240,15 @@ for N in $SIZES; do
     say "  $MODE  $M s   $NSL ns/line   sd ${PCT}%   resident ${RES:-0}/$PAGES (${RPC}%)   erases $ED"
     awk -v p="$PCT" 'BEGIN{exit !(p>2)}' && \
         say "  !! sd ${PCT}% -- this run never settled, the mean is not a latency"
-    awk -v r="$RPC" 'BEGIN{exit !(r<99)}' && \
-        say "  !! only ${RPC}% reached flash -- this is a BLEND of both media, not a NOR latency"
+    # Compare against what the POOL allows, not against 100%. A 512 MB working
+    # set can never exceed 65,536/131,066 = 50%, and 49.8% there is complete,
+    # not short -- warning on it cries wolf at every oversized point and
+    # trains you to ignore the one case that matters.
+    REACH=$(awk -v p="$PAGES" -v pool=65536 'BEGIN{printf "%.2f", 100.0*(p<pool?p:pool)/p}')
+    awk -v r="$RPC" -v m="$REACH" 'BEGIN{exit !(r < 0.99*m)}' && \
+        say "  !! ${RPC}% reached flash but this size allows ${REACH}% -- a BLEND, not a NOR latency"
+    awk -v r="$RPC" -v m="$REACH" 'BEGIN{exit !(r >= 0.99*m && m < 99)}' && \
+        say "  (${RPC}% of ${REACH}% achievable -- the pool is full; this is a blend by design)"
     [ "$ED" -gt 0 ] && say "  !! the engine ran during the measurement -- this point is contaminated"
     rm -f $L
     done
