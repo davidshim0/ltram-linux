@@ -63,6 +63,13 @@ if [ "$MODE" = "--post" ]; then
     # and a few sectors can be erased at boot before the restore lands.
     [ "${N_USED:-0}" -gt 0 ]         && ok "R2 counts survived the power cycle (used = $N_USED, not 0)"         || no "R2 used = 0 -- nothing was restored; check ExecStop ran"
     [ "${N_USED:-0}" -ge "$P_USED" ]         && ok "R3 restored count >= the stamp ($N_USED >= $P_USED)"         || no "R3 restored $N_USED is BELOW the stamp $P_USED -- more was lost than the shutdown delta"
+    # The epoch is a date, not a measurement: it must come back bit-identical.
+    # A kernel default that quietly reasserts itself changes seconds_left, and
+    # the whole budget is erases_left divided by that.
+    P_EP=$(awk '/^epoch/{print $2}' $STAMP); N_EP=$(w epoch)
+    if [ -n "${P_EP:-}" ]; then
+        [ "$N_EP" = "$P_EP" ] && ok "R8 wear epoch survived unchanged ($N_EP)" || no "R8 epoch was $P_EP, is now $N_EP -- the compiled default reasserted itself"
+    else skip "R8 no epoch in the stamp (pre-dates the governor)"; fi
     systemctl is-active --quiet ltram-erase-counts         && ok "R4 the persistence unit is active" || no "R4 unit is not active"
     dmesg | grep -q "erase counts restored"         && ok "R5 kernel logged the restore" || no "R5 no restore in dmesg"
     dmesg | grep -q "erase-count blob rejected"         && no "R6 kernel REJECTED the blob -- see dmesg for magic/version/pages"         || ok "R6 blob was not rejected"
@@ -156,6 +163,10 @@ if [ -x $EC ]; then
     near "$(w erases_used)" "$USED" 200 \
         && ok "D5 erases_used survives a restore ($(w erases_used) vs $USED)" \
         || no "D5 erases_used $(w erases_used) != $USED after restore"
+    EPF=/var/lib/ltram/wear_epoch
+    if [ -f $EPF ]; then
+        [ "$(cat $EPF)" = "$(w epoch)" ] && ok "D6 saved epoch matches the live parameter ($(w epoch))" || no "D6 saved epoch $(cat $EPF) != live $(w epoch)"
+    else no "D6 no $EPF -- restore has never stamped the epoch"; fi
 else skip "D  erase-count unit not installed (run ~/ltram-systemd/install.sh)"; fi
 
 [ "$MODE" = "--quick" ] && { hdr "RESULT"; echo "  $PASS passed, $FAIL failed, $SKIP skipped"; exit $((FAIL>0)); }
