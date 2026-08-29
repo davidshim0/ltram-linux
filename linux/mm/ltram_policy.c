@@ -47,7 +47,7 @@
  * interval.
  */
 static unsigned int scan_interval_ms = 1000;
-static unsigned int promote_batch = 32;	/* pages per pass; 32/s is under the budget */
+static unsigned int promote_batch = 1;	/* ONE: the interval sets the rate */
 /*
  * PTEs a single pass may examine before it stops and saves its place. Bounds
  * the work per pass independently of promote_batch, so a region where nothing
@@ -60,6 +60,47 @@ static unsigned int promote_batch = 32;	/* pages per pass; 32/s is under the bud
  * above should_promote().
  */
 static unsigned int scan_ptes_per_pass = 8192;
+/*
+ * THE WEAR BUDGET.
+ *
+ * Endurance, not throughput, is what limits this device. A program takes
+ * ~1.2 ms, so the hardware would sustain ~830 promotions a second all day; the
+ * datasheet's 100,000 erases per sector is what actually runs out. Spread the
+ * array's whole budget evenly across the intended service life and the
+ * sustainable rate falls out of one division:
+ *
+ *	rate = erases_left / seconds_left
+ *
+ * 65,536 sectors x 100,000 cycles over five years is 41.5/s -- one promotion
+ * every 24 ms. Self-correcting with no controller and nothing to tune:
+ * overspend and erases_left falls, so the rate falls; sit idle and
+ * seconds_left falls while erases_left does not, so the rate rises. Budget a
+ * tick does not spend is not banked anywhere, it simply stays in erases_left
+ * and pays for a faster rate later.
+ *
+ * wear_epoch is when the service life started, in seconds since the Unix
+ * epoch, and it is writable so the rate can be moved without a rebuild.
+ * Setting it in the PAST leaves less time and promotes faster; setting it in
+ * the FUTURE leaves more and promotes slower. For ~1.5 ms, about the fastest
+ * the device can physically program, the life left has to be ~114 days --
+ * so move the epoch back by roughly wear_days - 114.
+ *
+ * Default: 2026-08-29 00:00:00 UTC, when counting began on this board.
+ *
+ * erases_used is a LOWER BOUND -- an unclean shutdown loses whatever accrued
+ * since the last save, and the wear this chip took during FPGA bring-up was
+ * never counted at all. So the budget is optimistic by an unknown amount.
+ */
+static unsigned long wear_epoch    = 1787961600UL;
+static unsigned int  wear_days     = 1826;	/* five years */
+static unsigned int  wear_cycles   = 100000;	/* datasheet, per sector */
+static unsigned int  wear_governor = 1;
+/*
+ * How long to wait when there is no clean sector to promote INTO. Scanning
+ * then can only find candidates nothing can be allocated for, and nothing is
+ * likely to free a sector in the next millisecond either.
+ */
+static unsigned int  scan_stall_ms = 1000;
 /*
  * Background erase. Hysteresis, not a single threshold: erasing starts when
  * free falls below the low mark and continues until it reaches the high one,
@@ -135,6 +176,11 @@ static unsigned int idle_sample_us = 1000;
 module_param(scan_interval_ms, uint, 0644);
 module_param(promote_batch, uint, 0644);
 module_param(scan_ptes_per_pass, uint, 0644);
+module_param(wear_epoch, ulong, 0644);
+module_param(wear_days, uint, 0644);
+module_param(wear_cycles, uint, 0644);
+module_param(wear_governor, uint, 0644);
+module_param(scan_stall_ms, uint, 0644);
 module_param(erase_low_water, uint, 0644);
 module_param(erase_high_water, uint, 0644);
 module_param(erase_poll_ms, uint, 0644);
@@ -243,6 +289,12 @@ static u32		*lt_ec;			/* erase count, per page */
 static struct list_head	*lt_node;		/* per-page link into a bucket */
 static struct list_head	 lt_clean_by_ec[LT_EC_BUCKETS];
 static unsigned long	 lt_clean_count;		/* O(1) for the watermark */
+/*
+ * Erases since counting began, maintained as the erases happen. The same
+ * number as summing lt_ec[], which is 65,536 adds -- too much to repeat on
+ * every scan tick just to divide by it.
+ */
+static atomic64_t	 lt_ec_total;
 static u32		 lt_erasing = LT_ERASING_IDLE;
 static bool		 lt_ready;
 
@@ -320,6 +372,7 @@ static void lt_erasing_to_clean(unsigned long idx)
 	lt_clean_count++;
 	__set_bit(idx, ltram_clean_bitmap);
 	atomic64_dec(&ltram_pages_in_use);
+	atomic64_inc(&lt_ec_total);		/* the wear budget's ground truth */
 }
 
 /* Erase failed, or the idle gate refused. The page never left DIRTY, so just
@@ -1036,11 +1089,84 @@ static void ltram_scan_once(void)
 	putback_movable_pages(&ctx.candidates);
 }
 
+#define LT_WEAR_STOP	UINT_MAX
+
+/*
+ * Milliseconds between promotions, from erases_left / seconds_left. See the
+ * wear_epoch comment above. LT_WEAR_STOP means the budget is gone.
+ */
+static unsigned int lt_wear_interval_ms(void)
+{
+	u64 total, used, left, ms;
+	s64 secs_left;
+
+	if (!wear_governor)
+		return scan_interval_ms;
+
+	total = (u64)ltram_nr_pages * (u64)wear_cycles;
+	used  = (u64)atomic64_read(&lt_ec_total);
+	if (used >= total)
+		return LT_WEAR_STOP;
+
+	secs_left = (s64)wear_epoch + (s64)wear_days * 86400 -
+		    ktime_get_real_seconds();
+	if (secs_left <= 0)
+		return LT_WEAR_STOP;
+
+	left = total - used;
+	ms = div64_u64(1000ULL * (u64)secs_left, left);
+	/*
+	 * The device cannot program faster than ~1.2 ms whatever this says, and
+	 * a zero would turn this thread into a spin.
+	 */
+	if (ms < 1)
+		ms = 1;
+	if (ms > 60000)
+		ms = 60000;
+	return (unsigned int)ms;
+}
+
 static int ltram_scan_thread(void *unused)
 {
 	while (!kthread_should_stop()) {
+		unsigned int ms = lt_wear_interval_ms();
+
+		/*
+		 * Exhausted: stop promoting. Deliberately not a trickle. If the
+		 * budget was spent correctly we never arrive here, so arriving
+		 * means the arithmetic was wrong -- and a trickle would hide
+		 * that rather than surface it.
+		 */
+		if (ms == LT_WEAR_STOP) {
+			pr_warn_once("ltram: wear budget exhausted (%lld of %llu erases) -- promotion stopped\n",
+				     atomic64_read(&lt_ec_total),
+				     (u64)ltram_nr_pages * (u64)wear_cycles);
+			msleep_interruptible(scan_stall_ms);
+			continue;
+		}
+
+		/*
+		 * THE INTERVAL IS THE PACING. Sleep it, and on waking promote if
+		 * there is somewhere to put a page and a candidate inside
+		 * scan_ptes_per_pass. No token bucket and no deadline: a tick
+		 * that finds nothing just sleeps again, and the budget it did
+		 * not spend stays in erases_left and buys a faster rate later.
+		 */
+		msleep_interruptible(ms);
+		if (kthread_should_stop())
+			break;
+
+		/*
+		 * Nowhere to put a page. Scanning could only turn up candidates
+		 * that cannot be allocated for, and a sector is unlikely to come
+		 * free in the next millisecond.
+		 */
+		if (!READ_ONCE(lt_clean_count)) {
+			msleep_interruptible(scan_stall_ms);
+			continue;
+		}
+
 		ltram_scan_once();
-		msleep_interruptible(scan_interval_ms);
 	}
 	return 0;
 }
@@ -1564,8 +1690,17 @@ static void lt_rebuild_buckets(void)
 		lt_clean_count++;
 	}
 	spin_unlock_irqrestore(&ltram_alloc_lock, flags);
-	pr_info("ltram: erase counts restored, %lu free pages rebucketed\n",
-		lt_clean_count);
+
+	/* The restored array IS the new ground truth for the wear budget. */
+	{
+		u64 sum = 0;
+
+		for (i = 0; i < ltram_nr_pages; i++)
+			sum += lt_ec[i];
+		atomic64_set(&lt_ec_total, (s64)sum);
+	}
+	pr_info("ltram: erase counts restored, %lu free pages rebucketed, %lld erases counted\n",
+		lt_clean_count, atomic64_read(&lt_ec_total));
 }
 
 static ssize_t lt_ec_read(struct file *f, char __user *ubuf, size_t len,
@@ -1644,6 +1779,31 @@ static ssize_t lt_ec_write(struct file *f, const char __user *ubuf, size_t len,
 		lt_rebuild_buckets();
 	return len;
 }
+
+static int lt_wear_show(struct seq_file *m, void *v)
+{
+	u64 total = (u64)ltram_nr_pages * (u64)wear_cycles;
+	u64 used  = (u64)atomic64_read(&lt_ec_total);
+	s64 secs  = (s64)wear_epoch + (s64)wear_days * 86400 -
+		    ktime_get_real_seconds();
+	unsigned int ms = lt_wear_interval_ms();
+
+	seq_printf(m, "governor         %s\n", wear_governor ? "on" : "off");
+	seq_printf(m, "epoch            %lu\n", wear_epoch);
+	seq_printf(m, "service_days     %u\n", wear_days);
+	seq_printf(m, "cycles_per_sect  %u\n", wear_cycles);
+	seq_printf(m, "erases_total     %llu\n", total);
+	seq_printf(m, "erases_used      %llu\n", used);
+	seq_printf(m, "erases_left      %llu\n", total > used ? total - used : 0);
+	seq_printf(m, "seconds_left     %lld\n", secs);
+	if (ms == LT_WEAR_STOP)
+		seq_puts(m, "interval_ms      STOPPED\n");
+	else
+		seq_printf(m, "interval_ms      %u\nrate_milli_hz    %llu\n",
+			   ms, ms ? div64_u64(1000000ULL, ms) : 0ULL);
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(lt_wear);
 
 static const struct file_operations lt_ec_fops = {
 	.owner	= THIS_MODULE,
@@ -1800,6 +1960,8 @@ static int __init lt_tracking_init(void)
 				    NULL, &lt_ec_fops);
 		debugfs_create_file("promotions", 0444, ltram_debugfs_dir,
 				    NULL, &lt_prov_fops);
+		debugfs_create_file("wear", 0444, ltram_debugfs_dir,
+				    NULL, &lt_wear_fops);
 	}
 	queue_delayed_work(system_unbound_wq, &lt_erase_work,
 			   msecs_to_jiffies(erase_poll_ms));
