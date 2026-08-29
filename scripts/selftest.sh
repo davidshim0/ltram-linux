@@ -405,13 +405,50 @@ promo_rate(){   # $1 = wear_days
     echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
     awk -v a="$a0" -v b="$a1" -v x="$t0" -v y="$t1" 'BEGIN{printf "%.1f", (b-a)/(y-x)}'
 }
-R_SLOW=$(promo_rate 400); IV_SLOW=$(w interval_ms)
-R_FAST=$(promo_rate 40);  IV_FAST=$(w interval_ms)
-setp wear_days $D0
-echo "     slow: interval ${IV_SLOW} ms -> ${R_SLOW} promotions/s"
-echo "     fast: interval ${IV_FAST} ms -> ${R_FAST} promotions/s"
-awk -v s="$R_SLOW" -v f="$R_FAST" 'BEGIN{exit !(f > s*1.8)}' \
-    && ok "E1 a shorter budget promotes faster (${R_SLOW} -> ${R_FAST}/s)" \
+# Sweep the budget inside ONE fill, the same way J sweeps the erase rate.
+# wear_days maps to an interval linearly, so these five give 1, 2, 5, 10 and
+# 20 ms -- and the model says the achieved rate is 1000/(interval + ~3 ms of
+# scan-plus-migration work), which is exactly what the plot should show.
+ECSV=$SDIR/promote-rate.csv
+EN=4096; EPAGES=$(( EN * EN * 4 / 4096 ))
+mkdir -p $SDIR
+if ! ensure_clean $EPAGES; then
+    skip "E1 could not reach $EPAGES clean sectors for the rate sweep"
+    R_SLOW=1; R_FAST=2      # so E2/E3 still run
+else
+    echo "wear_days,interval_ms,measured_per_s,predicted_per_s" > $ECSV
+    L=/tmp/st-e.log
+    sudo -n $MM --n $EN --iters 1 --runs 4000 --print-ranges --phys > $L 2>&1 &
+    BG=$!
+    for i in $(seq 1 600); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 0.1; done
+    PID=$(pgrep -x matmul | head -1)
+    [ -n "${PID:-}" ] && echo $PID | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    setp promote_batch 1; setp wear_governor 1
+    R_SLOW=""; R_FAST=""
+    for wd in 1516 758 379 152 76; do
+        kill -0 $BG 2>/dev/null || break
+        setp wear_days $wd
+        sleep 3
+        IV=$(w interval_ms)
+        a0=$(gs dst_allocated); t0=$(date +%s.%N)
+        sleep 8
+        a1=$(gs dst_allocated); t1=$(date +%s.%N)
+        MR=$(awk -v a="$a0" -v b="$a1" -v x="$t0" -v y="$t1" 'BEGIN{printf "%.1f", (b-a)/(y-x)}')
+        PR=$(awk -v i="$IV" 'BEGIN{printf "%.1f", 1000.0/(i+3)}')
+        echo "$wd,$IV,$MR,$PR" >> $ECSV
+        printf "     wear_days %-5s interval %2s ms   measured %6s/s   model %6s/s\n" "$wd" "$IV" "$MR" "$PR"
+        [ -z "$R_SLOW" ] && R_SLOW=$MR
+        R_FAST=$MR
+        [ "$(ps_ clean)" -lt 500 ] && break
+    done
+    kill $BG 2>/dev/null; wait $BG 2>/dev/null
+    echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    setp promote_batch $PB0; setp wear_days $D0
+    rm -f $L
+    echo "     -> $ECSV"
+fi
+awk -v s="${R_SLOW:-0}" -v f="${R_FAST:-0}" 'BEGIN{exit !(f > s*1.8)}' \
+    && ok "E1 a shorter budget promotes faster (${R_SLOW} -> ${R_FAST}/s across the sweep)" \
     || no "E1 rate did not respond to the budget (${R_SLOW} -> ${R_FAST}/s)"
 [ "$(cat $PAR/promote_batch)" = "1" ] && ok "E2 promote_batch is 1" \
     || no "E2 promote_batch is $(cat $PAR/promote_batch), want 1"
@@ -598,50 +635,89 @@ else
     setw $HW0 $LW0
 fi
 
-hdr "J. READ LATENCY WHILE ERASING"
-# NOR cannot serve a read while a sector is erasing, so background erase is
-# paid for in read latency. That cost is the entire reason erase_batch is 1 and
-# the worker spaces at erase_poll_ms -- and it had never been measured.
-plateau_ns(){ grep "^POINT" "$1" | awk -v l="$2" '{v[n++]=$3} END{
-    if(!n){print ""; exit} s=int(n*0.7); c=0; t=0
-    for(i=s;i<n;i++){c++; t+=v[i]}
-    printf "%.1f", (t/c)*1e9/l }'; }
+hdr "J. READ LATENCY vs ERASE RATE"
+# NOR is said not to serve a read while a sector is erasing, which is the whole
+# argument for erase_batch=1 and the erase_poll_ms spacing. The first version
+# of this measured two points -- engine off, engine wide open -- and reported
+# 1.04x. That is a number, not a curve, and a curve is what tells you where the
+# spacing should sit.
+#
+# So sweep erase_poll_ms INSIDE ONE FILL. matmul prints TSTART as an absolute
+# epoch and every POINT carries its elapsed offset, so a wall-clock window maps
+# exactly onto a set of passes. One fill, one long run, the poll value stepped
+# underneath it, and the series sliced afterwards -- no refilling per point.
+CSV=$SDIR/read-vs-erase.csv
 JN=1448; JPAGES=$(( JN * JN * 4 / 4096 )); JLINES=$(( JN * JN * 4 / 128 ))
-read_run(){     # $1 = tag; echoes ns/line
-    local L=/tmp/st-j-$1.log bg pid
-    sudo -n $MM --n $JN --iters 1 --runs 200 --flush 32 --verify --print-ranges --phys \
-        --wait-resident 90 --wait-timeout 240 --wait-stable 30 > $L 2>&1 &
-    bg=$!
-    for i in $(seq 1 600); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 0.1; done
-    pid=$(pgrep -x matmul | head -1)
-    [ -n "${pid:-}" ] && echo $pid | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
-    wait $bg 2>/dev/null
-    echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
-    plateau_ns $L $JLINES; rm -f $L
-}
-# J needs BOTH: clean sectors to fill into, and dirty ones for the engine to
-# chew on during the second run. Recycling everything would leave nothing to
-# erase, so aim for the clean target and check dirty afterwards.
+POLLS="0 10 30 60 120"
 ensure_clean $((JPAGES * 2)) || true
-if [ "$(ps_ clean)" -lt $((JPAGES * 2)) ] || [ "$(ps_ dirty)" -lt 2000 ]; then
-    skip "J  needs $((JPAGES*2)) clean and 2000 dirty; have $(ps_ clean) and $(ps_ dirty)"
+if [ "$(ps_ clean)" -lt $((JPAGES * 2)) ] || [ "$(ps_ dirty)" -lt 4000 ]; then
+    skip "J  needs $((JPAGES*2)) clean and 4000 dirty; have $(ps_ clean) and $(ps_ dirty)"
 else
-    setw 0 0; sleep 2       # engine pinned off for the baseline run
-    NS_QUIET=$(read_run quiet)
-    setw 65536 65535          # engine wide open for the second run
-    NS_BUSY=$(read_run busy)
-    setw $HW0 $LW0
-    if [ -n "$NS_QUIET" ] && [ -n "$NS_BUSY" ]; then
-        RATIO=$(awk -v a="$NS_QUIET" -v b="$NS_BUSY" 'BEGIN{printf "%.2f", b/a}')
-        echo "     quiet ${NS_QUIET} ns/line, erasing ${NS_BUSY} ns/line"
-        # Not a pass/fail on the ratio -- it is the measurement. The assertion
-        # is only that erasing does not make reads pathologically slow, which
-        # would mean the spacing is not working at all.
-        awk -v r="$RATIO" 'BEGIN{exit !(r < 4.0)}' \
-            && ok "J1 background erase costs reads ${RATIO}x (${NS_QUIET} -> ${NS_BUSY} ns/line)" \
-            || no "J1 background erase costs reads ${RATIO}x -- spacing is not limiting interference"
-        ok "J2 measured, for the record: erase interference = ${RATIO}x on cold NOR reads"
-    else skip "J  one of the two runs produced no plateau"; fi
+    mkdir -p $SDIR
+    POLL0=$(cat $PAR/erase_poll_ms)
+    L=/tmp/st-j.log
+    sudo -n $MM --n $JN --iters 1 --runs 4000 --flush 32 --verify --print-ranges --phys \
+        --wait-resident 90 --wait-timeout 240 --wait-stable 30 --wait-hold 6 > $L 2>&1 &
+    BG=$!
+    for i in $(seq 1 600); do grep -q "^RANGE" $L 2>/dev/null && break; sleep 0.1; done
+    PID=$(pgrep -x matmul | head -1)
+    [ -n "${PID:-}" ] && echo $PID | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    for i in $(seq 1 3000); do
+        grep -q "^WARMUP hold" $L 2>/dev/null && break
+        kill -0 $BG 2>/dev/null || break
+        sleep 0.1
+    done
+
+    # Quiet baseline first, engine pinned off.
+    setw 0 0; sleep 1
+    WIN=25
+    echo "poll_ms,erase_rate_per_s,passes,mean_s,ns_per_line,ratio_vs_quiet" > $CSV
+    declare -a WSTART WEND WERA WLAB
+    k=0
+    e0=$(gs erases_done); t0=$(date +%s.%N); sleep $WIN
+    WSTART[$k]=$t0; WEND[$k]=$(date +%s.%N); WERA[$k]=$(( $(gs erases_done) - e0 )); WLAB[$k]="off"; k=$((k+1))
+
+    for pm in $POLLS; do
+        kill -0 $BG 2>/dev/null || break
+        setp erase_poll_ms $pm
+        setw 65536 65535            # engine unconditionally on at this spacing
+        sleep 2                     # let the latch pick it up
+        e0=$(gs erases_done); t0=$(date +%s.%N); sleep $WIN
+        WSTART[$k]=$t0; WEND[$k]=$(date +%s.%N); WERA[$k]=$(( $(gs erases_done) - e0 )); WLAB[$k]="$pm"; k=$((k+1))
+        [ "$(ps_ dirty)" -lt 500 ] && break     # ran out of things to erase
+    done
+    setw 0 0; setp erase_poll_ms $POLL0
+    kill $BG 2>/dev/null; wait $BG 2>/dev/null
+    echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+
+    TS=$(awk '/^TSTART/{print $2; exit}' $L)
+    slice(){        # $1 start epoch, $2 end epoch -> "passes mean_s"
+        awk -v ts="$TS" -v a="$1" -v b="$2" '/^POINT/{
+            at = ts + $4; if (at >= a && at <= b) { n++; s += $3 }
+        } END { if (n) printf "%d %.6f", n, s/n; else printf "0 0" }' $L
+    }
+    QUIET=""
+    for x in $(seq 0 $((k-1))); do
+        read PN PM_ < <(slice "${WSTART[$x]}" "${WEND[$x]}")
+        [ "$PN" -eq 0 ] && continue
+        NSL=$(awk -v m="$PM_" -v l="$JLINES" 'BEGIN{printf "%.1f", m*1e9/l}')
+        DUR=$(awk -v a="${WSTART[$x]}" -v b="${WEND[$x]}" 'BEGIN{printf "%.1f", b-a}')
+        ER=$(awk -v e="${WERA[$x]}" -v d="$DUR" 'BEGIN{printf "%.1f", (d>0?e/d:0)}')
+        [ -z "$QUIET" ] && QUIET=$NSL
+        RAT=$(awk -v a="$NSL" -v q="$QUIET" 'BEGIN{printf "%.3f", a/q}')
+        echo "${WLAB[$x]},$ER,$PN,$PM_,$NSL,$RAT" >> $CSV
+        printf "     poll %-4s erases %5.1f/s   %5d passes   %7.1f ns/line   %sx\n" \
+               "${WLAB[$x]}" "$ER" "$PN" "$NSL" "$RAT"
+    done
+    rm -f $L
+
+    ROWS=$(( $(wc -l < $CSV) - 1 ))
+    [ "$ROWS" -ge 3 ] && ok "J1 swept $ROWS erase rates against read latency -> $CSV" \
+        || no "J1 only $ROWS usable points in the sweep"
+    WORST=$(awk -F, 'NR>1 && $6+0 > m {m=$6+0} END{printf "%.2f", m+0}' $CSV)
+    awk -v w="$WORST" 'BEGIN{exit !(w < 4.0)}' \
+        && ok "J2 worst case ${WORST}x on cold NOR reads across the sweep" \
+        || no "J2 ${WORST}x at the worst erase rate -- spacing is not limiting interference"
 fi
 
 hdr "K. FILL EFFICIENCY -- how long, and at what cost in allocations"
@@ -718,6 +794,11 @@ else
 
     # K3: residency must climb, not oscillate. Reads the per-pass series the
     # fill prints and requires no drop bigger than 1 percentage point.
+    # The fill curve, straight out of the series matmul already prints.
+    { echo "pass,seconds,residency_pct"
+      grep "^WARMUP pass" $L | sed -n 's/^WARMUP pass *\([0-9]*\) *residency *\([0-9.]*\)% *\([0-9.]*\) s.*/\1,\3,\2/p'
+    } > $SDIR/fill-curve.csv
+    echo "     fill curve -> $SDIR/fill-curve.csv ($(( $(wc -l < $SDIR/fill-curve.csv) - 1 )) points)"
     DROP=$(grep "^WARMUP pass" $L | sed -n 's/.*residency *\([0-9.]*\)%.*/\1/p' | \
         awk 'NR>1 && prev-$1 > d {d=prev-$1} {prev=$1} END{printf "%.2f", d+0}')
     awk -v d="${DROP:-0}" 'BEGIN{exit !(d <= 1.0)}' \
