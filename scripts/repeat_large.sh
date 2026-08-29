@@ -130,9 +130,17 @@ for N in $SIZES; do
     for MODE in $MODES; do
     case $MODE in *_warm) FL="";; *) FL="--flush 32";; esac
 
-    if [ "${MODE#dram}" != "$MODE" ]; then
+    if [ "${MODE#nor}" = "$MODE" ]; then
+        # Anything that does not touch flash: no pool, no target_pid, no fill.
+        # comp is the compute floor -- every row pinned to row 0 so the inner
+        # loop stays in L1D. It computes the wrong answer on purpose, so it
+        # refuses --verify.
+        case $MODE in
+          comp) EXTRA="--compute-only";;
+          *)    EXTRA="--verify";;
+        esac
         L=/tmp/rl-$MODE.log
-        sudo -n $MM --n $N --iters 1 --runs $R $FL --verify > $L 2>&1
+        sudo -n $MM --n $N --iters 1 --runs $R $FL $EXTRA > $L 2>&1
         read M SD < <(plateau $L); series $L "r${rep}-N${N}-${MODE}"
         NSL=$(awk -v m="$M" -v l="$NLINES" 'BEGIN{printf "%.1f", m*1e9/l}')
         PCT=$(awk -v m="$M" -v v="$SD" 'BEGIN{printf "%.2f", (m>0?100*v/m:0)}')
