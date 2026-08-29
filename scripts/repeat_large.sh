@@ -48,8 +48,11 @@ MM=$HOME/matmul; KO=$HOME/nor_eci/nor_eci_fulltest_ltram.ko
 S=/sys/kernel/ltram/stats; P=/sys/kernel/debug/ltram/pagestate
 TP=/sys/kernel/ltram/target_pid; PB=/sys/module/ltram_policy/parameters/promote_batch
 HW=/sys/module/ltram_policy/parameters/erase_high_water
+PAR_WG=/sys/module/ltram_policy/parameters/wear_governor
 LW=/sys/module/ltram_policy/parameters/erase_low_water
 say(){ echo "[$(date +%H:%M:%S)] $*"; }
+restore_gov(){ [ -w $PAR_WG ] && echo 1 | sudo -n tee $PAR_WG >/dev/null; return 0; }
+trap restore_gov EXIT
 # Checkpoint the erase counts around every point. They only move during a
 # drain, so this is where the interesting deltas happen. Silent no-op if the
 # unit is not installed.
@@ -124,7 +127,16 @@ for N in $SIZES; do
     engine_off
     sleep 2                   # let the latch see the new watermark
     say "  pool clean=$CB dirty=$DB, erase engine pinned off"
+    # promote_batch=512 with the WEAR GOVERNOR ON would be 512 promotions per
+    # 24 ms tick -- 21,000/s against a 41.5/s budget. The governor exists to
+    # pace the policy in service; these runs measure the MEDIUM, and a fill
+    # paced at 41.5/s would take 26 minutes at 256 MB. So turn it off
+    # explicitly and say so, rather than letting the two disagree silently.
     echo 512 | sudo -n tee $PB >/dev/null
+    if [ -w $PAR_WG ]; then
+        echo 0 | sudo -n tee $PAR_WG >/dev/null
+        say "  wear governor OFF for measurement (fill rate, not service rate)"
+    fi
     fi
 
     for MODE in $MODES; do
