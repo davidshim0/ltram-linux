@@ -174,13 +174,21 @@ for N in $SIZES; do
     if [ "$WARM_ENGINE" = 1 ]; then
         # Let the engine RUN during the fill, and only during the fill.
         #
-        # At 256 MiB the working set exactly equals the pool, and ~12% of
-        # migrations program their sector then fail, handing it back DIRTY.
-        # With the engine pinned off nothing recycles those, so the fill runs
-        # the pool to empty and plateaus at 87.5% -- out of sectors, not out
-        # of time. Recycling during the fill is the only way to reach full
-        # residency; recycling during the TIMED run is the thing that must
-        # not happen, because NOR cannot serve a read mid-erase.
+        # Insurance, not a fix. The 87.5% plateau turned out to be the SCRUB
+        # BUFFER: the fill did not call cache_scrub(), so 32 MiB of anonymous
+        # read-mostly memory sat below the weights looking like the best
+        # promotion candidate in the process, got promoted, and was then
+        # written by the first timed scrub -- leaving 8,192 sectors dirty.
+        # Fixed in matmul (5e897b780), where the fill now scrubs too.
+        #
+        # NOTHING EVER FAILED TO MIGRATE: dst_released is 0 for the whole
+        # boot. The earlier "recycles failed migrations" reading was wrong.
+        #
+        # Leaving the engine on for the fill is still worth it: if anything
+        # does go dirty while filling, it comes back rather than shrinking the
+        # pool. Recycling during the TIMED run is the thing that must not
+        # happen, since NOR cannot serve a read mid-erase -- hence the hold
+        # window that pins it off before the clock starts.
         #
         # So: engine on now, matmul holds still for 8 s after the fill
         # reports done, and the engine goes off inside that window. STABLE is
@@ -188,7 +196,7 @@ for N in $SIZES; do
         # cycle back, and 20 quiet passes would call that a plateau.
         setw 8192 2048   # the normal watermarks: engine works, hysteresis intact
         HOLD=8; STABLE=60
-        say "  erase engine LEFT ON for the fill (recycles failed migrations)"
+        say "  erase engine LEFT ON for the fill (off again before the clock starts)"
     else
         STABLE=20
     fi
