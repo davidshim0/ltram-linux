@@ -1,0 +1,25 @@
+#!/bin/bash
+# Load the out-of-tree flash backend at boot.
+#
+# Without it the kernel has an LtRAM zone and a policy but no erase op, so no
+# sector can ever be recycled: the pool drains to zero clean and stays there,
+# and every promotion fails for want of somewhere to go. That is not obvious
+# from any single symptom -- it shows up as a scanner promoting nothing, an
+# engine erasing nothing, and an empty digest.
+#
+# The module is out of tree and lives in a user's home, so modules-load.d
+# cannot reach it and the path has to be searched.
+set -u
+for d in /home/*/nor_eci /root/nor_eci /opt/nor_eci; do
+    KO="$d/nor_eci_fulltest_ltram.ko"
+    [ -f "$KO" ] || continue
+    lsmod | grep -q nor_eci && { echo "already loaded"; exit 0; }
+    if insmod "$KO" provide_ops=1 test=0 inline_erase=0 verify_erased=1; then
+        echo "loaded $KO"
+        exit 0
+    fi
+    echo "insmod $KO failed" >&2
+    exit 1
+done
+echo "no nor_eci_fulltest_ltram.ko found -- LtRAM cannot erase" >&2
+exit 1

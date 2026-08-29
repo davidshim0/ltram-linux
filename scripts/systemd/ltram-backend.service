@@ -1,0 +1,17 @@
+[Unit]
+Description=Load the LtRAM flash backend
+Documentation=file:/usr/local/sbin/ltram-load-backend
+# Before anything that needs to erase: the persistence unit restores counts,
+# and the self-test resume runs after that.
+Before=ltram-erase-counts.service ltram-selftest-resume.service
+RequiresMountsFor=/sys/kernel/debug
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ltram-load-backend
+# A board without the module is degraded, not broken. Do not fail the boot.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target

@@ -5,10 +5,12 @@ D=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 sudo install -m 0755 "$D/ltram-erase-counts" /usr/local/sbin/ltram-erase-counts
 sudo install -m 0755 "$D/ltram-reboot"       /usr/local/sbin/ltram-reboot
 sudo install -m 0755 "$D/ltram-selftest-resume" /usr/local/sbin/ltram-selftest-resume
+sudo install -m 0755 "$D/ltram-load-backend"    /usr/local/sbin/ltram-load-backend
 sudo install -m 0644 "$D/ltram-erase-counts.service"      /etc/systemd/system/
 sudo install -m 0644 "$D/ltram-erase-counts-save.service" /etc/systemd/system/
 sudo install -m 0644 "$D/ltram-erase-counts.timer"        /etc/systemd/system/
 sudo install -m 0644 "$D/ltram-selftest-resume.service"   /etc/systemd/system/
+sudo install -m 0644 "$D/ltram-backend.service"           /etc/systemd/system/
 sudo mkdir -p /var/lib/ltram
 sudo systemctl daemon-reload
 sudo systemctl enable ltram-erase-counts.service
@@ -19,6 +21,7 @@ sudo systemctl enable ltram-erase-counts.service
 # previous CLI, which had no epoch support, and --now then did nothing.
 sudo systemctl restart ltram-erase-counts.service
 sudo systemctl enable ltram-selftest-resume.service
+sudo systemctl enable ltram-backend.service
 echo
 echo "installed. reboot this board with:  sudo ltram-reboot"
 echo "run the whole suite across a reboot: sudo ~/selftest.sh --cycle"

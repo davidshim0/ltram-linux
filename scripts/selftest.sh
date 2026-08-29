@@ -54,6 +54,38 @@ if [ "$MODE" != "--quick" ] && [ "$MODE" != "--pre" ] && [ "$MODE" != "--post" ]
    && [ "$MODE" != "--resume" ]; then
     [ -x "$MM" ] || { echo "no matmul at $MM -- sections E and G need it"; exit 1; }
     [ -f "$KO" ] || { echo "no backend module at $KO"; exit 1; }
+
+    # LOAD THE BACKEND, AND PROVE IT CAN ERASE.
+    #
+    # Without it the kernel has no erase op, so the engine cannot recycle a
+    # single sector. The pool then sits at zero clean and every section that
+    # needs somewhere to promote into fails or skips -- E at 0 promotions/s,
+    # F at 0 erases/s, G with an empty digest, I with a latch that "did not
+    # stop", H and K and L skipped. Six confusing failures with one cause,
+    # which is the boot after a --cycle: nothing loads this module
+    # automatically and it had always been insmod'd by hand.
+    if ! lsmod | grep -q nor_eci; then
+        echo "loading the flash backend..."
+        sudo -n insmod "$KO" provide_ops=1 test=0 inline_erase=0 verify_erased=1 \
+            || { echo "!! insmod $KO failed -- nothing can erase, refusing to run"; exit 1; }
+        sleep 2
+    fi
+    # Registered is not the same as working. If anything is dirty, the engine
+    # must actually retire some of it.
+    if [ "$(ps_ dirty)" -gt 100 ]; then
+        _hw=$(cat $PAR/erase_high_water); _lw=$(cat $PAR/erase_low_water)
+        echo 65536 | sudo -n tee $PAR/erase_high_water >/dev/null
+        echo 65535 | sudo -n tee $PAR/erase_low_water  >/dev/null
+        _e0=$(gs erases_done); sleep 5; _e1=$(gs erases_done)
+        echo "$_hw" | sudo -n tee $PAR/erase_high_water >/dev/null
+        echo "$_lw" | sudo -n tee $PAR/erase_low_water  >/dev/null
+        if [ "$(( _e1 - _e0 ))" -lt 10 ]; then
+            echo "!! the erase engine retired $(( _e1 - _e0 )) sectors in 5 s with $(ps_ dirty) dirty."
+            echo "   No usable erase op. Check dmesg for 'no erase op registered'."
+            exit 1
+        fi
+        echo "backend ok: $(( (_e1 - _e0) / 5 )) erases/s"
+    fi
 fi
 
 # Restore every knob we touch, however we leave.
