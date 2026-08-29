@@ -34,7 +34,7 @@ hdr(){  printf "\n\033[1m%s\033[0m\n" "$*"; }
 w(){ awk -v k="$1" '$1==k{print $2; exit}' $DBG/wear; }
 ps_(){ awk -v k="$1" '$1==k{print $2; exit}' $DBG/pagestate; }
 gs(){ awk -v k="$1" '$1==k{print $2; exit}' /sys/kernel/ltram/stats; }
-setp(){ echo "$2" | sudo -n tee $PAR/$1 >/dev/null; }
+setp(){ [ -n "${2:-}" ] || return 0; echo "$2" | sudo -n tee $PAR/$1 >/dev/null; }
 near(){ awk -v a="$1" -v b="$2" -v t="$3" 'BEGIN{d=a-b; if(d<0)d=-d; exit !(d<=t)}'; }
 
 [ -r $DBG/wear ] || { echo "no $DBG/wear -- is the wear-governor kernel booted?"; exit 1; }
@@ -143,9 +143,12 @@ if [ "$MODE" = "--resume" ]; then
     # than two halves the reader has to add up.
     [ -f $SDIR/pending ] || { echo "no self-test was pending"; exit 0; }
     [ -f $SDIR/pre-output.txt ] && cat $SDIR/pre-output.txt
-    PRE_PASS=$(grep -c "PASS" $SDIR/pre-output.txt 2>/dev/null || echo 0)
-    PRE_FAIL=$(grep -c "FAIL" $SDIR/pre-output.txt 2>/dev/null || echo 0)
-    PRE_SKIP=$(grep -c "SKIP" $SDIR/pre-output.txt 2>/dev/null || echo 0)
+    # grep -c PRINTS 0 and RETURNS 1 when nothing matches, so "|| echo 0"
+    # appended a second zero and $(( )) then failed on "0\n0" -- after which
+    # the script fell out of this block and re-ran the entire suite.
+    PRE_PASS=$(grep -c "PASS" $SDIR/pre-output.txt 2>/dev/null | head -1); PRE_PASS=${PRE_PASS:-0}
+    PRE_FAIL=$(grep -c "FAIL" $SDIR/pre-output.txt 2>/dev/null | head -1); PRE_FAIL=${PRE_FAIL:-0}
+    PRE_SKIP=$(grep -c "SKIP" $SDIR/pre-output.txt 2>/dev/null | head -1); PRE_SKIP=${PRE_SKIP:-0}
     hdr "=== resumed after the power cycle ==="
     "$0" --post
     POST_RC=$?
@@ -165,9 +168,17 @@ if [ "$MODE" = "--pre" ]; then
     # the stamp and the reboot would move dirty into clean and break the
     # prediction for reasons that have nothing to do with the scan.
     setw 0 0
+    # AND make the freeze survive this process's own exit trap, which would
+    # otherwise restore the default watermarks and start the engine again.
+    # It did exactly that: ~283 sectors were erased between the stamp and the
+    # reboot, the scan then correctly found 860 blank against a stamp that
+    # said 577, and R10/R11 reported a boot-scan fault that was really this.
+    # Module parameters reset at boot, so leaving them at 0 costs nothing.
+    HW0=0; LW0=0
     sleep 2
     sudo -n $EC save >/dev/null || { echo "  save FAILED"; exit 1; }
     { echo "used $(w cycles_used)"
+      echo "epoch $(w epoch)"
       echo "data $(ps_ data)"; echo "dirty $(ps_ dirty)"; echo "clean $(ps_ clean)"
       echo "pages $NPG"
       echo "md5 $(sudo -n md5sum /var/lib/ltram/erase_counts | cut -d" " -f1)"
