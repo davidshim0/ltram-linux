@@ -1,0 +1,70 @@
+#!/bin/bash
+# ltram-reboot -- persist what only lives in RAM, then hard-reboot via sysrq.
+#
+# `sudo reboot` wedges this board, so systemd's shutdown never runs -- and with
+# it neither does ltram-erase-counts' ExecStop. Every sysrq reboot therefore
+# loses whatever erases accrued since the last manual save. This does that work
+# explicitly, in the right order, and REFUSES to reboot if the save did not
+# land.
+#
+# It stops the unit rather than calling `save` directly, deliberately: that
+# runs the unit's own ExecStop, so this exercises the same code path a clean
+# shutdown would. The persistence test stays honest.
+#
+#   ltram-reboot            save, verify, reboot
+#   ltram-reboot --save     save and verify, do NOT reboot
+set -u
+[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+
+EC=/usr/local/sbin/ltram-erase-counts
+F=/var/lib/ltram/erase_counts
+GO=1; [ "${1:-}" = "--save" ] && GO=0
+
+say(){ printf "\n\033[1m%s\033[0m\n" "$*"; }
+die(){ printf "\033[31m!! %s\033[0m\n" "$*" >&2; exit 1; }
+
+# A measurement in flight would be lost, and worse, half its pages are on
+# flash with the state that describes them about to vanish.
+if pgrep -x matmul >/dev/null 2>&1; then
+    die "matmul is running -- refusing to reboot. Stop it first."
+fi
+
+say "1/4  persisting erase counts (via the unit's ExecStop)"
+if systemctl list-unit-files ltram-erase-counts.service >/dev/null 2>&1; then
+    BEFORE=$(stat -c %Y "$F" 2>/dev/null || echo 0)
+    systemctl stop ltram-erase-counts.service || die "systemctl stop failed"
+    AFTER=$(stat -c %Y "$F" 2>/dev/null || echo 0)
+    # Verify the save LANDED. ExecStop failing silently is the whole failure
+    # mode this script exists to prevent, and after the reboot there is no
+    # evidence left to diagnose it with.
+    [ "$AFTER" -gt "$BEFORE" ] || [ "$BEFORE" = 0 ] \
+        || die "$F was not rewritten -- ExecStop did not save. Reboot aborted."
+    NOW=$(date +%s)
+    [ $((NOW - AFTER)) -lt 120 ] || die "$F is $((NOW - AFTER))s old -- the save did not land"
+else
+    [ -x $EC ] || die "no $EC and no unit -- nothing can persist the counts"
+    $EC save || die "save failed"
+fi
+
+say "2/4  what was saved"
+[ -x $EC ] && $EC show
+echo
+echo "  ^ note the total. After the reboot it must come back the same or higher."
+
+say "3/4  flushing filesystems"
+sync
+sync
+
+if [ "$GO" = 0 ]; then
+    say "--save given: not rebooting"
+    exit 0
+fi
+
+say "4/4  sysrq reboot in 3s (Ctrl-C to abort)"
+sleep 3
+# s = emergency sync, u = remount everything read-only, b = reboot now.
+# The u matters: without it ext4 comes back needing journal recovery every
+# single time, and root here sits at 96% full.
+echo s > /proc/sysrq-trigger; sleep 1
+echo u > /proc/sysrq-trigger; sleep 1
+echo b > /proc/sysrq-trigger

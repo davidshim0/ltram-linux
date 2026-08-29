@@ -3,6 +3,7 @@
 set -euo pipefail
 D=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 sudo install -m 0755 "$D/ltram-erase-counts" /usr/local/sbin/ltram-erase-counts
+sudo install -m 0755 "$D/ltram-reboot"       /usr/local/sbin/ltram-reboot
 sudo install -m 0644 "$D/ltram-erase-counts.service"      /etc/systemd/system/
 sudo install -m 0644 "$D/ltram-erase-counts-save.service" /etc/systemd/system/
 sudo install -m 0644 "$D/ltram-erase-counts.timer"        /etc/systemd/system/
@@ -16,7 +17,10 @@ sudo systemctl enable ltram-erase-counts.service
 # previous CLI, which had no epoch support, and --now then did nothing.
 sudo systemctl restart ltram-erase-counts.service
 echo
-echo "installed and enabled. optional 10-minute checkpoint:"
+echo "installed. reboot this board with:  sudo ltram-reboot"
+echo "  (plain \"reboot\" wedges it, and sysrq alone loses the erase counts)"
+echo
+echo "optional 10-minute checkpoint:"
 echo "    sudo systemctl enable --now ltram-erase-counts.timer"
 echo
 systemctl status ltram-erase-counts.service --no-pager -l | head -12
