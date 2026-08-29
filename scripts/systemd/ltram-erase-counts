@@ -32,7 +32,27 @@ set -u
 DBG=/sys/kernel/debug/ltram
 STATE=/var/lib/ltram
 F=$STATE/erase_counts
+EPOCHF=$STATE/wear_epoch
+EPOCHP=/sys/module/ltram_policy/parameters/wear_epoch
 HDR=16
+
+# THE EPOCH IS A DATE, NOT A MEASUREMENT.
+#
+# wear_epoch says when the service life started, and the wear budget divides
+# by the time remaining from it. The kernel carries a compiled-in default, so
+# without a file on disk the date silently resets on every boot -- and moves
+# again the first time the kernel is rebuilt with a different constant. Then
+# "erases_left / seconds_left" is dividing by a number that changed for
+# reasons having nothing to do with the device.
+#
+# So the FILE is the authority, and it is written once. restore pushes it into
+# the parameter; if it does not exist yet, restore seeds it from whatever the
+# kernel booted with, which stamps the date exactly once.
+#
+# save deliberately does NOT copy the parameter back. Experiments move
+# wear_epoch to change the promotion rate -- backdating it is how you ask for
+# 1.5 ms instead of 24 ms -- and an experiment must never be able to make
+# itself permanent. Use "epoch VALUE" to change the record on purpose.
 die(){ echo "ltram-erase-counts: $*" >&2; exit 1; }
 note(){ echo "ltram-erase-counts: $*"; }
 
@@ -45,6 +65,23 @@ expected_size(){
 }
 
 case "${1:-}" in
+epoch)
+    [ -r $EPOCHP ] || die "no $EPOCHP -- this kernel has no wear governor"
+    if [ -n "${2:-}" ]; then
+        case "$2" in *[!0-9]*|"") die "epoch must be seconds since the Unix epoch";; esac
+        mkdir -p $STATE
+        echo "$2" > $EPOCHF
+        echo "$2" > $EPOCHP
+        note "epoch set to $2 ($(date -u -d @$2 2>/dev/null))"
+    else
+        echo "live:  $(cat $EPOCHP)  ($(date -u -d @$(cat $EPOCHP) 2>/dev/null))"
+        if [ -f $EPOCHF ]; then
+            echo "saved: $(cat $EPOCHF)  ($(date -u -d @$(cat $EPOCHF) 2>/dev/null))"
+        else
+            echo "saved: none -- run restore to stamp it"
+        fi
+    fi
+    ;;
 save)
     [ -r $DBG/erase_counts ] || { note "no $DBG/erase_counts -- not an LtRAM kernel, nothing to save"; exit 0; }
     WANT=$(expected_size) || die "cannot read the pfn window"
@@ -62,6 +99,19 @@ save)
     note "saved $GOT bytes to $F"
     ;;
 restore)
+    # The epoch first: it is independent of the counts and must be right even
+    # on a first boot where no blob exists yet.
+    if [ -w $EPOCHP ]; then
+        mkdir -p $STATE
+        if [ -f $EPOCHF ]; then
+            E=$(cat $EPOCHF)
+            cat $EPOCHF > $EPOCHP && note "wear epoch restored: $E ($(date -u -d @$E 2>/dev/null))"
+        else
+            E=$(cat $EPOCHP)
+            echo "$E" > $EPOCHF
+            note "wear epoch stamped for the first time: $E ($(date -u -d @$E 2>/dev/null))"
+        fi
+    fi
     [ -w $DBG/erase_counts ] || { note "no $DBG/erase_counts -- not an LtRAM kernel, nothing to restore"; exit 0; }
     [ -f $F ] || { note "no saved counts at $F -- first boot, starting from zero"; exit 0; }
     WANT=$(expected_size) || die "cannot read the pfn window"
@@ -83,7 +133,12 @@ show)
            END{printf "live:  %d sectors  min %d  max %d  mean %.1f  nonzero %d (%.1f%%)  total erases %d\n",
                       n, mn, mx, (n?s/n:0), nz, (n?100.0*nz/n:0), s}'
     [ -f $F ] && { echo -n "saved: "; stat -c '%s bytes, %y' $F; } || echo "saved: none"
+    if [ -r $EPOCHP ]; then
+        E=$(cat $EPOCHP)
+        echo "epoch: $E ($(date -u -d @$E 2>/dev/null))$([ -f $EPOCHF ] && [ "$(cat $EPOCHF)" != "$E" ] && echo "  != saved $(cat $EPOCHF)")"
+        [ -r /sys/kernel/debug/ltram/wear ] && awk '/^interval_ms|^erases_left|^seconds_left/{printf "  %-14s %s\n", $1, $2}' /sys/kernel/debug/ltram/wear
+    fi
     ;;
 *)
-    echo "usage: $0 {save|restore|show}"; exit 2;;
+    echo "usage: $0 {save|restore|show|epoch [UNIX_SECONDS]}"; exit 2;;
 esac
