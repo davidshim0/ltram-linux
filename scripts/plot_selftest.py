@@ -38,20 +38,34 @@ def frame(ax, title, xl, yl, note=None):
 made = []
 r = rows("read-vs-erase.csv")
 if r:
+    # SORT BY THE X AXIS. The CSV is in measurement order -- off, 0, 10, 30,
+    # 60, 120 -- but x is the erase RATE, which runs the other way: a poll of
+    # 0 ms erases fastest and 120 ms slowest. Plotting in file order sent the
+    # line out to 36/s and then walked it back left across every other point.
+    r = sorted(r, key=lambda x: float(x["erase_rate_per_s"]))
     er = [float(x["erase_rate_per_s"]) for x in r]
     ns = [float(x["ns_per_line"]) for x in r]
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(er, ns, "o-", color=C_NOR, lw=2)
+    base = next((float(x["ns_per_line"]) for x in r if x["poll_ms"] == "off"), ns[0])
+
+    fig, ax = plt.subplots(figsize=(8.5, 5.2))
+    ax.axhline(base, color=C_GRID, ls="--", lw=1.1)
+    ax.annotate(f"engine off — {base:.0f} ns/line", (max(er), base), fontsize=9,
+                color=C_GRID, ha="right", va="bottom",
+                xytext=(0, 5), textcoords="offset points")
+    ax.plot(er, ns, "o-", color=C_NOR, lw=2, ms=6, zorder=3)
+
     for x in r:
-        ax.annotate(f'poll {x["poll_ms"]}', (float(x["erase_rate_per_s"]), float(x["ns_per_line"])),
-                    textcoords="offset points", xytext=(0, 8), ha="center", fontsize=7.5, color=C_GRID)
-    ax.axhline(ns[0], color=C_GRID, ls=":", lw=1)
-    ax.text(max(er) * .98, ns[0], " engine off", va="bottom", ha="right", fontsize=8, color=C_GRID)
+        pm, xx, yy = x["poll_ms"], float(x["erase_rate_per_s"]), float(x["ns_per_line"])
+        lab = "engine off" if pm == "off" else (
+              f"{pm} ms" + (" (default)" if pm == "30" else ""))
+        ax.annotate(lab, (xx, yy), textcoords="offset points",
+                    xytext=(6, 9 if pm != "off" else -14), ha="left",
+                    fontsize=8.5, color="#3d474e")
     ax.set_ylim(bottom=0)
-    frame(ax, "Read latency against background erase rate", "erases per second",
-          "ns per cache line, cold NOR reads",
-          "One fill, erase_poll_ms stepped underneath it. Flat means recycling is nearly free to a reader.")
-    fig.tight_layout(); fig.savefig(f"{OUT}/selftest-read-vs-erase.png", dpi=160); made.append("read-vs-erase")
+    ax.set_xlim(left=-1)
+    frame(ax, "Read latency against background erase rate",
+          "erases per second while the workload reads",
+          "ns per cache line, cold NOR reads")
 
 r = rows("promote-rate.csv")
 if r:
