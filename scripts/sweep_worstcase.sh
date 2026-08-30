@@ -82,7 +82,16 @@ waitres 99
 T3=$(date +%s.%N); echo "  phase 3: settled, holding ${P3}s then evicting"
 sleep $P3
 kill -USR1 "$PID" 2>/dev/null
-sleep 3
+# WAIT FOR THE DROP before waiting for the climb. The last RESID line still
+# reads 100% for a moment after the signal, so asking for >=99% straight away
+# is satisfied by a sample taken before the eviction -- which is exactly what
+# happened: phase 4 came out empty and phase 5 recorded DRAM reads.
+for i in $(seq 1 240); do
+    R=$(grep "^RESID" $L | tail -1 | awk '{print $4}')
+    awk -v r="${R:-100}" 'BEGIN{exit !(r < 10)}' && break
+    kill -0 $BG 2>/dev/null || break
+    sleep 0.5
+done
 echo "    evicted: residency $(grep '^RESID' $L | tail -1 | awk '{print $4}')%, dirty $(ps_ dirty)"
 
 T4=$(date +%s.%N); echo "  phase 4: second migration, every promotion gated on an erase"

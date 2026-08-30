@@ -949,7 +949,17 @@ else
     OT3=$(date +%s.%N); sleep $OP3
     # SIGUSR1, because the pass at which the first migration ends is not
     # knowable in advance.
-    sudo -n kill -USR1 "$PID" 2>/dev/null; sleep 3
+    sudo -n kill -USR1 "$PID" 2>/dev/null
+    # Wait for residency to FALL before waiting for it to climb again. The
+    # last RESID line still reads 100% just after the signal, so asking for
+    # >=99% immediately is satisfied by a pre-eviction sample -- which left
+    # phase 4 empty and phase 5 measuring DRAM.
+    for i in $(seq 1 240); do
+        R=$(grep "^RESID" $L | tail -1 | awk '{print $4}')
+        awk -v r="${R:-100}" 'BEGIN{exit !(r < 10)}' && break
+        kill -0 $BG 2>/dev/null || break
+        sleep 0.5
+    done
     OT4=$(date +%s.%N)
     ODIRTY=$(ps_ dirty)
     owait 99
