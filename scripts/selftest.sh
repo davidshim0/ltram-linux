@@ -847,12 +847,15 @@ else
 
     TS=$(awk '/^TSTART/{print $2; exit}' $L)
     { echo "elapsed_s,ns_per_line,resid_pct,phase"
+      # TWO passes over the log. matmul prints RESID for a pass AFTER the
+      # POINT for that same pass, so a single pass has not seen the residency
+      # yet when it emits the row and the column comes out empty.
       awk -v ts="$TS" -v l="$NLINES_N" -v p1="$T_P1" -v p2="$T_P2" -v p3="$T_P3" '
-        /^RESID/ { rp[$2] = $4 }
+        NR==FNR { if ($1 == "RESID") rp[$2] = $4; next }
         /^POINT/ { at = ts + $4
                    ph = (at < p2) ? 1 : ((at < p3) ? 2 : 3)
                    printf "%.3f,%.1f,%s,%d\n", at - p1, $3*1e9/l, ($2 in rp ? rp[$2] : ""), ph }
-      ' $L
+      ' $L $L
     } > $NCSV
     band(){ awk -F, -v p="$1" 'NR>1 && $4==p {n++; s+=$2} END{printf "%.1f", (n?s/n:0)}' $NCSV; }
     D_NS=$(band 1); M_NS=$(band 2); F_NS=$(band 3)
