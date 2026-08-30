@@ -97,6 +97,21 @@ static int    wait_hold = 0;     /* --wait-hold SECS */
  * have been taken and compared.
  */
 static int    do_evict = 0;      /* --evict */
+/*
+ * Sample our own residency every N timed passes and print it alongside the
+ * POINT series.
+ *
+ * The cost of PROMOTION cannot be isolated the way the erase cost can: before
+ * the weights move they are read from DRAM and after they move they are read
+ * from flash, so any window containing migration also contains a changing mix
+ * of the two media. What CAN be shown is the whole transition on one timeline
+ * -- DRAM baseline, migration in progress, sustained flash -- which is what a
+ * running system actually experiences.
+ *
+ * Sampled AFTER the clock stops for the pass, so the pagemap walk never lands
+ * inside a measurement.
+ */
+static int    resid_every = 0;   /* --resid-every PASSES */
 static int    compute_only = 0;   /* --compute-only: pin every row to row 0 */
 static int    do_chase = 0;       /* --chase: dependent-load latency over W */
 static volatile uint64_t chase_sink;
@@ -609,7 +624,7 @@ int main(int argc, char **argv)
         {"print-ranges",0,0,'R'}, {"phys",0,0,'A'},
         {"hold",1,0,'H'}, {"seed",1,0,'S'}, {"flush",1,0,'F'},
         {"compute-only",0,0,'C'}, {"chase",0,0,'H'+128},
-        {"wait-resident",1,0,'W'}, {"wait-timeout",1,0,'W'+128}, {"wait-stable",1,0,'W'+129}, {"wait-hold",1,0,'W'+130}, {"evict",0,0,'E'}, {0,0,0,0}
+        {"wait-resident",1,0,'W'}, {"wait-timeout",1,0,'W'+128}, {"wait-stable",1,0,'W'+129}, {"wait-hold",1,0,'W'+130}, {"evict",0,0,'E'}, {"resid-every",1,0,'W'+131}, {0,0,0,0}
     };
     int c;
     while ((c = getopt_long(argc, argv, "n:i:r:VPRAH:S:F:W:E", lo, NULL)) != -1) {
@@ -627,6 +642,7 @@ int main(int argc, char **argv)
         case 'W'+129: wait_stable = atoi(optarg); break;
         case 'W'+130: wait_hold = atoi(optarg); break;
         case 'E': do_evict = 1; break;
+        case 'W'+131: resid_every = atoi(optarg); break;
         case 'S': SEED = strtoull(optarg, NULL, 0); break;
         case 'F': flush_mb = strtoul(optarg, NULL, 0); break;
         case 'C': compute_only = 1; break;
@@ -636,7 +652,8 @@ int main(int argc, char **argv)
               "usage: %s [--n DIM] [--iters K] [--runs R] [--verify]\n"
               "          [--protect-weights] [--print-ranges] [--phys]\n"
               "          [--hold SECS] [--seed S] [--flush MB] [--compute-only] [--chase]\n"
-              "          [--wait-resident PCT] [--wait-timeout SECS] [--evict]\n", argv[0]);
+              "          [--wait-resident PCT] [--wait-timeout SECS] [--evict]\n"
+              "          [--resid-every PASSES]\n", argv[0]);
             return 2;
         }
     }
@@ -833,6 +850,13 @@ int main(int argc, char **argv)
             printf("  run %2d/%d  %8.3f s   %7.1f ns/access\n",
                    r + 1, RUNS, t[r], t[r] * 1e9 / (double)lines);
             printf("POINT %d %.6f %.3f\n", r + 1, t[r], now() - t_start);
+        if (resid_every && (r % resid_every) == 0) {
+            if (!phys_ready)
+                phys_open();
+            printf("RESID %d %.3f %.2f\n", r + 1, now() - t_start,
+                   weights_ltram_pct());
+            fflush(stdout);
+        }
             fflush(stdout);
             if (do_phys) {
                 char tag[16];

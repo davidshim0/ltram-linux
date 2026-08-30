@@ -779,6 +779,80 @@ else
         || no "J2 ${WORST}x at the worst erase rate -- spacing is not limiting interference"
 fi
 
+hdr "N. THE WHOLE TRANSITION -- DRAM, migrating, then flash"
+# The cost of PROMOTION cannot be isolated: before the weights move they are
+# read from DRAM and after they move they are read from flash, so any window
+# containing migration also contains a changing mix of the two media. J gets
+# away with it for erases only because it fills first.
+#
+# So do not try. Run ONE continuous timed workload across all three regimes
+# and record what happens:
+#
+#   phase 1  nothing targeted -- pure DRAM reads, the baseline
+#   phase 2  target_pid attached -- migration underway, reads a moving mix
+#   phase 3  fully resident -- sustained flash reads
+#
+# Residency is sampled alongside, so the timeline carries both curves and the
+# transition is visible rather than inferred.
+NCSV=$SDIR/timeline.csv
+NN=2896; NPAGES_N=$(( NN * NN * 4 / 4096 )); NLINES_N=$(( NN * NN * 4 / 128 ))
+PHASE1=45; PHASE3=45
+if ! ensure_clean $NPAGES_N; then
+    skip "N  could not reach $NPAGES_N clean sectors (have $(ps_ clean), dirty $(ps_ dirty))"
+else
+    setw 0 0                       # erases off: this is about promotion, not recycling
+    setp promote_batch 1; setp wear_governor 1; setp wear_days 379   # ~4 ms -> ~140/s
+    L=/tmp/st-n.log
+    sudo -n $MM --n $NN --iters 1 --runs 100000 --flush 32 --verify --print-ranges --phys \
+        --resid-every 5 > $L 2>&1 &
+    BG=$!
+    for i in $(seq 1 600); do grep -q "^TSTART" $L 2>/dev/null && break; sleep 0.1; done
+    T_P1=$(date +%s.%N)
+    sleep $PHASE1
+    T_P2=$(date +%s.%N)
+    PID=$(pgrep -x matmul | head -1)
+    [ -n "${PID:-}" ] && echo $PID | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    echo "     phase 1 done (${PHASE1}s DRAM); target_pid attached, migrating..."
+    for i in $(seq 1 3000); do
+        R=$(grep "^RESID" $L | tail -1 | awk '{print $4}')
+        awk -v r="${R:-0}" 'BEGIN{exit !(r >= 99)}' && break
+        kill -0 $BG 2>/dev/null || break
+        sleep 0.5
+    done
+    T_P3=$(date +%s.%N)
+    echo "     fully resident after $(awk -v a="$T_P2" -v b="$T_P3" 'BEGIN{printf "%.0f", b-a}')s; holding ${PHASE3}s"
+    sleep $PHASE3
+    T_END=$(date +%s.%N)
+    kill $BG 2>/dev/null; wait $BG 2>/dev/null
+    echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
+    setp promote_batch $PB0; setp wear_days $D0; setw $HW0 $LW0
+
+    TS=$(awk '/^TSTART/{print $2; exit}' $L)
+    { echo "elapsed_s,ns_per_line,resid_pct,phase"
+      awk -v ts="$TS" -v l="$NLINES_N" -v p1="$T_P1" -v p2="$T_P2" -v p3="$T_P3" '
+        /^RESID/ { rp[$2] = $4 }
+        /^POINT/ { at = ts + $4
+                   ph = (at < p2) ? 1 : ((at < p3) ? 2 : 3)
+                   printf "%.3f,%.1f,%s,%d\n", at - p1, $3*1e9/l, ($1 in rp ? rp[$1] : ""), ph }
+      ' $L
+    } > $NCSV
+    band(){ awk -F, -v p="$1" 'NR>1 && $4==p {n++; s+=$2} END{printf "%.1f", (n?s/n:0)}' $NCSV; }
+    D_NS=$(band 1); M_NS=$(band 2); F_NS=$(band 3)
+    echo "     phase 1 DRAM ${D_NS} ns/line | phase 2 migrating ${M_NS} | phase 3 flash ${F_NS} ns/line"
+    echo "     -> $NCSV"
+
+    awk -v d="$D_NS" -v f="$F_NS" 'BEGIN{exit !(f > d*2)}' \
+        && ok "N1 sustained flash reads are $(awk -v d="$D_NS" -v f="$F_NS" 'BEGIN{printf "%.2f", f/d}')x the DRAM baseline" \
+        || no "N1 flash ${F_NS} vs DRAM ${D_NS} ns/line -- the weights never really moved"
+    # Migration should sit BETWEEN the two: part of the region is still in
+    # DRAM. Above the flash number would mean promotion costs more than the
+    # medium it promotes to.
+    awk -v d="$D_NS" -v m="$M_NS" -v f="$F_NS" 'BEGIN{exit !(m > d && m < f*1.15)}' \
+        && ok "N2 migrating sits between the two (${D_NS} -> ${M_NS} -> ${F_NS})" \
+        || no "N2 migrating ${M_NS} is outside the ${D_NS}..${F_NS} band -- promotion costs more than the medium"
+    rm -f $L
+fi
+
 hdr "K. FILL EFFICIENCY -- how long, and at what cost in allocations"
 # Three questions the suite could not answer: how long an empty pool takes to
 # fill, whether that matches the pacing we think we configured, and whether
