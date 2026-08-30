@@ -54,15 +54,22 @@ if r:
                 xytext=(0, 5), textcoords="offset points")
     ax.plot(er, ns, "o-", color=C_NOR, lw=2, ms=6, zorder=3)
 
-    for x in r:
-        pm, xx, yy = x["poll_ms"], float(x["erase_rate_per_s"]), float(x["ns_per_line"])
-        lab = "engine off" if pm == "off" else (
-              f"{pm} ms" + (" (default)" if pm == "30" else ""))
-        ax.annotate(lab, (xx, yy), textcoords="offset points",
-                    xytext=(6, 9 if pm != "off" else -14), ha="left",
-                    fontsize=8.5, color="#3d474e")
+    # The poll setting and the achieved rate are two views of one knob, so
+    # labelling every point repeats the x axis. Put the mapping on a second
+    # axis instead: same positions, no clutter over the data.
     ax.set_ylim(bottom=0)
-    ax.set_xlim(left=-1)
+    ax.set_xlim(left=-1.5, right=max(er) * 1.08)
+    top = ax.twiny()
+    top.set_xlim(ax.get_xlim())
+    top.set_xticks(er)
+    top.set_xticklabels(["off" if x["poll_ms"] == "off" else x["poll_ms"] for x in r], fontsize=9)
+    top.set_xlabel("erase_poll_ms  (the setting; 30 is the default)", fontsize=10, labelpad=8)
+    top.tick_params(axis="x", length=3)
+    # Mark where the system actually runs.
+    d = next((x for x in r if x["poll_ms"] == "30"), None)
+    if d:
+        ax.plot([float(d["erase_rate_per_s"])], [float(d["ns_per_line"])],
+                "o", mfc="none", mec=C_NOR, mew=2, ms=14, zorder=4)
     frame(ax, "Read latency against background erase rate",
           "erases per second while the workload reads",
           "ns per cache line, cold NOR reads")
