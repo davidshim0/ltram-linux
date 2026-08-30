@@ -229,7 +229,7 @@ if r and len(r) > 2:
         ax.fill_between(tot, mn, mx, color=C_DRAM, alpha=.16, lw=0,
                         label="least to most worn sector")
         ax.plot(tot, mx, "-", color=C_NOR, lw=1.8, label="most worn")
-        ax.plot(tot, mean, "-", color=C_MODEL, lw=1.2, ls="--", label="mean")
+        ax.plot(tot, mean, color=C_MODEL, lw=1.2, ls="--", label="mean")
         ax.plot(tot, mn, "-", color=C_DRAM, lw=1.8, label="least worn")
         gap = mx[-1] - mn[-1]
         ax.annotate(f"spread {gap:.0f} erases\n{gap/100000*100:.3f}% of the 100,000-cycle budget",
