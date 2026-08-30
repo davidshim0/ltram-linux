@@ -84,7 +84,7 @@ if r:
             return None
         return lo_[1] + (target - lo_[0]) / (hi_[0] - lo_[0]) * (hi_[1] - lo_[1])
 
-    def draw(xs, ys, lo, hi, xlab, fname, title, xlim_left=None, mark=None):
+    def draw(xs, ys, lo, hi, xlab, fname, title, xlim_left=None, mark=None, worst=None):
         fig, ax = plt.subplots(figsize=(7.2, 4.6))
         if base:
             ax.axhline(base / US, color=C_GRID, ls="--", lw=1)
@@ -93,8 +93,17 @@ if r:
                         ha="right", va="top", xytext=(0, -5),
                         textcoords="offset points")
         if lo and hi:
+            # min to p90, not min to max. The max is the single worst pass out
+            # of ~150, so it is one sample and need not move monotonically --
+            # at poll 60 it reads 2089 against a p90 of 1379, one outlier
+            # sitting 700 ns above the rest of the distribution. The envelope
+            # is the thing that behaves; the outlier is worth showing, but not
+            # worth letting define the band.
             ax.fill_between(xs, lo, hi, color=C_NOR, alpha=.15, lw=0,
-                            label="min to max across passes")
+                            label="min to p90 across passes")
+        if worst:
+            ax.plot(xs, worst, marker="x", ls="none", color=C_NOR, ms=5,
+                    mew=1.2, alpha=.6, label="worst single pass")
         ax.plot(xs, ys, marker=M_COLD, ls="-", color=C_NOR, lw=1.8, ms=5.5, zorder=3,
                 label="mean" if lo else None)
         if mark and base:
@@ -116,8 +125,9 @@ if r:
     draw([float(x["erase_rate_per_s"]) for x in ra],
          [col(x, "mean_ns", "ns_per_line") / US for x in ra],
          [col(x, "min_ns") / US for x in ra] if has_dist else None,
-         [col(x, "max_ns") / US for x in ra] if has_dist else None,
+         [col(x, "p90_ns") / US for x in ra] if has_dist else None,
          "Erases/Second", "fig4-read-vs-erase.png", TITLE, xlim_left=-1.5,
+         worst=[col(x, "max_ns") / US for x in ra] if has_dist else None,
          mark=(at_poll(r, TARGET, "erase_rate_per_s"), at_poll(r, TARGET, "mean_ns"))
               if at_poll(r, TARGET, "mean_ns") and at_poll(r, TARGET, "erase_rate_per_s") else None)
     made.append("fig4-read-vs-erase")
@@ -127,8 +137,9 @@ if r:
         draw([poll_val(x) for x in rb],
              [col(x, "mean_ns", "ns_per_line") / US for x in rb],
              [col(x, "min_ns") / US for x in rb] if has_dist else None,
-             [col(x, "max_ns") / US for x in rb] if has_dist else None,
+             [col(x, "p90_ns") / US for x in rb] if has_dist else None,
              "Erase Interval (ms)", "fig4b-read-vs-interval.png", TITLE, xlim_left=-4,
+             worst=[col(x, "max_ns") / US for x in rb] if has_dist else None,
              mark=(TARGET, at_poll(rb, TARGET, "mean_ns")) if at_poll(rb, TARGET, "mean_ns") else None)
         made.append("fig4b-read-vs-interval")
 
