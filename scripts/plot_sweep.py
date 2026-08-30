@@ -73,9 +73,7 @@ def frame(ax, title, ylab, note=None):
                 ha="right", va="top", rotation=90, xytext=(-3, -4), textcoords="offset points")
     ax.annotate("NOR capacity, 256 MB", (NOR, top), fontsize=7.5, color=C_NOR,
                 ha="right", va="top", rotation=90, xytext=(-3, -4), textcoords="offset points")
-    if note:
-        ax.text(0.5, -0.30, note, transform=ax.transAxes, fontsize=7.5,
-                color="#535B58", ha="center", va="top", wrap=True)
+    # note is accepted and ignored: no prose under the axes.
 
 # ---------------------------------------------------------------- 1. time ---
 # The COMPONENTS, not the totals. Compute is the same work either way, so the

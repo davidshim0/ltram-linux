@@ -32,7 +32,8 @@ def rows(name, delim=","):
 def frame(ax, title, xl, yl, note=None):
     ax.set_title(title, fontsize=13, weight="semibold", pad=10)
     ax.set_xlabel(xl); ax.set_ylabel(yl); ax.grid(alpha=.25, lw=.5)
-    if note: ax.text(0, -.22, note, transform=ax.transAxes, fontsize=8, color="#535B58")
+    # note is accepted and ignored: the figures carry no prose. What each one
+    # shows belongs wherever it is being presented, not baked into the image.
 
 made = []
 r = rows("read-vs-erase.csv")
