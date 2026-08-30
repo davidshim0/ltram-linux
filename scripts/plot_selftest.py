@@ -334,28 +334,28 @@ if r:
     top = max(ns) * 1.16
     axes = []
     for k, (p_, lab) in enumerate(present):
-        a = fig.add_subplot(gs[k], sharey=axes[0] if axes else None)
-        axes.append(a)
+        axp = fig.add_subplot(gs[k], sharey=axes[0] if axes else None)
+        axes.append(axp)
         xs = [x for x, q in zip(t, ph) if q == p_]
         ys = [y for y, q in zip(ns, ph) if q == p_]
-        a.plot(xs, ys, "-", color=C_NOR, lw=1.5, solid_joinstyle="round", zorder=3)
-        a.set_xlim(min(xs), max(xs))
-        a.grid(alpha=.25, lw=.5)
-        a.annotate(f"{lab}\n{sum(ys)/len(ys):.0f} ns",
+        axp.plot(xs, ys, "-", color=C_NOR, lw=1.5, solid_joinstyle="round", zorder=3)
+        axp.set_xlim(min(xs), max(xs))
+        axp.grid(alpha=.25, lw=.5)
+        axp.annotate(f"{lab}\n{sum(ys)/len(ys):.0f} ns",
                    (0.5, 0.985), xycoords="axes fraction", ha="center", va="top",
                    fontsize=10, color="#3d474e")
-        a.set_xlabel(f"{min(xs):.0f}-{max(xs):.0f} s", fontsize=9)
+        axp.set_xlabel(f"{min(xs):.0f}-{max(xs):.0f} s", fontsize=9)
         if k:
-            a.tick_params(labelleft=False)
-            a.spines["left"].set_visible(False)
+            axp.tick_params(labelleft=False)
+            axp.spines["left"].set_visible(False)
         if k < len(present) - 1:
-            a.spines["right"].set_visible(False)
+            axp.spines["right"].set_visible(False)
     axes[0].set_ylim(0, top)
     axes[0].set_ylabel("Average Latency per Cache line (ns)")
     fig.suptitle("Latency when migration must wait for erases",
                  fontsize=13, weight="semibold", y=0.97)
     fig.supxlabel("Time (sec), axis broken between phases", fontsize=10, y=0.02)
-    fig.tight_layout(); fig.savefig(f"{OUT}/fig8-worst-case.png", dpi=200)
+    fig.tight_layout(rect=[0, 0.04, 1, 0.95]); fig.savefig(f"{OUT}/fig8-worst-case.png", dpi=200)
     made.append("fig8-worst-case")
 
 r = rows("wear-history.tsv", "\t")
