@@ -105,7 +105,7 @@ def legend_by_last(ax, **kw):
     order = sorted(range(len(h)), key=lambda i: -lasty(h[i]))
     ax.legend([h[i] for i in order], [l[i] for i in order], **kw)
 
-def frame(ax, title, ylab, note=None):
+def frame(ax, title, ylab, note=None, mark_at="bottom"):
     ax.set_xscale("log", base=2)
     ax.set_xticks(sizes); ax.xaxis.set_major_formatter(FuncFormatter(human))
     ax.tick_params(axis="x", labelrotation=45, labelsize=8)
@@ -114,12 +114,18 @@ def frame(ax, title, ylab, note=None):
     ax.grid(alpha=0.25, lw=0.5)
     ax.axvline(LLC, color="#0B6A6F", lw=0.9, ls="--", alpha=0.7)
     ax.axvline(NOR, color=C_NOR, lw=0.9, ls="--", alpha=0.7)
-    bot = ax.get_ylim()[0]
-    ax.annotate("LLC, 16MB", (LLC, bot), fontsize=8, color="#0B6A6F",
-                ha="right", va="bottom", rotation=90, xytext=(-3, 4),
+    # Which end is free depends on the figure. fig1 is linear in seconds, so
+    # every curve hugs the axis at the small sizes where these lines fall;
+    # fig2 and fig3 have their action up top and leave the floor clear.
+    if mark_at == "top":
+        y0, va, dy = ax.get_ylim()[1], "top", -4
+    else:
+        y0, va, dy = ax.get_ylim()[0], "bottom", 4
+    ax.annotate("LLC, 16MB", (LLC, y0), fontsize=8, color="#0B6A6F",
+                ha="right", va=va, rotation=90, xytext=(-3, dy),
                 textcoords="offset points")
-    ax.annotate("NOR, 256MB", (NOR, bot), fontsize=8, color=C_NOR,
-                ha="right", va="bottom", rotation=90, xytext=(-3, 4),
+    ax.annotate("NOR, 256MB", (NOR, y0), fontsize=8, color=C_NOR,
+                ha="right", va=va, rotation=90, xytext=(-3, dy),
                 textcoords="offset points")
     # note is accepted and ignored: no prose under the axes.
 
@@ -155,7 +161,7 @@ ax.plot(sizes, comp, marker=M_COMP, ls="-", color=C_COMP, lw=1.6, ms=6,
 ax.set_yscale("log")
 frame(ax, "Execution time (log scale)", "seconds per pass",
       "The same three curves. On a log axis the constant vertical gap between the two access "
-      "latencies\nis the medium ratio, and it holds from 32 KB to 64 MB.")
+      "latencies\nis the medium ratio, and it holds from 32 KB to 64 MB.", mark_at="top")
 legend_by_last(ax, fontsize=9.5, loc="upper left", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig1b-execution-time-log.png", dpi=160)
 
