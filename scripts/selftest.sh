@@ -152,7 +152,16 @@ if [ "$MODE" = "--cycle" ]; then
     # after the power cycle, and reboots. Nothing to remember and nothing to
     # type at the far end -- the reboot is IN the test rather than around it.
     mkdir -p $SDIR
-    rm -f $SDIR/pending $SDIR/report.txt
+    # Clear the data too, not just the report. A section that SKIPS writes no
+    # CSV, so last run's file would survive and be plotted as if it were from
+    # this one -- the worst kind of stale, because it looks like a result.
+    rm -f $SDIR/pending $SDIR/report.txt $SDIR/*.csv
+    { echo "started   $(date -Iseconds)"
+      echo "kernel    $(uname -r)"
+      echo "script    $(readlink -f "$0")"
+      echo "wear      $(w cycles_used) used, interval $(w interval_ms) ms"
+      echo "pool      clean $(ps_ clean) data $(ps_ data) dirty $(ps_ dirty)"
+    } > $SDIR/run-info.txt
     echo "Running every in-boot section, then rebooting to finish."
     echo
     "$0" full 2>&1 | tee $SDIR/pre-output.txt
@@ -160,6 +169,15 @@ if [ "$MODE" = "--cycle" ]; then
     "$0" --pre  2>&1 | tee -a $SDIR/pre-output.txt
     { echo "script=$(readlink -f "$0")"; echo "started=$(date -Iseconds)"; echo "pre_rc=$PRE_RC"
     } > $SDIR/pending
+    hdr "DATA COLLECTED"
+    for f in $SDIR/*.csv; do
+        [ -e "$f" ] || { echo "  (no CSVs were written)"; break; }
+        printf "  %-22s %5s rows\n" "$(basename "$f")" "$(( $(wc -l < "$f") - 1 ))"
+    done
+    echo
+    echo "  pull them with:"
+    echo "    scp 'zuestoll08:$SDIR/*.csv' /tmp/ && scp zuestoll08:/var/lib/ltram/wear-history.tsv /tmp/"
+
     hdr "REBOOTING to run the power-cycle checks"
     echo "  Results so far are in $SDIR/pre-output.txt"
     echo "  After the reboot the full report appears in $SDIR/report.txt"
@@ -833,7 +851,7 @@ else
         /^RESID/ { rp[$2] = $4 }
         /^POINT/ { at = ts + $4
                    ph = (at < p2) ? 1 : ((at < p3) ? 2 : 3)
-                   printf "%.3f,%.1f,%s,%d\n", at - p1, $3*1e9/l, ($1 in rp ? rp[$1] : ""), ph }
+                   printf "%.3f,%.1f,%s,%d\n", at - p1, $3*1e9/l, ($2 in rp ? rp[$2] : ""), ph }
       ' $L
     } > $NCSV
     band(){ awk -F, -v p="$1" 'NR>1 && $4==p {n++; s+=$2} END{printf "%.1f", (n?s/n:0)}' $NCSV; }
