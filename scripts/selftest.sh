@@ -835,7 +835,14 @@ hdr "N. THE WHOLE TRANSITION -- DRAM, migrating, then flash"
 # Residency is sampled alongside, so the timeline carries both curves and the
 # transition is visible rather than inferred.
 NCSV=$SDIR/timeline.csv
-NN=2896; NPAGES_N=$(( NN * NN * 4 / 4096 )); NLINES_N=$(( NN * NN * 4 / 128 ))
+# 192 MiB, not 256. The transition scales with the page count, so a bigger
+# working set shows it properly -- but 256 MiB IS the pool, and with the erase
+# engine pinned off (which this section needs, so phase 2 measures promotion
+# and not recycling) a fill that size stalls around 87%: every migration that
+# programs a sector and then fails leaves it dirty with nothing to recycle it.
+# 192 MiB is 75% of capacity, reaches full residency with erases off, and is
+# 6x the region this used to use.
+NN=7094; NPAGES_N=$(( NN * NN * 4 / 4096 )); NLINES_N=$(( NN * NN * 4 / 128 ))
 PHASE1=45; PHASE3=45
 if ! ensure_clean $NPAGES_N; then
     skip "N  could not reach $NPAGES_N clean sectors (have $(ps_ clean), dirty $(ps_ dirty))"
@@ -853,6 +860,9 @@ else
     PID=$(pgrep -x matmul | head -1)
     [ -n "${PID:-}" ] && echo $PID | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
     echo "     phase 1 done (${PHASE1}s DRAM); target_pid attached, migrating..."
+    # 99%, not 100%. The last handful of pages can take longer than the whole
+    # transition, and nothing about them is interesting -- the medium has
+    # already changed by then.
     for i in $(seq 1 3000); do
         R=$(grep "^RESID" $L | tail -1 | awk '{print $4}')
         awk -v r="${R:-0}" 'BEGIN{exit !(r >= 99)}' && break
