@@ -66,6 +66,8 @@ if r:
     frame(ax, "Read latency against background erase rate",
           "erases per second while the workload reads",
           "ns per cache line, cold NOR reads")
+    fig.tight_layout(); fig.savefig(f"{OUT}/selftest-read-vs-erase.png", dpi=160)
+    made.append("read-vs-erase")
 
 r = rows("promote-rate.csv")
 if r:
