@@ -296,7 +296,10 @@ if r:
     fig.tight_layout(); fig.savefig(f"{OUT}/fig7-transition-timeline.png", dpi=160)
     made.append("fig7-transition-timeline")
 
-r = rows("worstcase.csv")
+# gated.csv is the worst case done properly: migration into an already-dirty
+# pool, run to completion. worstcase.csv reached the same state the long way
+# and its refill was truncated, so prefer gated when both exist.
+r = rows("gated.csv") or rows("worstcase.csv")
 if r:
     t = [float(x["elapsed_s"]) for x in r]
     ns = [float(x["ns_per_line"]) for x in r]
@@ -309,19 +312,23 @@ if r:
         t = [t[i] for i in keep]; ns = [ns[i] for i in keep]; ph = [ph[i] for i in keep]
 
     fig, ax = plt.subplots(figsize=(10, 5.4))
-    PH = ((1, C_DRAM, "DRAM"), (2, "#8a5320", "Migrating"),
-          (3, C_DRAM, "Evicted"), (4, "#7a2f10", "Migrating\n(erase-gated)"),
-          (5, C_NOR, "NOR"))
-    for p_, col_, lab in PH:
+    # gated.csv has three phases, worstcase.csv five. Name them by number so
+    # the same block draws either.
+    PH = (((1, "DRAM"), (2, "Migrating\n(erase-gated)"), (3, "NOR"))
+          if max(ph) == 3 else
+          ((1, "DRAM"), (2, "Migrating"), (3, "Evicted"),
+           (4, "Migrating\n(erase-gated)"), (5, "NOR")))
+    top = max(ns) * 1.16
+    for p_, lab in PH:
         xs = [x for x, q in zip(t, ph) if q == p_]
         if not xs: continue
         if p_ > 1:
-            ax.axvline(min(xs), color=C_GRID, ls=":", lw=1)
+            ax.axvline(min(xs), color=C_GRID, ls=":", lw=1, zorder=1)
         mean = sum(y for y, q in zip(ns, ph) if q == p_) / len(xs)
-        ax.annotate(f"{lab}\n{mean:.0f}ns", ((min(xs) + max(xs)) / 2, max(ns) * 0.97),
-                    ha="center", va="top", fontsize=9.5, color=col_, fontweight="medium")
-    ax.plot(t, ns, "-", color="#3d474e", lw=.8, alpha=.55, zorder=3)
-    ax.set_ylim(bottom=0)
+        ax.annotate(f"{lab}\n{mean:.0f} ns", ((min(xs) + max(xs)) / 2, top * 0.985),
+                    ha="center", va="top", fontsize=10, color="#3d474e")
+    ax.plot(t, ns, "-", color=C_NOR, lw=1.5, solid_joinstyle="round", zorder=3)
+    ax.set_ylim(0, top); ax.set_xlim(left=0)
     frame(ax, "Latency when migration must wait for erases",
           "Time (sec)", "Average Latency per Cache line (ns)")
     fig.tight_layout(); fig.savefig(f"{OUT}/fig8-worst-case.png", dpi=200)
