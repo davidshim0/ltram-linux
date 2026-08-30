@@ -911,6 +911,79 @@ else
     rm -f $L
 fi
 
+hdr "O. THE WORST CASE -- migration gated on erases"
+# N pre-cleans the pool and pins the engine off, so its migration is into free
+# sectors: the easy case. This is the hard one, on the same timeline shape.
+#
+#   1 DRAM   2 first migration into a CLEAN pool   3 evicted, all sectors dirty
+#   4 second migration, every promotion waiting for an erase   5 settled
+#
+# Phase 4 is the point: a promotion proceeds only once a sector has been
+# blanked, the engine retires ~40 a second, and the reader pays for the erases
+# and the changing medium at once. Phase 2 against phase 4 is a before/after
+# on one workload, one size, one run.
+OCSV=$SDIR/worstcase.csv
+ON=7094; OPAGES=$(( ON * ON * 4 / 4096 )); OLINES=$(( ON * ON * 4 / 128 ))
+OP1=60; OP3=45; OP5=60
+if ! ensure_clean $OPAGES; then
+    skip "O  could not reach $OPAGES clean sectors (have $(ps_ clean), dirty $(ps_ dirty))"
+else
+    setw $HW0 $LW0                 # engine ON: phase 4 cannot proceed without it
+    setp promote_batch 1; setp wear_governor 1; setp wear_days 379
+    L=/tmp/st-o.log
+    sudo -n $MM --n $ON --iters 1 --runs 100000 --flush 32 --print-ranges --phys \
+        --resid-every 5 > $L 2>&1 &
+    BG=$!
+    for i in $(seq 1 900); do grep -q "^TSTART" $L 2>/dev/null && break; sleep 0.1; done
+    OT1=$(date +%s.%N); sleep $OP1
+    OT2=$(date +%s.%N)
+    PID=$(pgrep -x matmul | head -1)
+    [ -n "${PID:-}" ] && echo $PID | sudo -n tee $TP >/dev/null
+    owait(){ for i in $(seq 1 4000); do
+        R=$(grep "^RESID" $L | tail -1 | awk '{print $4}')
+        awk -v r="${R:-0}" -v t="$1" 'BEGIN{exit !(r >= t)}' && return 0
+        kill -0 $BG 2>/dev/null || return 1
+        sleep 0.5
+      done; return 1; }
+    owait 99
+    OT3=$(date +%s.%N); sleep $OP3
+    # SIGUSR1, because the pass at which the first migration ends is not
+    # knowable in advance.
+    sudo -n kill -USR1 "$PID" 2>/dev/null; sleep 3
+    OT4=$(date +%s.%N)
+    ODIRTY=$(ps_ dirty)
+    owait 99
+    OT5=$(date +%s.%N); sleep $OP5
+    kill $BG 2>/dev/null; wait $BG 2>/dev/null
+    echo 0 | sudo -n tee $TP >/dev/null
+    setp promote_batch $PB0; setp wear_days $D0; setw 0 0
+
+    OTS=$(awk '/^TSTART/{print $2; exit}' $L)
+    { echo "elapsed_s,ns_per_line,resid_pct,phase"
+      awk -v ts="$OTS" -v l="$OLINES" -v a="$OT1" -v b="$OT2" -v c="$OT3" -v d="$OT4" -v e="$OT5" '
+        NR==FNR { if ($1 == "RESID") rp[$2] = $4; next }
+        /^POINT/ { at = ts + $4
+                   ph = (at<b)?1:((at<c)?2:((at<d)?3:((at<e)?4:5)))
+                   printf "%.3f,%.1f,%s,%d\n", at - a, $3*1e9/l, ($2 in rp ? rp[$2] : ""), ph }
+      ' $L $L
+    } > $OCSV
+    oband(){ awk -F, -v p="$1" 'NR>1 && $4==p {n++; s+=$2} END{printf "%.0f", (n?s/n:0)}' $OCSV; }
+    O1=$(oband 1); O2=$(oband 2); O4=$(oband 4); O5=$(oband 5)
+    T24=$(awk -v a="$OT2" -v b="$OT3" 'BEGIN{printf "%.0f", b-a}')
+    T44=$(awk -v a="$OT4" -v b="$OT5" 'BEGIN{printf "%.0f", b-a}')
+    echo "     DRAM ${O1} | clean-pool migration ${O2} (${T24}s) | erase-gated ${O4} (${T44}s) | flash ${O5} ns/line"
+    echo "     $ODIRTY sectors dirty at the eviction"
+    echo "     -> $OCSV"
+
+    [ "${T44:-0}" -gt "${T24:-0}" ] \
+        && ok "O1 the erase-gated migration took ${T44}s against ${T24}s into a clean pool" \
+        || no "O1 erase-gated ${T44}s vs clean ${T24}s -- erases are not gating anything"
+    awk -v a="$O5" -v b="$O1" 'BEGIN{exit !(a > b*2)}' \
+        && ok "O2 it still reached flash: ${O5} ns/line against ${O1} on DRAM" \
+        || no "O2 ended at ${O5} ns/line -- the second migration never completed"
+    rm -f $L
+fi
+
 hdr "K. FILL EFFICIENCY -- how long, and at what cost in allocations"
 # Three questions the suite could not answer: how long an empty pool takes to
 # fill, whether that matches the pacing we think we configured, and whether
