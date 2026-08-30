@@ -161,7 +161,7 @@ ax.plot(sizes, comp, marker=M_COMP, ls="-", color=C_COMP, lw=1.6, ms=6,
 ax.set_yscale("log")
 frame(ax, "Execution time (log scale)", "seconds per pass",
       "The same three curves. On a log axis the constant vertical gap between the two access "
-      "latencies\nis the medium ratio, and it holds from 32 KB to 64 MB.", mark_at="top")
+      "latencies\nis the medium ratio, and it holds from 32 KB to 64 MB.")
 legend_by_last(ax, fontsize=9.5, loc="upper left", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig1b-execution-time-log.png", dpi=160)
 
