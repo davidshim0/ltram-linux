@@ -38,43 +38,63 @@ def frame(ax, title, xl, yl, note=None):
 made = []
 r = rows("read-vs-erase.csv")
 if r:
-    # SORT BY THE X AXIS. The CSV is in measurement order -- off, 0, 10, 30,
-    # 60, 120 -- but x is the erase RATE, which runs the other way: a poll of
-    # 0 ms erases fastest and 120 ms slowest. Plotting in file order sent the
-    # line out to 36/s and then walked it back left across every other point.
-    r = sorted(r, key=lambda x: float(x["erase_rate_per_s"]))
-    er = [float(x["erase_rate_per_s"]) for x in r]
-    ns = [float(x["ns_per_line"]) for x in r]
-    base = next((float(x["ns_per_line"]) for x in r if x["poll_ms"] == "off"), ns[0])
+    # Tolerate both shapes: the first runs recorded only a mean.
+    def col(x, *names):
+        for n in names:
+            if n in x and x[n] not in ("", None): return float(x[n])
+        return None
+    def poll_val(x):        # "off" sorts to the far right on an interval axis
+        return 1e9 if x["poll_ms"] == "off" else float(x["poll_ms"])
 
-    fig, ax = plt.subplots(figsize=(8.5, 5.2))
-    ax.axhline(base, color=C_GRID, ls="--", lw=1.1)
-    ax.annotate(f"engine off — {base:.0f} ns/line", (max(er), base), fontsize=9,
-                color=C_GRID, ha="right", va="bottom",
-                xytext=(0, 5), textcoords="offset points")
-    ax.plot(er, ns, "o-", color=C_NOR, lw=2, ms=6, zorder=3)
+    base = next((col(x, "mean_ns", "ns_per_line") for x in r if x["poll_ms"] == "off"), None)
+    has_dist = "max_ns" in r[0]
 
-    # The poll setting and the achieved rate are two views of one knob, so
-    # labelling every point repeats the x axis. Put the mapping on a second
-    # axis instead: same positions, no clutter over the data.
-    ax.set_ylim(bottom=0)
-    ax.set_xlim(left=-1.5, right=max(er) * 1.08)
-    top = ax.twiny()
-    top.set_xlim(ax.get_xlim())
-    top.set_xticks(er)
-    top.set_xticklabels(["off" if x["poll_ms"] == "off" else x["poll_ms"] for x in r], fontsize=9)
-    top.set_xlabel("erase_poll_ms  (the setting; 30 is the default)", fontsize=10, labelpad=8)
-    top.tick_params(axis="x", length=3)
-    # Mark where the system actually runs.
-    d = next((x for x in r if x["poll_ms"] == "30"), None)
-    if d:
-        ax.plot([float(d["erase_rate_per_s"])], [float(d["ns_per_line"])],
-                "o", mfc="none", mec=C_NOR, mew=2, ms=14, zorder=4)
-    frame(ax, "Read latency against background erase rate",
-          "erases per second while the workload reads",
-          "ns per cache line, cold NOR reads")
-    fig.tight_layout(); fig.savefig(f"{OUT}/selftest-read-vs-erase.png", dpi=160)
+    def draw(xs, ys, lo, hi, xlab, fname, title, xlim_left=None, marker=None):
+        fig, ax = plt.subplots(figsize=(8.5, 5.2))
+        if base:
+            ax.axhline(base, color=C_GRID, ls="--", lw=1.1)
+            ax.annotate(f"read-only baseline — {base:.0f} ns/line",
+                        (max(xs), base), fontsize=9, color=C_GRID, ha="right",
+                        va="bottom", xytext=(0, 5), textcoords="offset points")
+        if lo and hi:
+            ax.fill_between(xs, lo, hi, color=C_NOR, alpha=.15, lw=0,
+                            label="min to max across passes")
+        ax.plot(xs, ys, "o-", color=C_NOR, lw=2, ms=6, zorder=3,
+                label="mean" if lo else None)
+        if marker is not None:
+            ax.plot([marker[0]], [marker[1]], "o", mfc="none", mec=C_NOR, mew=2, ms=14, zorder=4)
+        ax.set_ylim(bottom=0)
+        if xlim_left is not None: ax.set_xlim(left=xlim_left)
+        if lo: ax.legend(fontsize=9, frameon=False, loc="upper left")
+        frame(ax, title, xlab, "ns per cache line, cold NOR reads")
+        fig.tight_layout(); fig.savefig(f"{OUT}/{fname}", dpi=160)
+
+    # (a) against what the engine actually achieved
+    ra = sorted(r, key=lambda x: float(x["erase_rate_per_s"]))
+    xs = [float(x["erase_rate_per_s"]) for x in ra]
+    ys = [col(x, "mean_ns", "ns_per_line") for x in ra]
+    lo = [col(x, "min_ns") for x in ra] if has_dist else None
+    hi = [col(x, "max_ns") for x in ra] if has_dist else None
+    d = next((x for x in ra if x["poll_ms"] == "30"), None)
+    draw(xs, ys, lo, hi, "erases per second while the workload reads",
+         "selftest-read-vs-erase.png", "Read latency against background erase rate",
+         xlim_left=-1.5,
+         marker=(float(d["erase_rate_per_s"]), col(d, "mean_ns", "ns_per_line")) if d else None)
     made.append("read-vs-erase")
+
+    # (b) against the knob: how often an erase is issued
+    rb = sorted([x for x in r if x["poll_ms"] != "off"], key=poll_val)
+    if rb:
+        xs = [poll_val(x) for x in rb]
+        ys = [col(x, "mean_ns", "ns_per_line") for x in rb]
+        lo = [col(x, "min_ns") for x in rb] if has_dist else None
+        hi = [col(x, "max_ns") for x in rb] if has_dist else None
+        d = next((x for x in rb if x["poll_ms"] == "30"), None)
+        draw(xs, ys, lo, hi, "erase_poll_ms  (delay between erases)",
+             "selftest-read-vs-interval.png", "Read latency against erase interval",
+             xlim_left=-4,
+             marker=(30.0, col(d, "mean_ns", "ns_per_line")) if d else None)
+        made.append("read-vs-interval")
 
 r = rows("promote-rate.csv")
 if r:
