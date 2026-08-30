@@ -146,7 +146,7 @@ ax.set_ylim(bottom=0)
 frame(ax, "Execution time", "seconds per pass",
       "Components, not totals: a pass on either medium is Compute plus that medium's access "
       "latency.\nCompute is identical work in both cases. Linear axis, so everything below "
-      "64 MB sits on the baseline. See fig1b for those.")
+      "64 MB sits on the baseline. See fig1b for those.", mark_at="top")
 legend_by_last(ax, fontsize=9.5, loc="upper left", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig1-execution-time.png", dpi=160)
 
