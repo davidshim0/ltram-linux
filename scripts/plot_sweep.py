@@ -207,7 +207,11 @@ frame(ax, "Memory access latency as a share of total run time", "% of the pass s
 # else is down there. Centre left sat on top of the DRAM cold curve.
 legend_in_order(ax, ["NOR, cold cache", "DRAM, cold cache",
                      "NOR, warm cache", "DRAM, warm cache"],
-                fontsize=9, loc="lower right", frameon=False)
+                # The band between the NOR curves near 88% and the DRAM ones
+                # near 45% is empty across the whole axis. Lower right sat on
+                # the LLC and NOR labels along the floor.
+                fontsize=9, loc="upper left", bbox_to_anchor=(0.02, 0.86),
+                frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig3-memory-share.png", dpi=160)
 
 print(f"wrote {a.dir}/fig1, fig1b, fig2, fig3")
