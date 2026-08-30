@@ -124,18 +124,34 @@ if r:
     iv = sorted(byiv)
     me = [sum(byiv[k]) / len(byiv[k]) for k in iv]
     mins = [POOL / m / 60 for m in me]
-    fig, ax = plt.subplots(figsize=(7.2, 4.6))
+    ERASE_MS = 22.3     # I2, measured idle: the engine retires one sector this often
+    DEFAULT_MS = 24     # the five-year service budget
+    fig, ax = plt.subplots(figsize=(7.6, 4.8))
+
+    # Promotion cannot outrun recycling for long: every promoted page needs an
+    # erase eventually, so a write interval shorter than the erase period
+    # drains the pool faster than the engine can refill it.
+    ax.axvline(ERASE_MS, color=C_NOR, ls="-.", lw=1.2)
+    ax.axvline(DEFAULT_MS, color="#0f6b70", ls="--", lw=1.2)
+
     ax.plot(iv, mins, "o-", color=C_DRAM, lw=1.8, ms=5.5, zorder=3)
-    # Drop lines at the two ends so the range is readable off the axes: the
-    # fastest the governor will go, and the interval it actually runs at.
-    for x_, y_ in ((iv[0], mins[0]), (iv[-1], mins[-1])):
-        ax.vlines(x_, 0, y_, color=C_GRID, ls=":", lw=1)
     for x_, y_ in zip(iv, mins):
+        ax.vlines(x_, 0, y_, color=C_GRID, ls=":", lw=.9, zorder=1)
         ax.annotate(f"{y_:.0f}" if y_ >= 10 else f"{y_:.1f}", (x_, y_),
                     textcoords="offset points", xytext=(0, 8), ha="center",
                     fontsize=9, color="#3d474e")
     ax.set_ylim(bottom=0)
-    ax.set_xlim(left=0)
+    ax.set_xlim(left=0, right=max(max(iv), DEFAULT_MS) * 1.12)
+    # An explicit tick per measured point, so every x reads off the axis.
+    ax.set_xticks(sorted(set(iv)))
+    ax.set_xticklabels([f"{v:g}" for v in sorted(set(iv))])
+    top = ax.get_ylim()[1]
+    ax.annotate(f"erase limit\n{ERASE_MS:g} ms", (ERASE_MS, top), color=C_NOR,
+                fontsize=8.5, ha="right", va="top", xytext=(-4, -4),
+                textcoords="offset points")
+    ax.annotate(f"5-year default\n{DEFAULT_MS:g} ms", (DEFAULT_MS, top), color="#0f6b70",
+                fontsize=8.5, ha="left", va="top", xytext=(4, -4),
+                textcoords="offset points")
     frame(ax, "Time to fill NOR against write interval",
           "Write Interval (ms)", "Time to fill NOR (min)")
     fig.tight_layout(); fig.savefig(f"{OUT}/fig5-time-to-fill.png", dpi=200)
