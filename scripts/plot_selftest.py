@@ -150,16 +150,11 @@ if r:
     # I2 measures the idle erase period at ~22 ms; 20 is the round number the
     # rest of the project quotes for it, and the claim -- promotion cannot
     # outrun recycling -- does not turn on the difference.
-    ERASE_MS = 20
-    DEFAULT_MS = 24     # the five-year service budget
+    # Three references, all grey, all labelled at the bottom.
+    WRITE_MS  = 1      # the governor's floor: it will not pace faster than this
+    ERASE_MS  = 20     # I2's idle erase period, rounded: recycling cannot keep up below it
+    DEFAULT_MS = 24    # the five-year service budget
     fig, ax = plt.subplots(figsize=(7.6, 4.8))
-
-    # Promotion cannot outrun recycling for long: every promoted page needs an
-    # erase eventually, so a write interval shorter than the erase period
-    # drains the pool faster than the engine can refill it.
-    ax.axvline(ERASE_MS, color=C_GRID, ls="-.", lw=1.2)
-    ax.axvline(DEFAULT_MS, color=C_GRID, ls="--", lw=1.2)
-
     ax.plot(iv, mins, marker=M_COLD, ls="-", color=C_NOR, lw=1.8, ms=5.5, zorder=3)
     for x_, y_ in zip(iv, mins):
         ax.vlines(x_, 0, y_, color=C_GRID, ls=":", lw=.9, zorder=1)
@@ -168,16 +163,15 @@ if r:
                     fontsize=9, color="#3d474e")
     ax.set_ylim(bottom=0)
     ax.set_xlim(left=0, right=max(max(iv), DEFAULT_MS) * 1.12)
-    # An explicit tick per measured point, so every x reads off the axis.
     ax.set_xticks(sorted(set(iv)))
     ax.set_xticklabels([f"{v:g}" for v in sorted(set(iv))])
-    top = ax.get_ylim()[1]
-    ax.annotate(f"erase limit\n{ERASE_MS:g} ms", (ERASE_MS, top), color=C_GRID,
-                fontsize=8.5, ha="right", va="top", xytext=(-4, -4),
-                textcoords="offset points")
-    ax.annotate(f"5-year default\n{DEFAULT_MS:g} ms", (DEFAULT_MS, top), color=C_GRID,
-                fontsize=8.5, ha="left", va="top", xytext=(4, -4),
-                textcoords="offset points")
+    bot = ax.get_ylim()[0]
+    for xv, lab in ((WRITE_MS, "write limit"), (ERASE_MS, "erase limit"),
+                    (DEFAULT_MS, "5-year default")):
+        ax.axvline(xv, color=C_GRID, ls="--", lw=1.1, zorder=0)
+        ax.annotate(f"{lab}, {xv:g}ms", (xv, bot), color=C_GRID, fontsize=8,
+                    ha="right", va="bottom", rotation=90,
+                    xytext=(-3, 6), textcoords="offset points")
     frame(ax, "Time to fill NOR against write interval",
           "Write Interval (ms)", "Time to fill NOR (min)")
     fig.tight_layout(); fig.savefig(f"{OUT}/fig5-time-to-fill.png", dpi=200)

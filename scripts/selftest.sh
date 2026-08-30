@@ -490,11 +490,19 @@ else
     [ -n "${PID:-}" ] && echo $PID | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
     setp promote_batch 1; setp wear_governor 1
     R_SLOW=""; R_FAST=""
-    # 1826 is the five-year service default (~24 ms); 76 clamps to the 1 ms
-    # floor, which is the fastest the governor will go. The ends are the two
-    # that mean something.
-    for wd in 1826 1516 758 379 152 76; do
+    # Target the INTERVAL, not wear_days. The kernel computes
+    # 1000*seconds_left/cycles_left with integer division, so wear_days=1516
+    # gives 19.99 -> 19 ms, and guessing days to land on a round interval is
+    # a losing game that also drifts as cycles_left falls. Invert it instead:
+    #
+    #     wear_days = target_ms * cycles_left / (1000 * 86400)
+    #
+    # 24 ms is the five-year service default and 1 ms is the governor's floor;
+    # those two ends are the ones that mean something.
+    for target in 24 20 9 4 1; do
         kill -0 $BG 2>/dev/null || break
+        CL=$(w cycles_left)
+        wd=$(awk -v t="$target" -v c="$CL" 'BEGIN{printf "%d", t*c/1000/86400 + 1}')
         setp wear_days $wd
         sleep 3
         IV=$(w interval_ms)
