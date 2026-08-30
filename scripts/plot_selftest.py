@@ -222,18 +222,21 @@ if r:
     # Shade the three regimes rather than drawing three separate series: it is
     # one continuous workload and the point is that nothing about it changed
     # except where its pages live.
-    for p_, col_, lab in ((1, "#1F5F7A", "DRAM"),
-                          (2, "#8a5320", "migrating"),
+    # Trim the tail: 60 s of the flash regime is enough to show it settled.
+    p3i = [i for i, q in enumerate(ph) if q == 3]
+    if p3i:
+        cut = t[p3i[0]] + 60
+        keep = [i for i, x in enumerate(t) if x <= cut]
+        t = [t[i] for i in keep]; ns = [ns[i] for i in keep]; ph = [ph[i] for i in keep]
+
+    for p_, col_, lab in ((1, "#1F5F7A", "DRAM"), (2, "#8a5320", "migrating"),
                           (3, "#9E2F33", "flash")):
         xs = [x for x, q in zip(t, ph) if q == p_]
         if not xs: continue
-        ax.axvspan(min(xs), max(xs), color=col_, alpha=.07, lw=0)
-        mid = (min(xs) + max(xs)) / 2
+        ax.axvspan(min(xs), max(xs), color=col_, alpha=.08, lw=0)
         mean = sum(y for y, q in zip(ns, ph) if q == p_) / len(xs)
-        ax.hlines(mean, min(xs), max(xs), color=col_, lw=2, zorder=4)
-        ax.annotate(f"{lab}\n{mean:.0f} ns/line", (mid, mean), ha="center", va="bottom",
-                    fontsize=9.5, color=col_, fontweight="medium",
-                    xytext=(0, 8), textcoords="offset points")
+        ax.annotate(f"{lab}\n{mean:.0f}ns", ((min(xs) + max(xs)) / 2, max(ns) * 0.97),
+                    ha="center", va="top", fontsize=10, color=col_, fontweight="medium")
     ax.plot(t, ns, "-", color="#3d474e", lw=.8, alpha=.55, zorder=3)
     ax.set_ylim(bottom=0)
 
@@ -244,8 +247,8 @@ if r:
         ax2.set_ylabel("% of the weights in flash", color="#0f6b70")
         ax2.tick_params(axis="y", colors="#0f6b70")
         ax2.set_ylim(0, 105)
-    frame(ax, "One workload, three regimes: DRAM, migrating, flash",
-          "seconds", "ns per cache line")
+    frame(ax, "Latency change over migration phases",
+          "Time (sec)", "Average Latency per Cache line (ns)")
     fig.tight_layout(); fig.savefig(f"{OUT}/fig7-transition-timeline.png", dpi=160)
     made.append("fig7-transition-timeline")
 
