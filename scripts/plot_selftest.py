@@ -124,7 +124,10 @@ if r:
     iv = sorted(byiv)
     me = [sum(byiv[k]) / len(byiv[k]) for k in iv]
     mins = [POOL / m / 60 for m in me]
-    ERASE_MS = 22.3     # I2, measured idle: the engine retires one sector this often
+    # I2 measures the idle erase period at ~22 ms; 20 is the round number the
+    # rest of the project quotes for it, and the claim -- promotion cannot
+    # outrun recycling -- does not turn on the difference.
+    ERASE_MS = 20
     DEFAULT_MS = 24     # the five-year service budget
     fig, ax = plt.subplots(figsize=(7.6, 4.8))
 

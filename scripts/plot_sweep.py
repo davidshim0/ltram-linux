@@ -68,11 +68,13 @@ def frame(ax, title, ylab, note=None):
     ax.grid(alpha=0.25, lw=0.5)
     ax.axvline(LLC, color="#0B6A6F", lw=0.9, ls="--", alpha=0.7)
     ax.axvline(NOR, color=C_NOR, lw=0.9, ls="--", alpha=0.7)
-    top = ax.get_ylim()[1]
-    ax.annotate("last-level cache, 16 MB", (LLC, top), fontsize=7.5, color="#0B6A6F",
-                ha="right", va="top", rotation=90, xytext=(-3, -4), textcoords="offset points")
-    ax.annotate("NOR capacity, 256 MB", (NOR, top), fontsize=7.5, color=C_NOR,
-                ha="right", va="top", rotation=90, xytext=(-3, -4), textcoords="offset points")
+    bot = ax.get_ylim()[0]
+    ax.annotate("LLC, 16MB", (LLC, bot), fontsize=8, color="#0B6A6F",
+                ha="right", va="bottom", rotation=90, xytext=(-3, 4),
+                textcoords="offset points")
+    ax.annotate("NOR, 256MB", (NOR, bot), fontsize=8, color=C_NOR,
+                ha="right", va="bottom", rotation=90, xytext=(-3, 4),
+                textcoords="offset points")
     # note is accepted and ignored: no prose under the axes.
 
 # ---------------------------------------------------------------- 1. time ---
