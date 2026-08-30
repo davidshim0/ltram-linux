@@ -351,12 +351,24 @@ setp wear_cycles $C0
     || no "B7 still STOPPED after restore"
 
 hdr "C. PAGE STATES -- the invariant"
-DATA=$(ps_ data); DIRTY=$(ps_ dirty); CLEAN=$(ps_ clean)
+# ONE snapshot, not three reads. ps_ opens pagestate each time, so with the
+# erase engine running a sector can move dirty -> clean between the second and
+# third call and be counted in both: measured 0 + 59613 + 5924 = 65537, an
+# invariant violation invented entirely by the instrument.
+PS1=$(cat $DBG/pagestate)
+DATA=$(awk '/^data/{print $2; exit}' <<<"$PS1")
+DIRTY=$(awk '/^dirty/{print $2; exit}' <<<"$PS1")
+CLEAN=$(awk '/^clean/{print $2; exit}' <<<"$PS1")
 [ $((DATA + DIRTY + CLEAN)) = "$NP" ] \
     && ok "C1 data+dirty+clean = nr_pages ($DATA+$DIRTY+$CLEAN=$NP)" \
     || no "C1 $DATA+$DIRTY+$CLEAN != $NP"
-ERR=$(awk '/^errors/{print $2}' $DBG/pagestate 2>/dev/null || echo 0)
+ERR=$(awk '/^errors/{print $2}' <<<"$PS1")
 [ "${ERR:-0}" = "0" ] && ok "C2 no state-machine errors recorded" || no "C2 errors=$ERR"
+# The kernel computes this under the allocator lock, so unlike C1 it cannot be
+# raced by a concurrent erase. If C1 and C3 ever disagree, believe C3.
+[ "$(awk '/^invariant/{print $2}' <<<"$PS1")" = "ok" ] \
+    && ok "C3 the kernel's own invariant check agrees (computed under the lock)" \
+    || no "C3 the kernel reports the invariant BROKEN"
 
 hdr "D. ERASE-COUNT PERSISTENCE"
 if [ -x $EC ]; then
@@ -391,7 +403,10 @@ if [ -x $EC ]; then
     if [ -f $EPF ]; then
         [ "$(cat $EPF)" = "$(w epoch)" ] && ok "D6 saved epoch matches the live parameter ($(w epoch))" || no "D6 saved epoch $(cat $EPF) != live $(w epoch)"
     else no "D6 no $EPF -- restore has never stamped the epoch"; fi
-    DATA2=$(ps_ data); DIRTY2=$(ps_ dirty); CLEAN2=$(ps_ clean)
+    PS2=$(cat $DBG/pagestate)
+    DATA2=$(awk '/^data/{print $2; exit}' <<<"$PS2")
+    DIRTY2=$(awk '/^dirty/{print $2; exit}' <<<"$PS2")
+    CLEAN2=$(awk '/^clean/{print $2; exit}' <<<"$PS2")
     [ $((DATA2 + DIRTY2 + CLEAN2)) = "$NP" ] \
         && ok "D7 invariant still holds after the restore tests" \
         || no "D7 $DATA2+$DIRTY2+$CLEAN2 != $NP -- a restore desynced the free lists"
