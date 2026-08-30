@@ -11,6 +11,8 @@ Reads whatever is present and skips the rest, so a partial run still plots:
   promote-rate.csv    the measured promotion rate, used to derive how long a
                       full fill takes at each interval.
   timeline.csv        one workload across DRAM, migrating and flash.
+  worstcase.csv       the same, but the second migration has to wait for the
+                      erase engine to free the sectors it wants.
   wear-history.tsv    spread against mean over the campaign. Falling means
                       wear levelling is tightening.
 """
@@ -282,6 +284,45 @@ if r:
           "Time (sec)", "Average Latency per Cache line (ns)")
     fig.tight_layout(); fig.savefig(f"{OUT}/fig7-transition-timeline.png", dpi=160)
     made.append("fig7-transition-timeline")
+
+r = rows("worstcase.csv")
+if r:
+    t = [float(x["elapsed_s"]) for x in r]
+    ns = [float(x["ns_per_line"]) for x in r]
+    ph = [int(x["phase"]) for x in r]
+    # Trim the settled tail the same way fig7 does.
+    p5i = [i for i, q in enumerate(ph) if q == 5]
+    if p5i:
+        cut = t[p5i[0]] + 60
+        keep = [i for i, x in enumerate(t) if x <= cut]
+        t = [t[i] for i in keep]; ns = [ns[i] for i in keep]; ph = [ph[i] for i in keep]
+
+    fig, ax = plt.subplots(figsize=(10, 5.4))
+    PH = ((1, C_DRAM, "DRAM"), (2, "#8a5320", "migrating"),
+          (3, C_DRAM, "evicted"), (4, "#7a2f10", "migrating\n(erase-gated)"),
+          (5, C_NOR, "flash"))
+    for p_, col_, lab in PH:
+        xs = [x for x, q in zip(t, ph) if q == p_]
+        if not xs: continue
+        if p_ > 1:
+            ax.axvline(min(xs), color=C_GRID, ls=":", lw=1)
+        mean = sum(y for y, q in zip(ns, ph) if q == p_) / len(xs)
+        ax.annotate(f"{lab}\n{mean:.0f}ns", ((min(xs) + max(xs)) / 2, max(ns) * 0.97),
+                    ha="center", va="top", fontsize=9.5, color=col_, fontweight="medium")
+    ax.plot(t, ns, "-", color="#3d474e", lw=.8, alpha=.55, zorder=3)
+    ax.set_ylim(bottom=0)
+    rr = [(float(x["elapsed_s"]), float(x["resid_pct"])) for x in r
+          if x["resid_pct"] and float(x["elapsed_s"]) <= t[-1]]
+    if rr:
+        ax2 = ax.twinx()
+        ax2.plot([a for a, _ in rr], [b for _, b in rr], "-", color="#0f6b70", lw=1.6)
+        ax2.set_ylabel("% of the weights in flash", color="#0f6b70")
+        ax2.tick_params(axis="y", colors="#0f6b70")
+        ax2.set_ylim(0, 105)
+    frame(ax, "Latency when migration must wait for erases",
+          "Time (sec)", "Average Latency per Cache line (ns)")
+    fig.tight_layout(); fig.savefig(f"{OUT}/fig8-worst-case.png", dpi=200)
+    made.append("fig8-worst-case")
 
 r = rows("wear-history.tsv", "\t")
 if r and len(r) > 2:
