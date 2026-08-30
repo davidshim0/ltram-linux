@@ -154,6 +154,14 @@ if r:
     # never runs short of candidates -- which is the case that matters, since
     # a fill that stalls for want of candidates is not measuring the pacing.
     POOL = 65536
+    # The kernel clamps the interval at 1 ms, so two different budgets can
+    # land on the same x and stack one marker on another. Collapse them so
+    # the count of visible points matches the count of distinct settings.
+    byiv = {}
+    for i_, m_ in zip(iv, me):
+        byiv.setdefault(i_, []).append(m_)
+    iv = sorted(byiv)
+    me = [sum(byiv[k]) / len(byiv[k]) for k in iv]
     fig, ax = plt.subplots(figsize=(8.5, 5.2))
     mins = [POOL / m / 60 for m in me]
     ax.plot(iv, mins, "o-", color=C_DRAM, lw=2, ms=7)
@@ -226,11 +234,10 @@ if r and len(r) > 2:
         # Absolute erase counts, not a ratio of the mean. "The worst sector is
         # N erases ahead of the best" is a number you can hold against the
         # 100,000-cycle budget; "spread is 42% of mean" is not.
-        ax.fill_between(tot, mn, mx, color=C_DRAM, alpha=.16, lw=0,
-                        label="least to most worn sector")
-        ax.plot(tot, mx, "-", color=C_NOR, lw=1.8, label="most worn")
+        ax.fill_between(tot, mn, mx, color=C_DRAM, alpha=.16, lw=0)
+        ax.plot(tot, mx, "-", color=C_NOR, lw=1.8, label="max")
         ax.plot(tot, mean, color=C_MODEL, lw=1.2, ls="--", label="mean")
-        ax.plot(tot, mn, "-", color=C_DRAM, lw=1.8, label="least worn")
+        ax.plot(tot, mn, "-", color=C_DRAM, lw=1.8, label="min")
         gap = mx[-1] - mn[-1]
         ax.annotate(f"spread {gap:.0f} erases\n{gap/100000*100:.3f}% of the 100,000-cycle budget",
                     (tot[-1], mx[-1]), ha="right", va="bottom", fontsize=9.5,
