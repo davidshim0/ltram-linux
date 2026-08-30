@@ -72,6 +72,21 @@ def human(b, _=None):
             return f"{v:.1f} {u}"
     return f"{b} B"
 
+def legend_in_order(ax, labels, **kw):
+    """Legend in a given label order, for figures where grouping beats height.
+
+    fig3 has four curves that pair off two ways -- by medium and by cache
+    state -- and at the right-hand edge the two of each pair coincide, so
+    ordering by final height puts them in an arbitrary sequence within each
+    pair. Naming the order says which pairing the reader should see.
+    """
+    h, l = ax.get_legend_handles_labels()
+    idx = {lab: i for i, lab in enumerate(l)}
+    order = [idx[x] for x in labels if x in idx]
+    order += [i for i in range(len(l)) if i not in order]
+    ax.legend([h[i] for i in order], [l[i] for i in order], **kw)
+
+
 def legend_by_last(ax, **kw):
     """Legend entries in the order the lines finish, top to bottom.
 
@@ -181,7 +196,9 @@ frame(ax, "Memory access latency as a share of total run time", "% of the pass s
       "per access costs only ~4.6x end to end.")
 # Lower right: the warm and cold curves have converged by then, so nothing
 # else is down there. Centre left sat on top of the DRAM cold curve.
-legend_by_last(ax, fontsize=9, loc="lower right", frameon=False)
+legend_in_order(ax, ["NOR, cold cache", "DRAM, cold cache",
+                     "NOR, warm cache", "DRAM, warm cache"],
+                fontsize=9, loc="lower right", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig3-memory-share.png", dpi=160)
 
 print(f"wrote {a.dir}/fig1, fig1b, fig2, fig3")
