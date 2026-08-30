@@ -99,8 +99,8 @@ if r:
                 label="mean" if lo else None)
         if mark and base:
             mx_, my_ = mark
-            ax.plot([mx_], [my_ / US], marker=M_COLD, ls="none", color=C_NOR, ms=8,
-                    mfc="none", mew=2, zorder=5)
+            ax.plot([mx_], [my_ / US], marker=M_COLD, ls="none", color=C_NOR,
+                    ms=8, zorder=5)
             ax.annotate(f"{TARGET:.0f} ms:  {my_/US:.2f} us  (+{(my_/base-1)*100:.0f}%)",
                         (mx_, my_ / US), fontsize=9, color="#3d474e",
                         ha="left", va="bottom", xytext=(8, 6),
