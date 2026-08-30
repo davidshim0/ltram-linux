@@ -695,7 +695,7 @@ hdr "J. READ LATENCY vs ERASE RATE"
 # underneath it, and the series sliced afterwards -- no refilling per point.
 CSV=$SDIR/read-vs-erase.csv
 JN=1448; JPAGES=$(( JN * JN * 4 / 4096 )); JLINES=$(( JN * JN * 4 / 128 ))
-POLLS="0 10 30 60 120"
+POLLS="0 10 15 20 30 60 120"   # 15 and 20 bracket the region worth quoting
 ensure_clean $((JPAGES * 2)) || true
 if [ "$(ps_ clean)" -lt $((JPAGES * 2)) ] || [ "$(ps_ dirty)" -lt 4000 ]; then
     skip "J  needs $((JPAGES*2)) clean and 4000 dirty; have $(ps_ clean) and $(ps_ dirty)"

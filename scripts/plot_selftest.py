@@ -49,7 +49,23 @@ if r:
     base = next((col(x, "mean_ns", "ns_per_line") for x in r if x["poll_ms"] == "off"), None)
     has_dist = "max_ns" in r[0]
 
-    def draw(xs, ys, lo, hi, xlab, fname, title, xlim_left=None, marker=None):
+    TARGET = 20.0        # the interval worth quoting: cheap, and well inside the flat region
+    def at_poll(rows_, target, key):
+        """Value at a poll setting, measured if we have it, linear if not."""
+        pts = sorted(((poll_val(x), col(x, key, "ns_per_line")) for x in rows_
+                      if x["poll_ms"] != "off" and col(x, key, "ns_per_line")), key=lambda t: t[0])
+        for px, py in pts:
+            if abs(px - target) < 1e-9:
+                return py, True
+        lo_ = max((t for t in pts if t[0] < target), default=None)
+        hi_ = min((t for t in pts if t[0] > target), default=None)
+        if not lo_ or not hi_:
+            return None, False
+        f = (target - lo_[0]) / (hi_[0] - lo_[0])
+        return lo_[1] + f * (hi_[1] - lo_[1]), False
+
+    def draw(xs, ys, lo, hi, xlab, fname, title, xlim_left=None, marker=None,
+             callout=None):
         fig, ax = plt.subplots(figsize=(8.5, 5.2))
         if base:
             ax.axhline(base, color=C_GRID, ls="--", lw=1.1)
@@ -65,6 +81,14 @@ if r:
             ax.plot([marker[0]], [marker[1]], "o", mfc="none", mec=C_NOR, mew=2, ms=14, zorder=4)
         ax.set_ylim(bottom=0)
         if xlim_left is not None: ax.set_xlim(left=xlim_left)
+        if callout and base:
+            cx, cy, exact = callout
+            ax.plot([cx], [cy], "D", color="#0f6b70", ms=7, zorder=5)
+            ax.annotate(f"{TARGET:.0f} ms erase interval\n{cy/base:.2f}x the read-only baseline"
+                        + ("" if exact else "  (interpolated)"),
+                        (cx, cy), fontsize=9, color="#0f6b70", fontweight="medium",
+                        xytext=(12, -30), textcoords="offset points",
+                        arrowprops=dict(arrowstyle="-", color="#0f6b70", lw=1))
         if lo: ax.legend(fontsize=9, frameon=False, loc="upper left")
         frame(ax, title, xlab, "ns per cache line, cold NOR reads")
         fig.tight_layout(); fig.savefig(f"{OUT}/{fname}", dpi=160)
@@ -79,7 +103,12 @@ if r:
     draw(xs, ys, lo, hi, "erases per second while the workload reads",
          "selftest-read-vs-erase.png", "Read latency against background erase rate",
          xlim_left=-1.5,
-         marker=(float(d["erase_rate_per_s"]), col(d, "mean_ns", "ns_per_line")) if d else None)
+         marker=(float(d["erase_rate_per_s"]), col(d, "mean_ns", "ns_per_line")) if d else None,
+         callout=(lambda v: (v[0], v[1], v[2]))(
+             (at_poll(r, TARGET, "erase_rate_per_s")[0],
+              at_poll(r, TARGET, "mean_ns")[0],
+              at_poll(r, TARGET, "mean_ns")[1]))
+             if at_poll(r, TARGET, "mean_ns")[0] and at_poll(r, TARGET, "erase_rate_per_s")[0] else None)
     made.append("read-vs-erase")
 
     # (b) against the knob: how often an erase is issued
@@ -93,7 +122,9 @@ if r:
         draw(xs, ys, lo, hi, "erase_poll_ms  (delay between erases)",
              "selftest-read-vs-interval.png", "Read latency against erase interval",
              xlim_left=-4,
-             marker=(30.0, col(d, "mean_ns", "ns_per_line")) if d else None)
+             marker=(30.0, col(d, "mean_ns", "ns_per_line")) if d else None,
+             callout=(TARGET,) + at_poll(rb, TARGET, "mean_ns")
+                     if at_poll(rb, TARGET, "mean_ns")[0] else None)
         made.append("read-vs-interval")
 
 r = rows("promote-rate.csv")
