@@ -8,9 +8,8 @@ Reads whatever is present and skips the rest, so a partial run still plots:
   read-vs-erase.csv   read latency against how hard the engine is erasing.
                       The design question behind erase_batch=1 and the
                       erase_poll_ms spacing, as a curve rather than one point.
-  promote-rate.csv    achieved promotion rate against the configured budget
-                      interval, with the model 1000/(interval + 3 ms) drawn
-                      through it -- the 3 ms is scan plus migration per tick.
+  promote-rate.csv    the measured promotion rate, used to derive how long a
+                      full fill takes at each interval.
   timeline.csv        one workload across DRAM, migrating and flash.
   wear-history.tsv    spread against mean over the campaign. Falling means
                       wear levelling is tightening.
@@ -101,7 +100,7 @@ if r:
     hi = [col(x, "max_ns") for x in ra] if has_dist else None
     d = next((x for x in ra if x["poll_ms"] == "30"), None)
     draw(xs, ys, lo, hi, "erases per second while the workload reads",
-         "selftest-read-vs-erase.png", "Read latency against background erase rate",
+         "fig4-read-vs-erase.png", "Read latency against background erase rate",
          xlim_left=-1.5,
          marker=(float(d["erase_rate_per_s"]), col(d, "mean_ns", "ns_per_line")) if d else None,
          callout=(lambda v: (v[0], v[1], v[2]))(
@@ -109,7 +108,7 @@ if r:
               at_poll(r, TARGET, "mean_ns")[0],
               at_poll(r, TARGET, "mean_ns")[1]))
              if at_poll(r, TARGET, "mean_ns")[0] and at_poll(r, TARGET, "erase_rate_per_s")[0] else None)
-    made.append("read-vs-erase")
+    made.append("fig4-read-vs-erase")
 
     # (b) against the knob: how often an erase is issued
     rb = sorted([x for x in r if x["poll_ms"] != "off"], key=poll_val)
@@ -120,12 +119,12 @@ if r:
         hi = [col(x, "max_ns") for x in rb] if has_dist else None
         d = next((x for x in rb if x["poll_ms"] == "30"), None)
         draw(xs, ys, lo, hi, "erase_poll_ms  (delay between erases)",
-             "selftest-read-vs-interval.png", "Read latency against erase interval",
+             "fig4b-read-vs-interval.png", "Read latency against erase interval",
              xlim_left=-4,
              marker=(30.0, col(d, "mean_ns", "ns_per_line")) if d else None,
              callout=(TARGET,) + at_poll(rb, TARGET, "mean_ns")
                      if at_poll(rb, TARGET, "mean_ns")[0] else None)
-        made.append("read-vs-interval")
+        made.append("fig4b-read-vs-interval")
 
 r = rows("promote-rate.csv")
 if r:
@@ -133,22 +132,6 @@ if r:
     iv = [float(x["interval_ms"]) for x in r]
     me = [float(x["measured_per_s"]) for x in r]
     pr = [float(x["predicted_per_s"]) for x in r]
-    fig, ax = plt.subplots(figsize=(8.5, 5.2))
-    # The two series coincide to 3 s.f., so drawing both as markers hides one
-    # under the other. Model as a bare line, measurement as points on it.
-    ax.plot(iv, pr, "-", color=C_MODEL, lw=3, alpha=.45, label="model: 1000/(interval + 3 ms)")
-    ax.plot(iv, me, "o", color=C_DRAM, ms=7, zorder=3, label="measured")
-    err = max(abs(a - b) / b * 100 for a, b in zip(me, pr))
-    ax.annotate(f"measured within {err:.1f}% of the model at every point",
-                (0.97, 0.92), xycoords="axes fraction", ha="right", fontsize=9.5,
-                color="#3d474e")
-    ax.set_ylim(bottom=0)
-    frame(ax, "Promotion rate against the interval it was told to use",
-          "promotion interval (ms between promotions)", "promotions per second")
-    ax.legend(fontsize=9.5, frameon=False, loc="upper right", bbox_to_anchor=(1, .85))
-    fig.tight_layout(); fig.savefig(f"{OUT}/selftest-promote-rate.png", dpi=160)
-    made.append("promote-rate")
-
     # Same data, the question actually asked: how long to fill the flash.
     # pool / rate, so it assumes a working set large enough that the scanner
     # never runs short of candidates -- which is the case that matters, since
@@ -172,8 +155,8 @@ if r:
     ax.set_ylim(bottom=0)
     frame(ax, f"Time to fill all {POOL:,} sectors",
           "promotion interval (ms between promotions)", "minutes")
-    fig.tight_layout(); fig.savefig(f"{OUT}/selftest-time-to-fill.png", dpi=160)
-    made.append("time-to-fill")
+    fig.tight_layout(); fig.savefig(f"{OUT}/fig6-time-to-fill.png", dpi=160)
+    made.append("fig6-time-to-fill")
 
 r = rows("timeline.csv")
 if r:
@@ -207,8 +190,8 @@ if r:
         ax2.set_ylim(0, 105)
     frame(ax, "One workload, three regimes: DRAM, migrating, flash",
           "seconds", "ns per cache line")
-    fig.tight_layout(); fig.savefig(f"{OUT}/selftest-timeline.png", dpi=160)
-    made.append("timeline")
+    fig.tight_layout(); fig.savefig(f"{OUT}/fig5-transition-timeline.png", dpi=160)
+    made.append("fig5-transition-timeline")
 
 r = rows("wear-history.tsv", "\t")
 if r and len(r) > 2:
@@ -235,8 +218,8 @@ if r and len(r) > 2:
         frame(ax, "How far apart the least and most worn sectors are",
               "total erases recorded across the array", "erase count of a single sector")
         ax.legend(fontsize=9, frameon=False, loc="upper left")
-        fig.tight_layout(); fig.savefig(f"{OUT}/selftest-wear-spread.png", dpi=160)
-        made.append("wear-spread")
+        fig.tight_layout(); fig.savefig(f"{OUT}/fig7-wear-spread.png", dpi=160)
+        made.append("fig7-wear-spread")
 
 print("plotted:", ", ".join(made) if made else "nothing found")
-for m in made: print(f"  {OUT}/selftest-{m}.png")
+for m in made: print(f"  {OUT}/{m}.png")
