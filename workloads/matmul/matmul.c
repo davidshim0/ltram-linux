@@ -850,13 +850,6 @@ int main(int argc, char **argv)
             printf("  run %2d/%d  %8.3f s   %7.1f ns/access\n",
                    r + 1, RUNS, t[r], t[r] * 1e9 / (double)lines);
             printf("POINT %d %.6f %.3f\n", r + 1, t[r], now() - t_start);
-        if (resid_every && (r % resid_every) == 0) {
-            if (!phys_ready)
-                phys_open();
-            printf("RESID %d %.3f %.2f\n", r + 1, now() - t_start,
-                   weights_ltram_pct());
-            fflush(stdout);
-        }
             fflush(stdout);
             if (do_phys) {
                 char tag[16];
@@ -936,6 +929,13 @@ int main(int argc, char **argv)
          * against the promotion curve sampled by the driving script. */
         printf("POINT %d %.6f %.3f\n", r + 1, t[r], now() - t_start);
         fflush(stdout);
+        if (resid_every && (r % resid_every) == 0) {
+            if (!phys_ready)
+                phys_open();
+            printf("RESID %d %.3f %.2f\n", r + 1, now() - t_start,
+                   weights_ltram_pct());
+            fflush(stdout);
+        }
         if (do_phys) {
             char tag[16];
             snprintf(tag, sizeof tag, "run%d", r + 1);

@@ -156,10 +156,11 @@ if r:
     DEFAULT_MS = 24    # the five-year service budget
     fig, ax = plt.subplots(figsize=(7.6, 4.8))
     ax.plot(iv, mins, marker=M_COLD, ls="-", color=C_NOR, lw=1.8, ms=5.5, zorder=3)
-    # Drop lines only. They point each measurement at its x tick; the y value
-    # reads off the axis, so printing it beside the marker repeats the figure.
     for x_, y_ in zip(iv, mins):
         ax.vlines(x_, 0, y_, color=C_GRID, ls=":", lw=.9, zorder=1)
+        ax.annotate(f"{y_:.0f}" if y_ >= 10 else f"{y_:.1f}", (x_, y_),
+                    textcoords="offset points", xytext=(0, 9), ha="center",
+                    fontsize=9, color="#3d474e")
     ax.set_ylim(bottom=0)
     ax.set_xlim(left=0, right=max(max(iv), DEFAULT_MS) * 1.12)
     ax.set_xticks(sorted(set(iv)))
