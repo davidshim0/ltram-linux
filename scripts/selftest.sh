@@ -490,7 +490,10 @@ else
     [ -n "${PID:-}" ] && echo $PID | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
     setp promote_batch 1; setp wear_governor 1
     R_SLOW=""; R_FAST=""
-    for wd in 1516 758 379 152 76; do
+    # 1826 is the five-year service default (~24 ms); 76 clamps to the 1 ms
+    # floor, which is the fastest the governor will go. The ends are the two
+    # that mean something.
+    for wd in 1826 1516 758 379 152 76; do
         kill -0 $BG 2>/dev/null || break
         setp wear_days $wd
         sleep 3

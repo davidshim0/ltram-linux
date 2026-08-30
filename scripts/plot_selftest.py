@@ -123,9 +123,19 @@ if r:
         byiv.setdefault(i_, []).append(m_)
     iv = sorted(byiv)
     me = [sum(byiv[k]) / len(byiv[k]) for k in iv]
+    mins = [POOL / m / 60 for m in me]
     fig, ax = plt.subplots(figsize=(7.2, 4.6))
-    ax.plot(iv, [POOL / m / 60 for m in me], "o-", color=C_DRAM, lw=1.8, ms=5.5)
+    ax.plot(iv, mins, "o-", color=C_DRAM, lw=1.8, ms=5.5, zorder=3)
+    # Drop lines at the two ends so the range is readable off the axes: the
+    # fastest the governor will go, and the interval it actually runs at.
+    for x_, y_ in ((iv[0], mins[0]), (iv[-1], mins[-1])):
+        ax.vlines(x_, 0, y_, color=C_GRID, ls=":", lw=1)
+    for x_, y_ in zip(iv, mins):
+        ax.annotate(f"{y_:.0f}" if y_ >= 10 else f"{y_:.1f}", (x_, y_),
+                    textcoords="offset points", xytext=(0, 8), ha="center",
+                    fontsize=9, color="#3d474e")
     ax.set_ylim(bottom=0)
+    ax.set_xlim(left=0)
     frame(ax, "Time to fill NOR against write interval",
           "Write Interval (ms)", "Time to fill NOR (min)")
     fig.tight_layout(); fig.savefig(f"{OUT}/fig5-time-to-fill.png", dpi=200)
