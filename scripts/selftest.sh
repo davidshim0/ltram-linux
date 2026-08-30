@@ -718,7 +718,7 @@ else
     # Quiet baseline first, engine pinned off.
     setw 0 0; sleep 1
     WIN=25
-    echo "poll_ms,erase_rate_per_s,passes,mean_s,ns_per_line,ratio_vs_quiet" > $CSV
+    echo "poll_ms,erase_rate_per_s,passes,min_ns,p50_ns,mean_ns,p90_ns,max_ns,ratio_vs_quiet" > $CSV
     declare -a WSTART WEND WERA WLAB
     k=0
     e0=$(gs erases_done); t0=$(date +%s.%N); sleep $WIN
@@ -738,30 +738,42 @@ else
     echo 0 | sudo -n tee /sys/kernel/ltram/target_pid >/dev/null
 
     TS=$(awk '/^TSTART/{print $2; exit}' $L)
-    slice(){        # $1 start epoch, $2 end epoch -> "passes mean_s"
+    # Per-pass DISTRIBUTION, not just the mean.
+    #
+    # A mean over a 25 s window cannot tell "every read 8% slower" from "most
+    # reads untouched and a few stalled behind a 16.4 ms erase", and for a
+    # latency-sensitive reader those are completely different systems. A pass
+    # is ~66 ms and at the default an erase lands every ~85 ms, so about one
+    # pass in three collides -- which is visible at pass granularity.
+    slice(){        # $1 start epoch, $2 end epoch -> "n min p50 mean p90 max" (ns/line)
         awk -v ts="$TS" -v a="$1" -v b="$2" '/^POINT/{
-            at = ts + $4; if (at >= a && at <= b) { n++; s += $3 }
-        } END { if (n) printf "%d %.6f", n, s/n; else printf "0 0" }' $L
+            at = ts + $4; if (at >= a && at <= b) print $3
+        }' $L | sort -n | awk -v l="$JLINES" '{v[n++]=$1; s+=$1} END{
+            if(!n){print "0 0 0 0 0 0"; exit}
+            printf "%d %.1f %.1f %.1f %.1f %.1f", n,
+              v[0]*1e9/l, v[int(n*0.5)]*1e9/l, (s/n)*1e9/l,
+              v[int(n*0.9)]*1e9/l, v[n-1]*1e9/l }'
     }
     QUIET=""
+    printf "     %-6s %8s %6s %8s %8s %8s %8s %8s\n" \
+           "poll" "erase/s" "passes" "min" "p50" "mean" "p90" "max"
     for x in $(seq 0 $((k-1))); do
-        read PN PM_ < <(slice "${WSTART[$x]}" "${WEND[$x]}")
+        read PN MIN P50 MEAN P90 MAX < <(slice "${WSTART[$x]}" "${WEND[$x]}")
         [ "$PN" -eq 0 ] && continue
-        NSL=$(awk -v m="$PM_" -v l="$JLINES" 'BEGIN{printf "%.1f", m*1e9/l}')
         DUR=$(awk -v a="${WSTART[$x]}" -v b="${WEND[$x]}" 'BEGIN{printf "%.1f", b-a}')
         ER=$(awk -v e="${WERA[$x]}" -v d="$DUR" 'BEGIN{printf "%.1f", (d>0?e/d:0)}')
-        [ -z "$QUIET" ] && QUIET=$NSL
-        RAT=$(awk -v a="$NSL" -v q="$QUIET" 'BEGIN{printf "%.3f", a/q}')
-        echo "${WLAB[$x]},$ER,$PN,$PM_,$NSL,$RAT" >> $CSV
-        printf "     poll %-4s erases %5.1f/s   %5d passes   %7.1f ns/line   %sx\n" \
-               "${WLAB[$x]}" "$ER" "$PN" "$NSL" "$RAT"
+        [ -z "$QUIET" ] && QUIET=$MEAN
+        RAT=$(awk -v a="$MEAN" -v q="$QUIET" 'BEGIN{printf "%.3f", a/q}')
+        echo "${WLAB[$x]},$ER,$PN,$MIN,$P50,$MEAN,$P90,$MAX,$RAT" >> $CSV
+        printf "     %-6s %8s %6s %8s %8s %8s %8s %8s\n" \
+               "${WLAB[$x]}" "$ER" "$PN" "$MIN" "$P50" "$MEAN" "$P90" "$MAX"
     done
     rm -f $L
 
     ROWS=$(( $(wc -l < $CSV) - 1 ))
     [ "$ROWS" -ge 3 ] && ok "J1 swept $ROWS erase rates against read latency -> $CSV" \
         || no "J1 only $ROWS usable points in the sweep"
-    WORST=$(awk -F, 'NR>1 && $6+0 > m {m=$6+0} END{printf "%.2f", m+0}' $CSV)
+    WORST=$(awk -F, 'NR>1 && $9+0 > m {m=$9+0} END{printf "%.2f", m+0}' $CSV)
     awk -v w="$WORST" 'BEGIN{exit !(w < 4.0)}' \
         && ok "J2 worst case ${WORST}x on cold NOR reads across the sweep" \
         || no "J2 ${WORST}x at the worst erase rate -- spacing is not limiting interference"
