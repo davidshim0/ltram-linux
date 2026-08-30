@@ -68,6 +68,7 @@ if r:
     US = 1000.0                     # ns -> us
     base = next((col(x, "mean_ns", "ns_per_line") for x in r if x["poll_ms"] == "off"), None)
     has_dist = "max_ns" in r[0]
+    has_p99 = "p99_ns" in r[0]
 
     TARGET = 20.0        # the operating point worth quoting
     def at_poll(rows_, target, key):
@@ -103,7 +104,7 @@ if r:
                             label="min to p90 across passes")
         if worst:
             ax.plot(xs, worst, marker="x", ls="none", color=C_NOR, ms=5,
-                    mew=1.2, alpha=.6, label="worst single pass")
+                    mew=1.2, alpha=.6, label="p99" if has_p99 else "worst single pass")
         ax.plot(xs, ys, marker=M_COLD, ls="-", color=C_NOR, lw=1.8, ms=5.5, zorder=3,
                 label="mean" if lo else None)
         if mark and base:
@@ -127,7 +128,7 @@ if r:
          [col(x, "min_ns") / US for x in ra] if has_dist else None,
          [col(x, "p90_ns") / US for x in ra] if has_dist else None,
          "Erases/Second", "fig4-read-vs-erase.png", TITLE, xlim_left=-1.5,
-         worst=[col(x, "max_ns") / US for x in ra] if has_dist else None,
+         worst=[col(x, "p99_ns", "max_ns") / US for x in ra] if has_dist else None,
          mark=(at_poll(r, TARGET, "erase_rate_per_s"), at_poll(r, TARGET, "mean_ns"))
               if at_poll(r, TARGET, "mean_ns") and at_poll(r, TARGET, "erase_rate_per_s") else None)
     made.append("fig4-read-vs-erase")
@@ -139,7 +140,7 @@ if r:
              [col(x, "min_ns") / US for x in rb] if has_dist else None,
              [col(x, "p90_ns") / US for x in rb] if has_dist else None,
              "Erase Interval (ms)", "fig4b-read-vs-interval.png", TITLE, xlim_left=-4,
-             worst=[col(x, "max_ns") / US for x in rb] if has_dist else None,
+             worst=[col(x, "p99_ns", "max_ns") / US for x in rb] if has_dist else None,
              mark=(TARGET, at_poll(rb, TARGET, "mean_ns")) if at_poll(rb, TARGET, "mean_ns") else None)
         made.append("fig4b-read-vs-interval")
 

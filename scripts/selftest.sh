@@ -757,8 +757,12 @@ else
 
     # Quiet baseline first, engine pinned off.
     setw 0 0; sleep 1
-    WIN=25
-    echo "poll_ms,erase_rate_per_s,passes,min_ns,p50_ns,mean_ns,p90_ns,max_ns,ratio_vs_quiet" > $CSV
+    # 60 s, not 25. At ~150 passes p90 was the 15th-worst sample and wobbled
+    # by 100 ns between adjacent settings; p99 would have been the 2nd-worst,
+    # which is max under another name. ~360 passes puts p90 at the 36th and
+    # p99 at the 4th, which is the least that can carry a tail claim.
+    WIN=60
+    echo "poll_ms,erase_rate_per_s,passes,min_ns,p50_ns,mean_ns,p90_ns,p95_ns,p99_ns,max_ns,ratio_vs_quiet" > $CSV
     declare -a WSTART WEND WERA WLAB
     k=0
     e0=$(gs erases_done); t0=$(date +%s.%N); sleep $WIN
@@ -789,31 +793,32 @@ else
         awk -v ts="$TS" -v a="$1" -v b="$2" '/^POINT/{
             at = ts + $4; if (at >= a && at <= b) print $3
         }' $L | sort -n | awk -v l="$JLINES" '{v[n++]=$1; s+=$1} END{
-            if(!n){print "0 0 0 0 0 0"; exit}
-            printf "%d %.1f %.1f %.1f %.1f %.1f", n,
+            if(!n){print "0 0 0 0 0 0 0 0"; exit}
+            printf "%d %.1f %.1f %.1f %.1f %.1f %.1f %.1f", n,
               v[0]*1e9/l, v[int(n*0.5)]*1e9/l, (s/n)*1e9/l,
-              v[int(n*0.9)]*1e9/l, v[n-1]*1e9/l }'
+              v[int(n*0.9)]*1e9/l, v[int(n*0.95)]*1e9/l,
+              v[int(n*0.99)]*1e9/l, v[n-1]*1e9/l }'
     }
     QUIET=""
-    printf "     %-6s %8s %6s %8s %8s %8s %8s %8s\n" \
-           "poll" "erase/s" "passes" "min" "p50" "mean" "p90" "max"
+    printf "     %-6s %8s %6s %8s %8s %8s %8s %8s %8s\n" \
+           "poll" "erase/s" "passes" "min" "p50" "mean" "p90" "p99" "max"
     for x in $(seq 0 $((k-1))); do
-        read PN MIN P50 MEAN P90 MAX < <(slice "${WSTART[$x]}" "${WEND[$x]}")
+        read PN MIN P50 MEAN P90 P95 P99 MAX < <(slice "${WSTART[$x]}" "${WEND[$x]}")
         [ "$PN" -eq 0 ] && continue
         DUR=$(awk -v a="${WSTART[$x]}" -v b="${WEND[$x]}" 'BEGIN{printf "%.1f", b-a}')
         ER=$(awk -v e="${WERA[$x]}" -v d="$DUR" 'BEGIN{printf "%.1f", (d>0?e/d:0)}')
         [ -z "$QUIET" ] && QUIET=$MEAN
         RAT=$(awk -v a="$MEAN" -v q="$QUIET" 'BEGIN{printf "%.3f", a/q}')
-        echo "${WLAB[$x]},$ER,$PN,$MIN,$P50,$MEAN,$P90,$MAX,$RAT" >> $CSV
-        printf "     %-6s %8s %6s %8s %8s %8s %8s %8s\n" \
-               "${WLAB[$x]}" "$ER" "$PN" "$MIN" "$P50" "$MEAN" "$P90" "$MAX"
+        echo "${WLAB[$x]},$ER,$PN,$MIN,$P50,$MEAN,$P90,$P95,$P99,$MAX,$RAT" >> $CSV
+        printf "     %-6s %8s %6s %8s %8s %8s %8s %8s %8s\n" \
+               "${WLAB[$x]}" "$ER" "$PN" "$MIN" "$P50" "$MEAN" "$P90" "$P99" "$MAX"
     done
     rm -f $L
 
     ROWS=$(( $(wc -l < $CSV) - 1 ))
     [ "$ROWS" -ge 3 ] && ok "J1 swept $ROWS erase rates against read latency -> $CSV" \
         || no "J1 only $ROWS usable points in the sweep"
-    WORST=$(awk -F, 'NR>1 && $9+0 > m {m=$9+0} END{printf "%.2f", m+0}' $CSV)
+    WORST=$(awk -F, 'NR>1 && $11+0 > m {m=$11+0} END{printf "%.2f", m+0}' $CSV)
     awk -v w="$WORST" 'BEGIN{exit !(w < 4.0)}' \
         && ok "J2 worst case ${WORST}x on cold NOR reads across the sweep" \
         || no "J2 ${WORST}x at the worst erase rate -- spacing is not limiting interference"
