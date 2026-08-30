@@ -138,11 +138,9 @@ for cm, dm, lab, c, ls in [("nor_cold", "dram_cold",
     n, r = col(cm), col(dm)
     ax.plot(sizes, [x / y if y else float("nan") for x, y in zip(n, r)],
             ls, color=c, lw=2, label=lab)
-ax.axhline(1.0, color="#868E8A", lw=0.9, ls=":")
-ax.text(sizes[0], 1.03, "no penalty", fontsize=7.5, color="#868E8A")
 ax.set_ylim(bottom=0)
 frame(ax, "End-to-end performance ratio (NOR / DRAM)", "times slower than DRAM")
-legend_by_last(ax, fontsize=9.5, loc="upper left", frameon=False)
+legend_by_last(ax, fontsize=9.5, loc="center left", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig2-slowdown.png", dpi=160)
 
 # --------------------------------------------------------------- 3. share ---
