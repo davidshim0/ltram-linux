@@ -251,28 +251,42 @@ if r:
     # Shade the three regimes rather than drawing three separate series: it is
     # one continuous workload and the point is that nothing about it changed
     # except where its pages live.
-    # Trim the tail: 60 s of the flash regime is enough to show it settled.
+    # Keep 60 s of the settled regime: long enough to show the overshoot come
+    # back down, short enough that it does not dominate the axis.
     p3i = [i for i, q in enumerate(ph) if q == 3]
     if p3i:
         cut = t[p3i[0]] + 60
         keep = [i for i, x in enumerate(t) if x <= cut]
         t = [t[i] for i in keep]; ns = [ns[i] for i in keep]; ph = [ph[i] for i in keep]
 
-    for p_, col_, lab in ((1, "#1F5F7A", "DRAM"), (2, "#8a5320", "migrating"),
-                          (3, "#9E2F33", "flash")):
+    fig, ax = plt.subplots(figsize=(9.5, 5.2))
+    top = max(ns) * 1.16
+    for p_, lab in ((1, "DRAM"), (2, "Migrating"), (3, "Flash")):
         xs = [x for x, q in zip(t, ph) if q == p_]
         if not xs: continue
-        # A thin divider at each boundary, not a wash of colour across the
-        # whole canvas. Three filled bands of comparable width leave nothing
-        # unshaded, so the tint stops distinguishing anything.
         if p_ > 1:
-            ax.axvline(min(xs), color=C_GRID, ls=":", lw=1)
+            ax.axvline(min(xs), color=C_GRID, ls=":", lw=1, zorder=1)
         mean = sum(y for y, q in zip(ns, ph) if q == p_) / len(xs)
-        ax.annotate(f"{lab}\n{mean:.0f}ns", ((min(xs) + max(xs)) / 2, max(ns) * 0.97),
-                    ha="center", va="top", fontsize=10, color=col_, fontweight="medium")
-    ax.plot(t, ns, "-", color="#3d474e", lw=.8, alpha=.55, zorder=3)
-    ax.set_ylim(bottom=0)
+        # One colour, one case, one size: these name regions of the axis, they
+        # are not data and should not compete with the curve.
+        ax.annotate(f"{lab}\n{mean:.0f} ns", ((min(xs) + max(xs)) / 2, top * 0.985),
+                    ha="center", va="top", fontsize=10.5, color="#3d474e")
+    ax.plot(t, ns, "-", color=C_NOR, lw=1.7, solid_joinstyle="round", zorder=3)
 
+    # The overshoot is the finding: at the end of migration the medium is
+    # already all flash, so the excess over the settled value is what active
+    # promotion costs a concurrent reader.
+    pk = max(range(len(ns)), key=lambda k: ns[k])
+    settled = sum(y for y, q in zip(ns, ph) if q == 3) / max(1, sum(1 for q in ph if q == 3))
+    ax.plot([t[pk]], [ns[pk]], "o", color=C_NOR, ms=6, zorder=4)
+    ax.annotate(f"{ns[pk]:.0f} ns while still promoting\n"
+                f"{ns[pk]-settled:+.0f} ns over settled",
+                (t[pk], ns[pk]), textcoords="offset points", xytext=(-14, 10),
+                ha="right", fontsize=9, color=C_NOR,
+                arrowprops=dict(arrowstyle="-", color=C_NOR, lw=.9,
+                                shrinkA=0, shrinkB=3))
+    ax.set_ylim(0, top)
+    ax.set_xlim(left=0)
     frame(ax, "Latency change over migration phases",
           "Time (sec)", "Average Latency per Cache line (ns)")
     fig.tight_layout(); fig.savefig(f"{OUT}/fig7-transition-timeline.png", dpi=160)
