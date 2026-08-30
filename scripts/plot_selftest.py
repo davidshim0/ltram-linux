@@ -21,7 +21,11 @@ import matplotlib.pyplot as plt
 ap = argparse.ArgumentParser()
 ap.add_argument("dir"); ap.add_argument("-o", "--out", default=None)
 a = ap.parse_args(); OUT = a.out or a.dir
+# Same language as the sweep figures: colour is the medium, shape is the
+# cache state, reference lines are grey so nothing but data wears a data
+# colour.
 C_NOR, C_DRAM, C_MODEL, C_GRID = "#9E2F33", "#1F5F7A", "#6B7280", "#868E8A"
+M_COLD, M_WARM, M_COMP = "o", "^", "s"
 
 def rows(name, delim=","):
     p = os.path.join(a.dir, name)
@@ -91,13 +95,14 @@ if r:
         if lo and hi:
             ax.fill_between(xs, lo, hi, color=C_NOR, alpha=.15, lw=0,
                             label="min to max across passes")
-        ax.plot(xs, ys, "o-", color=C_NOR, lw=1.8, ms=5.5, zorder=3,
+        ax.plot(xs, ys, marker=M_COLD, ls="-", color=C_NOR, lw=1.8, ms=5.5, zorder=3,
                 label="mean" if lo else None)
         if mark and base:
             mx_, my_ = mark
-            ax.plot([mx_], [my_ / US], "o", color="#0f6b70", ms=6.5, zorder=5)
+            ax.plot([mx_], [my_ / US], marker=M_COLD, ls="none", color=C_NOR, ms=8,
+                    mfc="none", mew=2, zorder=5)
             ax.annotate(f"{TARGET:.0f} ms:  {my_/US:.2f} us  (+{(my_/base-1)*100:.0f}%)",
-                        (mx_, my_ / US), fontsize=9, color="#0f6b70",
+                        (mx_, my_ / US), fontsize=9, color="#3d474e",
                         ha="left", va="bottom", xytext=(8, 6),
                         textcoords="offset points")
         ax.set_ylim(bottom=0)
@@ -152,10 +157,10 @@ if r:
     # Promotion cannot outrun recycling for long: every promoted page needs an
     # erase eventually, so a write interval shorter than the erase period
     # drains the pool faster than the engine can refill it.
-    ax.axvline(ERASE_MS, color=C_NOR, ls="-.", lw=1.2)
-    ax.axvline(DEFAULT_MS, color="#0f6b70", ls="--", lw=1.2)
+    ax.axvline(ERASE_MS, color=C_GRID, ls="-.", lw=1.2)
+    ax.axvline(DEFAULT_MS, color=C_GRID, ls="--", lw=1.2)
 
-    ax.plot(iv, mins, "o-", color=C_DRAM, lw=1.8, ms=5.5, zorder=3)
+    ax.plot(iv, mins, marker=M_COLD, ls="-", color=C_NOR, lw=1.8, ms=5.5, zorder=3)
     for x_, y_ in zip(iv, mins):
         ax.vlines(x_, 0, y_, color=C_GRID, ls=":", lw=.9, zorder=1)
         ax.annotate(f"{y_:.0f}" if y_ >= 10 else f"{y_:.1f}", (x_, y_),
@@ -167,10 +172,10 @@ if r:
     ax.set_xticks(sorted(set(iv)))
     ax.set_xticklabels([f"{v:g}" for v in sorted(set(iv))])
     top = ax.get_ylim()[1]
-    ax.annotate(f"erase limit\n{ERASE_MS:g} ms", (ERASE_MS, top), color=C_NOR,
+    ax.annotate(f"erase limit\n{ERASE_MS:g} ms", (ERASE_MS, top), color=C_GRID,
                 fontsize=8.5, ha="right", va="top", xytext=(-4, -4),
                 textcoords="offset points")
-    ax.annotate(f"5-year default\n{DEFAULT_MS:g} ms", (DEFAULT_MS, top), color="#0f6b70",
+    ax.annotate(f"5-year default\n{DEFAULT_MS:g} ms", (DEFAULT_MS, top), color=C_GRID,
                 fontsize=8.5, ha="left", va="top", xytext=(4, -4),
                 textcoords="offset points")
     frame(ax, "Time to fill NOR against write interval",
@@ -224,12 +229,12 @@ if r and len(r) > 2:
         mean = [float(x["mean"]) for x in ok_]
         med = [float(x["median"]) for x in ok_] if ok_[0].get("median", "?") not in ("?", "", None) else None
         fig, ax = plt.subplots(figsize=(7.2, 4.6))
-        ax.fill_between(tot, mn, mx, color=C_DRAM, alpha=.15, lw=0)
+        ax.fill_between(tot, mn, mx, color=C_NOR, alpha=.13, lw=0)
         ax.plot(tot, mx, "-", color=C_NOR, lw=1.6, label="max")
         ax.plot(tot, mean, color=C_MODEL, lw=1.3, ls="--", label="mean")
         if med:
-            ax.plot(tot, med, color="#0f6b70", lw=1.3, ls=":", label="median")
-        ax.plot(tot, mn, "-", color=C_DRAM, lw=1.6, label="min")
+            ax.plot(tot, med, color=C_COMP if "C_COMP" in dir() else C_MODEL, lw=1.3, ls=":", label="median")
+        ax.plot(tot, mn, "-", color=C_NOR, lw=1.6, label="min")
         ax.set_ylim(bottom=0)
         frame(ax, "Wear Spread",
               "Total erases on NOR (millions)", "Erase Count of a Single Page")

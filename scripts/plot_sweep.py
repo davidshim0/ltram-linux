@@ -27,7 +27,20 @@ NOR = 256 * 1024**2
 # ADDED to the floor at every size. That direction understates the memory
 # terms slightly and uniformly, which is the harmless way round.
 
-C_COMP, C_DRAM, C_NOR = "#6B7280", "#1F5F7A", "#9E2F33"
+# ONE visual language across every figure in this project.
+#
+#   colour  which medium      NOR/flash red, DRAM blue, compute grey
+#   shape   cache state       cold circle, warm triangle, compute square
+#   line    always solid      colour and shape already carry the meaning
+#
+# Two encodings, not three. Warm and cold coincide above the LLC -- that is
+# the finding -- and a triangle sitting on a circle shows both are present
+# where a second filled circle would simply hide one.
+#
+# Reference lines and annotations are grey, so nothing that is not data ever
+# borrows a data colour.
+C_NOR, C_DRAM, C_COMP, C_GRID = "#9E2F33", "#1F5F7A", "#6B7280", "#868E8A"
+M_COLD, M_WARM, M_COMP = "o", "^", "s"
 
 ap = argparse.ArgumentParser()
 ap.add_argument("csv"); ap.add_argument("-d", "--dir", default="docs/figures")
@@ -104,9 +117,10 @@ wd = [t - c for t, c in zip(col("dram_cold"), comp)]
 wn = [t - c for t, c in zip(col("nor_cold"), comp)]
 
 fig, ax = plt.subplots(figsize=(9, 5.6))
-ax.plot(sizes, wn,   "o-", color=C_NOR,  lw=2, label="NOR access latency")
-ax.plot(sizes, wd,   "o-", color=C_DRAM, lw=2, label="DRAM access latency")
-ax.plot(sizes, comp, "s--", color=C_COMP, lw=1.6, label="Compute")
+ax.plot(sizes, wn, marker=M_COLD, ls="-", color=C_NOR,  lw=2, ms=6, label="NOR access latency")
+ax.plot(sizes, wd, marker=M_COLD, ls="-", color=C_DRAM, lw=2, ms=6, label="DRAM access latency")
+ax.plot(sizes, comp, marker=M_COMP, ls="-", color=C_COMP, lw=1.6, ms=6,
+        label="Compute")
 ax.set_ylim(bottom=0)
 frame(ax, "Execution time", "seconds per pass",
       "Components, not totals: a pass on either medium is Compute plus that medium's access "
@@ -119,9 +133,10 @@ fig.tight_layout(); fig.savefig(f"{a.dir}/fig1-execution-time.png", dpi=160)
 # three orders of magnitude below 64 MB entirely, which is where the cache
 # crossover happens. Both are worth having.
 fig, ax = plt.subplots(figsize=(9, 5.6))
-ax.plot(sizes, wn,   "o-", color=C_NOR,  lw=2, label="NOR access latency")
-ax.plot(sizes, wd,   "o-", color=C_DRAM, lw=2, label="DRAM access latency")
-ax.plot(sizes, comp, "s--", color=C_COMP, lw=1.6, label="Compute")
+ax.plot(sizes, wn, marker=M_COLD, ls="-", color=C_NOR,  lw=2, ms=6, label="NOR access latency")
+ax.plot(sizes, wd, marker=M_COLD, ls="-", color=C_DRAM, lw=2, ms=6, label="DRAM access latency")
+ax.plot(sizes, comp, marker=M_COMP, ls="-", color=C_COMP, lw=1.6, ms=6,
+        label="Compute")
 ax.set_yscale("log")
 frame(ax, "Execution time (log scale)", "seconds per pass",
       "The same three curves. On a log axis the constant vertical gap between the two access "
@@ -151,16 +166,14 @@ fig, ax = plt.subplots(figsize=(9, 5.6))
 # and two filled markers of the same shape simply hide one another. A hollow
 # marker over a filled one shows both are there, which a third shape or a
 # dashed line cannot do.
-for mode, lab, c, mk, filled in [("nor_cold",  "NOR, cold cache",  C_NOR,  "o", True),
-                                 ("nor_warm",  "NOR, warm cache",  C_NOR,  "o", False),
-                                 ("dram_cold", "DRAM, cold cache", C_DRAM, "s", True),
-                                 ("dram_warm", "DRAM, warm cache", C_DRAM, "s", False)]:
+for mode, lab, c, mk in [("nor_cold",  "NOR, cold cache",  C_NOR,  M_COLD),
+                         ("nor_warm",  "NOR, warm cache",  C_NOR,  M_WARM),
+                         ("dram_cold", "DRAM, cold cache", C_DRAM, M_COLD),
+                         ("dram_warm", "DRAM, warm cache", C_DRAM, M_WARM)]:
     t = col(mode)
     ax.plot(sizes, [100 * (x - k) / x if x and x > k else float("nan")
                     for x, k in zip(t, comp)],
-            marker=mk, ls="-", color=c, lw=1.6, ms=6.5,
-            mfc=(c if filled else "none"), mec=c, mew=1.5,
-            label=lab, alpha=0.95, zorder=(3 if filled else 4))
+            marker=mk, ls="-", color=c, lw=1.6, ms=6.5, label=lab, alpha=0.95)
 ax.set_ylim(0, 100)
 frame(ax, "Memory access latency as a share of total run time", "% of the pass spent reaching the weights",
       "Measured as (total minus compute) over total, with the compute floor held L1-resident "
