@@ -265,7 +265,7 @@ if r:
 
     fig, ax = plt.subplots(figsize=(9.5, 5.2))
     top = max(ns) * 1.16
-    for p_, lab in ((1, "DRAM"), (2, "Migrating"), (3, "Flash")):
+    for p_, lab in ((1, "DRAM"), (2, "Migrating"), (3, "NOR")):
         xs = [x for x, q in zip(t, ph) if q == p_]
         if not xs: continue
         if p_ > 1:
@@ -309,9 +309,9 @@ if r:
         t = [t[i] for i in keep]; ns = [ns[i] for i in keep]; ph = [ph[i] for i in keep]
 
     fig, ax = plt.subplots(figsize=(10, 5.4))
-    PH = ((1, C_DRAM, "DRAM"), (2, "#8a5320", "migrating"),
-          (3, C_DRAM, "evicted"), (4, "#7a2f10", "migrating\n(erase-gated)"),
-          (5, C_NOR, "flash"))
+    PH = ((1, C_DRAM, "DRAM"), (2, "#8a5320", "Migrating"),
+          (3, C_DRAM, "Evicted"), (4, "#7a2f10", "Migrating\n(erase-gated)"),
+          (5, C_NOR, "NOR"))
     for p_, col_, lab in PH:
         xs = [x for x, q in zip(t, ph) if q == p_]
         if not xs: continue
