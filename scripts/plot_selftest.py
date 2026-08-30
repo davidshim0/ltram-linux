@@ -11,7 +11,7 @@ Reads whatever is present and skips the rest, so a partial run still plots:
   promote-rate.csv    achieved promotion rate against the configured budget
                       interval, with the model 1000/(interval + 3 ms) drawn
                       through it -- the 3 ms is scan plus migration per tick.
-  fill-curve.csv      residency against time for one fill.
+  timeline.csv        one workload across DRAM, migrating and flash.
   wear-history.tsv    spread against mean over the campaign. Falling means
                       wear levelling is tightening.
 """
@@ -174,17 +174,6 @@ if r:
           "promotion interval (ms between promotions)", "minutes")
     fig.tight_layout(); fig.savefig(f"{OUT}/selftest-time-to-fill.png", dpi=160)
     made.append("time-to-fill")
-
-r = rows("fill-curve.csv")
-if r:
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot([float(x["seconds"]) for x in r], [float(x["residency_pct"]) for x in r],
-            "-", color=C_NOR, lw=2)
-    ax.set_ylim(0, 100)
-    frame(ax, "Filling flash: residency against time", "seconds since the fill started",
-          "% of the weights in flash",
-          "One promotion per tick at the configured budget. A fall would mean pages demoted while still filling.")
-    fig.tight_layout(); fig.savefig(f"{OUT}/selftest-fill-curve.png", dpi=160); made.append("fill-curve")
 
 r = rows("timeline.csv")
 if r:
