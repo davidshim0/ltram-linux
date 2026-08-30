@@ -168,7 +168,7 @@ if r:
     for xv, lab in ((WRITE_MS, "write limit"), (ERASE_MS, "erase limit"),
                     (DEFAULT_MS, "5-year default")):
         ax.axvline(xv, color=C_GRID, ls="--", lw=1.1, zorder=0)
-        ax.annotate(f"{lab}, {xv:g}ms", (xv, bot), color=C_GRID, fontsize=8,
+        ax.annotate(lab, (xv, bot), color=C_GRID, fontsize=8,
                     ha="right", va="bottom", rotation=90,
                     xytext=(-3, 6), textcoords="offset points")
     frame(ax, "Time to fill NOR against write interval",
