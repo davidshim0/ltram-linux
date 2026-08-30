@@ -233,24 +233,28 @@ if r:
     ns = [float(x["ns_per_line"]) for x in r]
     ph = [int(x["phase"]) for x in r]
 
-    # DERIVE where migration ended rather than trusting the recorded boundary.
-    # The harness marks phase 3 when its residency poll reports 99%, and when
-    # that poll had no data to read it ran to its iteration cap -- putting the
-    # boundary 1,500 s after the medium had already changed. The latency curve
-    # itself says when: the first pass within 2% of the flash mean.
-    p1 = [v for v, q in zip(ns, ph) if q == 1]
-    p3 = [v for v, q in zip(ns, ph) if q == 3]
-    if p1 and p3:
-        lo, hi = sum(p1) / len(p1), sum(p3) / len(p3)
-        thresh = lo + 0.98 * (hi - lo)
-        cross = next((i for i, (v, q) in enumerate(zip(ns, ph)) if q >= 2 and v >= thresh), None)
-        if cross is not None:
-            ph = [q if q == 1 else (2 if i <= cross else 3) for i, q in enumerate(ph)]
-    fig, ax = plt.subplots(figsize=(9.5, 5.4))
+    # Trust the recorded boundary when the run could actually see residency,
+    # and only fall back to deriving one when it could not.
+    #
+    # The derivation -- first pass within 2% of the flash mean -- was written
+    # when RESID was being emitted from the chase branch, so the harness never
+    # saw 99% and marked the boundary 1,500 s late. With residency working it
+    # is worse than useless: the migration OVERSHOOTS the settled value, so
+    # "first within 2% of it" fires during the climb. On this run that put the
+    # boundary at 322 s instead of 406 s and folded the overshoot and the drop
+    # into a "flash" phase averaging 1036 ns, which is neither.
+    if not any(x["resid_pct"] for x in r):
+        p1 = [v for v, q in zip(ns, ph) if q == 1]
+        p3 = [v for v, q in zip(ns, ph) if q == 3]
+        if p1 and p3:
+            lo, hi = sum(p1) / len(p1), sum(p3) / len(p3)
+            thresh = lo + 0.98 * (hi - lo)
+            cross = next((i for i, (v, q) in enumerate(zip(ns, ph))
+                          if q >= 2 and v >= thresh), None)
+            if cross is not None:
+                ph = [q if q == 1 else (2 if i <= cross else 3)
+                      for i, q in enumerate(ph)]
 
-    # Shade the three regimes rather than drawing three separate series: it is
-    # one continuous workload and the point is that nothing about it changed
-    # except where its pages live.
     # Keep 60 s of the settled regime: long enough to show the overshoot come
     # back down, short enough that it does not dominate the axis.
     p3i = [i for i, q in enumerate(ph) if q == 3]
