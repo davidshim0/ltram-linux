@@ -59,6 +59,24 @@ def human(b, _=None):
             return f"{v:.1f} {u}"
     return f"{b} B"
 
+def legend_by_last(ax, **kw):
+    """Legend entries in the order the lines finish, top to bottom.
+
+    A reader's eye goes from the right-hand end of a curve to the legend, so a
+    legend in call order rather than visual order makes them do the matching
+    by hand. Sorting by each line's last finite y removes that, and keeps
+    doing so when the data changes.
+    """
+    h, l = ax.get_legend_handles_labels()
+    def lasty(handle):
+        try:
+            ys = [v for v in handle.get_ydata() if v == v]
+            return ys[-1] if ys else float("-inf")
+        except Exception:
+            return float("-inf")
+    order = sorted(range(len(h)), key=lambda i: -lasty(h[i]))
+    ax.legend([h[i] for i in order], [l[i] for i in order], **kw)
+
 def frame(ax, title, ylab, note=None):
     ax.set_xscale("log", base=2)
     ax.set_xticks(sizes); ax.xaxis.set_major_formatter(FuncFormatter(human))
@@ -94,7 +112,7 @@ frame(ax, "Execution time", "seconds per pass",
       "Components, not totals: a pass on either medium is Compute plus that medium's access "
       "latency.\nCompute is identical work in both cases. Linear axis, so everything below "
       "64 MB sits on the baseline. See fig1b for those.")
-ax.legend(fontsize=9.5, loc="upper left", frameon=False)
+legend_by_last(ax, fontsize=9.5, loc="upper left", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig1-execution-time.png", dpi=160)
 
 # Same data, log y. Linear is honest about how steeply cost grows and hides the
@@ -108,7 +126,7 @@ ax.set_yscale("log")
 frame(ax, "Execution time (log scale)", "seconds per pass",
       "The same three curves. On a log axis the constant vertical gap between the two access "
       "latencies\nis the medium ratio, and it holds from 32 KB to 64 MB.")
-ax.legend(fontsize=9.5, loc="upper left", frameon=False)
+legend_by_last(ax, fontsize=9.5, loc="upper left", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig1b-execution-time-log.png", dpi=160)
 
 # ------------------------------------------------------------ 2. slowdown ---
@@ -124,7 +142,7 @@ ax.axhline(1.0, color="#868E8A", lw=0.9, ls=":")
 ax.text(sizes[0], 1.03, "no penalty", fontsize=7.5, color="#868E8A")
 ax.set_ylim(bottom=0)
 frame(ax, "End-to-end performance ratio (NOR / DRAM)", "times slower than DRAM")
-ax.legend(fontsize=9.5, loc="upper left", frameon=False)
+legend_by_last(ax, fontsize=9.5, loc="upper left", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig2-slowdown.png", dpi=160)
 
 # --------------------------------------------------------------- 3. share ---
@@ -152,7 +170,7 @@ frame(ax, "Memory access latency as a share of total run time", "% of the pass s
       "per access costs only ~4.6x end to end.")
 # Lower right: the warm and cold curves have converged by then, so nothing
 # else is down there. Centre left sat on top of the DRAM cold curve.
-ax.legend(fontsize=9, loc="lower right", frameon=False)
+legend_by_last(ax, fontsize=9, loc="lower right", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig3-memory-share.png", dpi=160)
 
 print(f"wrote {a.dir}/fig1, fig1b, fig2, fig3")

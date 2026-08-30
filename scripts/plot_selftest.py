@@ -28,6 +28,24 @@ def rows(name, delim=","):
     if not os.path.exists(p): return None
     with open(p) as f: return list(csv.DictReader(f, delimiter=delim))
 
+def legend_by_last(ax, **kw):
+    """Legend entries in the order the lines finish, top to bottom.
+
+    A reader's eye goes from the right-hand end of a curve to the legend, so a
+    legend in call order rather than visual order makes them do the matching
+    by hand. Sorting by each line's last finite y removes that, and keeps
+    doing so when the data changes.
+    """
+    h, l = ax.get_legend_handles_labels()
+    def lasty(handle):
+        try:
+            ys = [v for v in handle.get_ydata() if v == v]
+            return ys[-1] if ys else float("-inf")
+        except Exception:
+            return float("-inf")
+    order = sorted(range(len(h)), key=lambda i: -lasty(h[i]))
+    ax.legend([h[i] for i in order], [l[i] for i in order], **kw)
+
 def frame(ax, title, xl, yl, note=None):
     ax.set_title(title, fontsize=13, weight="semibold", pad=10)
     ax.set_xlabel(xl); ax.set_ylabel(yl); ax.grid(alpha=.25, lw=.5)
@@ -84,7 +102,7 @@ if r:
                         textcoords="offset points")
         ax.set_ylim(bottom=0)
         if xlim_left is not None: ax.set_xlim(left=xlim_left)
-        if lo: ax.legend(fontsize=9, frameon=False, loc="upper left")
+        if lo: legend_by_last(ax, fontsize=9, frameon=False, loc="upper left")
         frame(ax, title, xlab, "NOR Read Latency (us)")
         fig.tight_layout(); fig.savefig(f"{OUT}/{fname}", dpi=200)
 
@@ -215,7 +233,7 @@ if r and len(r) > 2:
         ax.set_ylim(bottom=0)
         frame(ax, "Wear Spread",
               "Total erases on NOR (millions)", "Erase Count of a Single Page")
-        ax.legend(fontsize=9, frameon=False, loc="upper left")
+        legend_by_last(ax, fontsize=9, frameon=False, loc="upper left")
         fig.tight_layout(); fig.savefig(f"{OUT}/fig6-wear-spread.png", dpi=200)
         made.append("fig6-wear-spread")
 
