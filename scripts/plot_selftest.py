@@ -160,6 +160,41 @@ if r:
           "One promotion per tick at the configured budget. A fall would mean pages demoted while still filling.")
     fig.tight_layout(); fig.savefig(f"{OUT}/selftest-fill-curve.png", dpi=160); made.append("fill-curve")
 
+r = rows("timeline.csv")
+if r:
+    t = [float(x["elapsed_s"]) for x in r]
+    ns = [float(x["ns_per_line"]) for x in r]
+    ph = [int(x["phase"]) for x in r]
+    fig, ax = plt.subplots(figsize=(9.5, 5.4))
+
+    # Shade the three regimes rather than drawing three separate series: it is
+    # one continuous workload and the point is that nothing about it changed
+    # except where its pages live.
+    for p_, col_, lab in ((1, "#1F5F7A", "DRAM"), (2, "#8a5320", "migrating"), (3, "#9E2F33", "flash")):
+        xs = [x for x, q in zip(t, ph) if q == p_]
+        if not xs: continue
+        ax.axvspan(min(xs), max(xs), color=col_, alpha=.07, lw=0)
+        mid = (min(xs) + max(xs)) / 2
+        mean = sum(y for y, q in zip(ns, ph) if q == p_) / len(xs)
+        ax.hlines(mean, min(xs), max(xs), color=col_, lw=2, zorder=4)
+        ax.annotate(f"{lab}\n{mean:.0f} ns/line", (mid, mean), ha="center", va="bottom",
+                    fontsize=9.5, color=col_, fontweight="medium",
+                    xytext=(0, 8), textcoords="offset points")
+    ax.plot(t, ns, "-", color="#3d474e", lw=.8, alpha=.55, zorder=3)
+    ax.set_ylim(bottom=0)
+
+    rr = [(float(x["elapsed_s"]), float(x["resid_pct"])) for x in r if x["resid_pct"]]
+    if rr:
+        ax2 = ax.twinx()
+        ax2.plot([a for a, _ in rr], [b for _, b in rr], "-", color="#0f6b70", lw=1.8)
+        ax2.set_ylabel("% of the weights in flash", color="#0f6b70")
+        ax2.tick_params(axis="y", colors="#0f6b70")
+        ax2.set_ylim(0, 105)
+    frame(ax, "One workload, three regimes: DRAM, migrating, flash",
+          "seconds", "ns per cache line")
+    fig.tight_layout(); fig.savefig(f"{OUT}/selftest-timeline.png", dpi=160)
+    made.append("timeline")
+
 r = rows("wear-history.tsv", "\t")
 if r and len(r) > 2:
     ok = [x for x in r if x.get("mean", "?") not in ("?", "", None)]
