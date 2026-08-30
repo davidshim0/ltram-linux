@@ -99,12 +99,12 @@ wear_row(){
     # Rotate on a schema change rather than appending rows the header does not
     # describe. Adding the median column while the old header stood put its
     # values under "buckets" and shifted every column after it.
-    HDR="when\tevent\ttotal\tmin\tmax\tspread\tmean\tmedian\tbuckets\tdata\tdirty\tclean"
-    if [ -f $HIST ] && [ "$(head -1 $HIST)" != "$(echo -e "$HDR")" ]; then
+    WHDR="when\tevent\ttotal\tmin\tmax\tspread\tmean\tmedian\tbuckets\tdata\tdirty\tclean"
+    if [ -f $HIST ] && [ "$(head -1 $HIST)" != "$(echo -e "$WHDR")" ]; then
         mv -f $HIST "$HIST.$(date +%Y%m%d%H%M%S).old"
         note "wear history schema changed; previous file kept alongside"
     fi
-    [ -f $HIST ] || echo -e "$HDR" > $HIST
+    [ -f $HIST ] || echo -e "$WHDR" > $HIST
     printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
       "$(date -Iseconds)" "$ev" "${tot:-?}" "${mn:-?}" "${mx:-?}" "${sp:-?}" \
       "$(awk -v t="${tot:-0}" 'BEGIN{printf "%.1f", t/65536}')" "${md:-?}" "${nb:-?}" \
