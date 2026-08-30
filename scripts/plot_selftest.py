@@ -166,9 +166,24 @@ if r:
     ax.set_xticks(sorted(set(iv)))
     ax.set_xticklabels([f"{v:g}" for v in sorted(set(iv))])
     bot = ax.get_ylim()[0]
+    def yat(xv):
+        """Curve height at xv: measured if we have it, linear between if not."""
+        pts = sorted(zip(iv, mins))
+        for px, py in pts:
+            if abs(px - xv) < 1e-9:
+                return py
+        lo_ = max((t for t in pts if t[0] < xv), default=None)
+        hi_ = min((t for t in pts if t[0] > xv), default=None)
+        if not lo_ or not hi_:
+            return max(mins)
+        return lo_[1] + (xv - lo_[0]) / (hi_[0] - lo_[0]) * (hi_[1] - lo_[1])
+
     for xv, lab in ((WRITE_MS, "write limit"), (ERASE_MS, "erase limit"),
                     (DEFAULT_MS, "5-year default")):
-        ax.axvline(xv, color=C_GRID, ls="--", lw=1.1, zorder=0)
+        # Stop at the curve. A full-height line implies the reference means
+        # something above the data, and it does not -- it marks an interval,
+        # which is an x, and the curve is where that interval lands.
+        ax.vlines(xv, 0, yat(xv), color=C_GRID, ls="--", lw=1.1, zorder=0)
         ax.annotate(lab, (xv, bot), color=C_GRID, fontsize=8,
                     ha="right", va="bottom", rotation=90,
                     xytext=(-3, 6), textcoords="offset points")
