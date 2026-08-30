@@ -161,13 +161,16 @@ fig.tight_layout(); fig.savefig(f"{a.dir}/fig1b-execution-time-log.png", dpi=160
 
 # ------------------------------------------------------------ 2. slowdown ---
 fig, ax = plt.subplots(figsize=(9, 5.6))
-for cm, dm, lab, c, ls in [("nor_cold", "dram_cold",
-                            "Cold cache: LLC flushed before every pass", C_NOR, "o-"),
-                           ("nor_warm", "dram_warm",
-                            "Warm cache: reuse across passes allowed", "#96631A", "s--")]:
+# Both curves are the SAME NOR/DRAM ratio, so both are NOR red; the shape says
+# cold or warm, exactly as in fig3. The brown dashed variant this replaces
+# implied a third medium that does not exist.
+for cm, dm, lab, mk in [("nor_cold", "dram_cold",
+                         "Cold cache: LLC flushed before every pass", M_COLD),
+                        ("nor_warm", "dram_warm",
+                         "Warm cache: reuse across passes allowed", M_WARM)]:
     n, r = col(cm), col(dm)
     ax.plot(sizes, [x / y if y else float("nan") for x, y in zip(n, r)],
-            ls, color=c, lw=2, label=lab)
+            marker=mk, ls="-", color=C_NOR, lw=2, ms=6.5, label=lab)
 ax.set_ylim(bottom=0)
 frame(ax, "End-to-end performance ratio (NOR / DRAM)", "times slower than DRAM")
 legend_by_last(ax, fontsize=9.5, loc="center left", frameon=False)
