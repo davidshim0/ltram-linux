@@ -129,19 +129,30 @@ fig.tight_layout(); fig.savefig(f"{a.dir}/fig2-slowdown.png", dpi=160)
 
 # --------------------------------------------------------------- 3. share ---
 fig, ax = plt.subplots(figsize=(9, 5.6))
-for mode, lab, c, ls in [("nor_cold",  "NOR, cold cache",  C_NOR,  "o-"),
-                         ("nor_warm",  "NOR, warm cache",  C_NOR,  "s--"),
-                         ("dram_cold", "DRAM, cold cache", C_DRAM, "o-"),
-                         ("dram_warm", "DRAM, warm cache", C_DRAM, "s--")]:
+# SHAPE is the medium, FILL is the cache state, and every line is solid.
+#
+# Cold and warm coincide above the LLC -- that is the point of the figure --
+# and two filled markers of the same shape simply hide one another. A hollow
+# marker over a filled one shows both are there, which a third shape or a
+# dashed line cannot do.
+for mode, lab, c, mk, filled in [("nor_cold",  "NOR, cold cache",  C_NOR,  "o", True),
+                                 ("nor_warm",  "NOR, warm cache",  C_NOR,  "o", False),
+                                 ("dram_cold", "DRAM, cold cache", C_DRAM, "s", True),
+                                 ("dram_warm", "DRAM, warm cache", C_DRAM, "s", False)]:
     t = col(mode)
     ax.plot(sizes, [100 * (x - k) / x if x and x > k else float("nan")
-                    for x, k in zip(t, comp)], ls, color=c, lw=1.8, label=lab, alpha=0.95)
+                    for x, k in zip(t, comp)],
+            marker=mk, ls="-", color=c, lw=1.6, ms=6.5,
+            mfc=(c if filled else "none"), mec=c, mew=1.5,
+            label=lab, alpha=0.95, zorder=(3 if filled else 4))
 ax.set_ylim(0, 100)
 frame(ax, "Memory access latency as a share of total run time", "% of the pass spent reaching the weights",
       "Measured as (total minus compute) over total, with the compute floor held L1-resident "
       "at every size.\nOn DRAM it is roughly half the pass, which is why a medium ~9x slower "
       "per access costs only ~4.6x end to end.")
-ax.legend(fontsize=9.5, loc="center left", frameon=False)
+# Lower right: the warm and cold curves have converged by then, so nothing
+# else is down there. Centre left sat on top of the DRAM cold curve.
+ax.legend(fontsize=9, loc="lower right", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig3-memory-share.png", dpi=160)
 
 print(f"wrote {a.dir}/fig1, fig1b, fig2, fig3")
