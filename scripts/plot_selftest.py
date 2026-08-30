@@ -149,6 +149,24 @@ if r:
     fig.tight_layout(); fig.savefig(f"{OUT}/selftest-promote-rate.png", dpi=160)
     made.append("promote-rate")
 
+    # Same data, the question actually asked: how long to fill the flash.
+    # pool / rate, so it assumes a working set large enough that the scanner
+    # never runs short of candidates -- which is the case that matters, since
+    # a fill that stalls for want of candidates is not measuring the pacing.
+    POOL = 65536
+    fig, ax = plt.subplots(figsize=(8.5, 5.2))
+    mins = [POOL / m / 60 for m in me]
+    ax.plot(iv, mins, "o-", color=C_DRAM, lw=2, ms=7)
+    for x, y in zip(iv, mins):
+        ax.annotate(f"{y:.0f} min", (x, y), textcoords="offset points",
+                    xytext=(0, 9), ha="center", fontsize=8.5, color="#3d474e")
+    d24 = next((POOL / m / 60 for i_, m in zip(iv, me) if abs(i_ - 24) < 6), None)
+    ax.set_ylim(bottom=0)
+    frame(ax, f"Time to fill all {POOL:,} sectors",
+          "promotion interval (ms between promotions)", "minutes")
+    fig.tight_layout(); fig.savefig(f"{OUT}/selftest-time-to-fill.png", dpi=160)
+    made.append("time-to-fill")
+
 r = rows("fill-curve.csv")
 if r:
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -197,17 +215,32 @@ if r:
 
 r = rows("wear-history.tsv", "\t")
 if r and len(r) > 2:
-    ok = [x for x in r if x.get("mean", "?") not in ("?", "", None)]
-    if len(ok) > 2:
-        tot = [float(x["total"]) for x in ok]
-        rel = [float(x["spread"]) / float(x["mean"]) * 100 for x in ok]
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.plot(tot, rel, "o-", color=C_DRAM, lw=1.6, ms=3)
+    ok_ = [x for x in r if x.get("min", "?") not in ("?", "", None)
+           and x.get("max", "?") not in ("?", "", None)]
+    if len(ok_) > 2:
+        tot = [float(x["total"]) for x in ok_]
+        mn = [float(x["min"]) for x in ok_]
+        mx = [float(x["max"]) for x in ok_]
+        mean = [float(x["mean"]) for x in ok_]
+        fig, ax = plt.subplots(figsize=(8.5, 5.2))
+        # Absolute erase counts, not a ratio of the mean. "The worst sector is
+        # N erases ahead of the best" is a number you can hold against the
+        # 100,000-cycle budget; "spread is 42% of mean" is not.
+        ax.fill_between(tot, mn, mx, color=C_DRAM, alpha=.16, lw=0,
+                        label="least to most worn sector")
+        ax.plot(tot, mx, "-", color=C_NOR, lw=1.8, label="most worn")
+        ax.plot(tot, mean, "-", color=C_MODEL, lw=1.2, ls="--", label="mean")
+        ax.plot(tot, mn, "-", color=C_DRAM, lw=1.8, label="least worn")
+        gap = mx[-1] - mn[-1]
+        ax.annotate(f"spread {gap:.0f} erases\n{gap/100000*100:.3f}% of the 100,000-cycle budget",
+                    (tot[-1], mx[-1]), ha="right", va="bottom", fontsize=9.5,
+                    color="#3d474e", xytext=(-6, 10), textcoords="offset points")
         ax.set_ylim(bottom=0)
-        frame(ax, "Wear spread as the array is used", "total erases recorded",
-              "spread as % of mean erase count",
-              "Falling means levelling is tightening. Buckets are 1000 wide, so this is FIFO round-robin, not bucket order.")
-        fig.tight_layout(); fig.savefig(f"{OUT}/selftest-wear-spread.png", dpi=160); made.append("wear-spread")
+        frame(ax, "How far apart the least and most worn sectors are",
+              "total erases recorded across the array", "erase count of a single sector")
+        ax.legend(fontsize=9, frameon=False, loc="upper left")
+        fig.tight_layout(); fig.savefig(f"{OUT}/selftest-wear-spread.png", dpi=160)
+        made.append("wear-spread")
 
 print("plotted:", ", ".join(made) if made else "nothing found")
 for m in made: print(f"  {OUT}/selftest-{m}.png")
