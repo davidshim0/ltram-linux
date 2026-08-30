@@ -1,0 +1,166 @@
+backend ok: 38 erases/s
+
+A. WEAR BUDGET -- arithmetic (no erases)
+  PASS A1 cycles_total = nr_pages x cycles (65536 x 100000)
+  PASS A2 cycles_left = total - used
+  PASS A3 cycles_used matches the sum of erase_counts (1646746)
+  PASS A4 interval_ms 24 = 1000 x seconds_left / cycles_left (24)
+
+B. WEAR BUDGET -- the knobs move the rate the right way
+  PASS B1 five-year budget gives ~24 ms (got 24)
+  PASS B2 114-day budget gives ~1.5 ms (got 1)
+  PASS B3 backdating the epoch speeds promotion up (24 -> 1 ms)
+  PASS B4 postdating the epoch slows promotion down (24 -> 72 ms)
+  PASS B5 governor off falls back to scan_interval_ms (1000 ms)
+  PASS B6 exhausted budget reports STOPPED, not a trickle
+  PASS B7 restoring cycles revives the governor
+
+C. PAGE STATES -- the invariant
+  PASS C1 data+dirty+clean = nr_pages (0+56945+8591=65536)
+  PASS C2 no state-machine errors recorded
+  PASS C3 the kernel's own invariant check agrees (computed under the lock)
+
+D. ERASE-COUNT PERSISTENCE
+  PASS D1 blob is 16 + 4 x 65536 = 262160 bytes
+  PASS D2 header magic is LTEC
+  PASS D3 kernel refuses a blob with a mismatched header
+  PASS D3b kernel logged the rejection
+  PASS D4 full blob restores
+  PASS D5 cycles_used survives a restore (1646746 vs 1646746)
+  PASS D6 saved epoch matches the live parameter (1787961600)
+  PASS D7 invariant still holds after the restore tests
+
+E. SCANNER -- rate, batch size, and the no-clean-sector stall
+     recycling: clean 8591 -> 16384 (dirty 56945)
+     wear_days 1820  interval 23 ms   measured   38.4/s   model   38.5/s
+     wear_days 1517  interval 19 ms   measured   45.4/s   model   45.5/s
+     wear_days 683   interval  8 ms   measured   90.9/s   model   90.9/s
+     wear_days 304   interval  3 ms   measured  166.6/s   model  166.7/s
+     wear_days 76    interval  1 ms   measured  249.9/s   model  250.0/s
+     -> /var/lib/ltram/selftest/promote-rate.csv
+  PASS E1 a shorter budget promotes faster (38.4 -> 249.9/s across the sweep)
+  PASS E2 promote_batch is 1
+  PASS E3 scan thread is not spinning (0 ticks in 10 s)
+
+F. ERASE ENGINE -- hysteresis and spacing
+  PASS F1 idle engine erases at 38/s (campaign drains ran ~44/s)
+  PASS F2 erase_batch is 1
+
+G. DATA PATH -- the bits that come back
+  PASS G1 DRAM and NOR digests match (100.0% in flash)
+  PASS G2 no sector was programmed without an erase
+
+H. SELECTIVITY -- does the policy pick the RIGHT pages?
+     weights 2047 pages, scrub buffer 8192 pages (written every pass)
+     weights reached 90.04% resident; 1843 pages promoted in total
+  PASS H1 weights reached 90.04% -- read-mostly pages ARE promoted
+  PASS H2 1843 promoted vs 2047 weight pages -- the written 8192-page buffer was refused
+  PASS H3 result vector 0.0% resident -- a continuously written region stays in DRAM
+
+I. ERASE HYSTERESIS, SPACING, AND WHAT IT COSTS READS
+  PASS I1 engine started below the low mark and STOPPED at the high mark (clean held at 4650)
+  PASS I2 idle period 24.1 ms per erase (41/s)
+  PASS I3 a targeted pid spaces erases: 24.1 -> 59.6 ms (+35.5, erase_poll_ms=30)
+
+J. READ LATENCY vs ERASE RATE
+     poll    erase/s passes      min      p50     mean      p90      max
+     off         0.0    137    988.1   1002.0   1009.5   1033.0   1054.1
+     0          36.5     95   1291.4   2302.2   2261.3   2722.6   3561.5
+     10         17.9    127    997.1   1026.7   1194.3   1397.8   2502.6
+     15         18.0    140    997.4   1020.8   1139.4   1345.6   1717.1
+     20         16.6    141    997.9   1025.9   1077.9   1286.4   1564.1
+     30         11.5    153   1001.3   1035.6   1080.2   1296.2   1379.8
+     60          7.0    160   1009.1   1052.1   1092.3   1378.7   2089.3
+     120         6.5    162   1031.1   1051.9   1047.1   1052.8   1059.7
+  PASS J1 swept 8 erase rates against read latency -> /var/lib/ltram/selftest/read-vs-erase.csv
+  PASS J2 worst case 2.24x on cold NOR reads across the sweep
+
+N. THE WHOLE TRANSITION -- DRAM, migrating, then flash
+     recycling: clean 664 -> 8190 (dirty 64860)
+     phase 1 done (45s DRAM); target_pid attached, migrating...
+     fully resident after 1575s; holding 45s
+     phase 1 DRAM 199.3 ns/line | phase 2 migrating 950.2 | phase 3 flash 967.1 ns/line
+     -> /var/lib/ltram/selftest/timeline.csv
+  PASS N1 sustained flash reads are 4.85x the DRAM baseline
+  PASS N2 migrating sits between the two (199.3 -> 950.2 -> 967.1)
+
+K. FILL EFFICIENCY -- how long, and at what cost in allocations
+     recycling: clean 0 -> 4094 (dirty 65524)
+     2047 weight pages, interval 1 ms + ~3 ms work
+     predicted 8.2 s, actual 8.1 s, reached 95.02%
+     1968 allocations for 1945 resident pages
+  PASS K1 1.01 allocations per resident page -- pages are promoted once, not bounced
+  PASS K2 fill took 8.1 s against 8.2 s predicted (0.99x)
+     fill curve -> /var/lib/ltram/selftest/fill-curve.csv (91 points)
+  PASS K3 residency climbed monotonically (largest fall 0.00 points)
+
+L. WRITE-FAULT DEMOTION -- do pages come BACK?
+     recycling: clean 0 -> 4094 (dirty 65524)
+     filled to 91.31%, after writing every page: 0.00%
+     freed_via_hook +3783, dirty +4095, over 2047 weight pages
+  PASS L1 the weights filled to 91.31% before the eviction phase
+  PASS L2 writing every page drove residency to 0.00% -- written pages ARE demoted
+  PASS L3 freed_via_hook +3783 -- the write-fault path, not the exit backstop, did it
+
+M. WEAR BUCKETS -- least worn first
+     recycling: clean 0 -> 3000 (dirty 65518)
+  PASS M1 synthetic wear profile accepted
+  PASS M2 rebuilding the free lists at grain 10 kept the invariant
+     buckets before allocating:
+       lo=0 757
+       lo=10 758
+       lo=20 758
+       lo=30 758
+  PASS M3 the pool spreads across 4 buckets (1 at the default grain)
+     lowest bucket 757 -> 253 (took 504), next bucket 758 -> 758
+  PASS M4 504 sectors came out of the LOWEST bucket
+  PASS M5 the next bucket was untouched while the lowest still had 253 -- least worn first
+  PASS M6 real erase counts restored, grain back to 1000, invariant ok
+
+RESULT
+  51 passed, 0 failed, 0 skipped
+
+  NOT covered here, because they need a reboot:
+    - erase counts survive a power cycle   ->  ./selftest.sh --pre, reboot, --post
+    - the boot scan classifies sectors     ->  dmesg | grep 'ltram: pool scan'
+
+PRE-REBOOT STAMP
+used 1683482
+epoch 1787961600
+data 17
+dirty 65519
+clean 0
+pages 65536
+md5 0f6acc95423bb257790c7a9cebb04d50
+
+  Erase engine PINNED OFF so the pool cannot drift before the reboot.
+  (module parameters reset at boot, so this undoes itself)
+
+  Stamped. Now reboot, then run:  /home/enzian/selftest.sh --post
+  Do not run a workload in between, or the totals will legitimately differ.
+
+=== resumed after the power cycle ===
+
+POST-REBOOT COMPARISON
+  PASS R1 window is the same size (65536 pages)
+  PASS R2 counts survived the power cycle (used = 1683482, not 0)
+  PASS R3 restored count >= the stamp (1683482 >= 1683482)
+  PASS R8 wear epoch survived unchanged (1787961600)
+  PASS R4 the persistence unit is active
+  PASS R5 kernel logged the restore
+  PASS R6 blob was not rejected
+dmesg: write error
+     [    8.941207] ltram: pool scan 0 blank, 65536 dirty, of 65536 sectors in 62 ms
+  PASS R7 the boot scan ran
+     before: data 17 + dirty 65519 = 65536 programmed, clean 0
+     scan:   65536 dirty, 0 blank
+  PASS R9 the scan classified every sector (0 + 65536 = 65536)
+  PASS R10 scan found exactly the 65536 programmed sectors
+  PASS R11 scan found exactly the 0 blank sectors
+
+RESULT
+  11 passed, 0 failed, 0 skipped
+
+COMBINED RESULT (both sides of the reboot)
+  before the reboot: 51 passed, 0 failed, 0 skipped
+  see above for the power-cycle section
