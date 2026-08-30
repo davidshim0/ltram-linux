@@ -208,7 +208,9 @@ if r:
     # Shade the three regimes rather than drawing three separate series: it is
     # one continuous workload and the point is that nothing about it changed
     # except where its pages live.
-    for p_, col_, lab in ((1, "#1F5F7A", "DRAM"), (2, "#8a5320", "migrating"), (3, "#9E2F33", "flash")):
+    for p_, col_, lab in ((1, "#1F5F7A", "DRAM"),
+                          (2, "#8a5320", "time to 99% migration"),
+                          (3, "#9E2F33", "flash")):
         xs = [x for x, q in zip(t, ph) if q == p_]
         if not xs: continue
         ax.axvspan(min(xs), max(xs), color=col_, alpha=.07, lw=0)

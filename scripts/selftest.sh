@@ -1057,12 +1057,15 @@ else
     cp -f $F $MREAL
     MRESTORE=1
 
-    # Four wear levels, 10 apart: buckets 0,1,2,3 at grain 10.
+    # Four wear levels, 10 apart, each at the TOP of its bucket: 9, 19, 29,
+    # 39. Still buckets 0-3 at grain 10, so the ordering checks are unchanged,
+    # but now a single erase carries a page into the next bucket -- which is
+    # what M7 needs and nothing previously exercised.
     python3 - "$NP" > /tmp/synth.blob <<'PYB'
 import struct, sys
 n = int(sys.argv[1])
 out = [struct.pack('<IIII', 0x4C544543, 1, n, 0)]
-out += [struct.pack('<I', (i % 4) * 10 + 5) for i in range(n)]
+out += [struct.pack('<I', (i % 4) * 10 + 9) for i in range(n)]
 sys.stdout.buffer.write(b''.join(out))
 PYB
     setp ec_grain 10
@@ -1118,6 +1121,27 @@ PYB
     else
         skip "M5 the lowest bucket emptied, so ordering against the next is not decidable here"
     fi
+    # M7: a page whose count crosses a bucket boundary must land in the next
+    # bucket. The pages just allocated sat at 9; freeing and erasing them
+    # takes each to 10, which is bucket 1. Nothing else checks that the
+    # re-bucketing on the erase path uses the NEW count.
+    B1_BEFORE=$(buckets_now | sed -n 2p | cut -d' ' -f2)
+    echo 1 | sudo -n tee /proc/sys/vm/compact_memory >/dev/null 2>&1 || true
+    sleep 2
+    setw 65536 65535                       # recycle what the allocation dirtied
+    for i in $(seq 1 120); do
+        [ "$(ps_ dirty)" -lt 50 ] && break
+        sleep 1
+    done
+    setw 0 0
+    B1_AFTER=$(buckets_now | sed -n 2p | cut -d' ' -f2)
+    echo "     bucket 1 population $B1_BEFORE -> ${B1_AFTER:-?} after erasing the allocated pages"
+    if [ -n "${B1_AFTER:-}" ] && [ -n "${B1_BEFORE:-}" ]; then
+        [ "$B1_AFTER" -gt "$B1_BEFORE" ] \
+            && ok "M7 erased pages moved up a bucket ($B1_BEFORE -> $B1_AFTER at 9+1=10)" \
+            || no "M7 bucket 1 did not grow -- re-bucketing after an erase uses a stale count"
+    else skip "M7 could not read the bucket populations"; fi
+
     rm -f $L /tmp/synth.blob
 
     setp ec_grain $G0
