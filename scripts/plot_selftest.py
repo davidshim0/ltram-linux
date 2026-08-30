@@ -273,13 +273,6 @@ if r:
     ax.plot(t, ns, "-", color="#3d474e", lw=.8, alpha=.55, zorder=3)
     ax.set_ylim(bottom=0)
 
-    rr = [(float(x["elapsed_s"]), float(x["resid_pct"])) for x in r if x["resid_pct"]]
-    if rr:
-        ax2 = ax.twinx()
-        ax2.plot([a for a, _ in rr], [b for _, b in rr], "-", color="#0f6b70", lw=1.8)
-        ax2.set_ylabel("% of the weights in flash", color="#0f6b70")
-        ax2.tick_params(axis="y", colors="#0f6b70")
-        ax2.set_ylim(0, 105)
     frame(ax, "Latency change over migration phases",
           "Time (sec)", "Average Latency per Cache line (ns)")
     fig.tight_layout(); fig.savefig(f"{OUT}/fig7-transition-timeline.png", dpi=160)
@@ -311,14 +304,6 @@ if r:
                     ha="center", va="top", fontsize=9.5, color=col_, fontweight="medium")
     ax.plot(t, ns, "-", color="#3d474e", lw=.8, alpha=.55, zorder=3)
     ax.set_ylim(bottom=0)
-    rr = [(float(x["elapsed_s"]), float(x["resid_pct"])) for x in r
-          if x["resid_pct"] and float(x["elapsed_s"]) <= t[-1]]
-    if rr:
-        ax2 = ax.twinx()
-        ax2.plot([a for a, _ in rr], [b for _, b in rr], "-", color="#0f6b70", lw=1.6)
-        ax2.set_ylabel("% of the weights in flash", color="#0f6b70")
-        ax2.tick_params(axis="y", colors="#0f6b70")
-        ax2.set_ylim(0, 105)
     frame(ax, "Latency when migration must wait for erases",
           "Time (sec)", "Average Latency per Cache line (ns)")
     fig.tight_layout(); fig.savefig(f"{OUT}/fig8-worst-case.png", dpi=200)
