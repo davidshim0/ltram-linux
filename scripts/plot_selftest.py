@@ -129,18 +129,25 @@ if r:
 
 r = rows("promote-rate.csv")
 if r:
+    r = sorted(r, key=lambda x: float(x["interval_ms"]))
     iv = [float(x["interval_ms"]) for x in r]
     me = [float(x["measured_per_s"]) for x in r]
     pr = [float(x["predicted_per_s"]) for x in r]
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(iv, pr, "s--", color=C_MODEL, lw=1.6, label="model: 1000/(interval + 3 ms)")
-    ax.plot(iv, me, "o-", color=C_DRAM, lw=2, label="measured")
+    fig, ax = plt.subplots(figsize=(8.5, 5.2))
+    # The two series coincide to 3 s.f., so drawing both as markers hides one
+    # under the other. Model as a bare line, measurement as points on it.
+    ax.plot(iv, pr, "-", color=C_MODEL, lw=3, alpha=.45, label="model: 1000/(interval + 3 ms)")
+    ax.plot(iv, me, "o", color=C_DRAM, ms=7, zorder=3, label="measured")
+    err = max(abs(a - b) / b * 100 for a, b in zip(me, pr))
+    ax.annotate(f"measured within {err:.1f}% of the model at every point",
+                (0.97, 0.92), xycoords="axes fraction", ha="right", fontsize=9.5,
+                color="#3d474e")
     ax.set_ylim(bottom=0)
-    frame(ax, "Promotion rate against the budget interval", "interval_ms from cycles_left / seconds_left",
-          "promotions per second",
-          "The 3 ms is the scan and migration each tick does on top of the sleep, so the interval is a gap, not a period.")
-    ax.legend(fontsize=9, frameon=False)
-    fig.tight_layout(); fig.savefig(f"{OUT}/selftest-promote-rate.png", dpi=160); made.append("promote-rate")
+    frame(ax, "Promotion rate against the interval it was told to use",
+          "promotion interval (ms between promotions)", "promotions per second")
+    ax.legend(fontsize=9.5, frameon=False, loc="upper right", bbox_to_anchor=(1, .85))
+    fig.tight_layout(); fig.savefig(f"{OUT}/selftest-promote-rate.png", dpi=160)
+    made.append("promote-rate")
 
 r = rows("fill-curve.csv")
 if r:
