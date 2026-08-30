@@ -939,7 +939,9 @@ else
     OT2=$(date +%s.%N)
     PID=$(pgrep -x matmul | head -1)
     [ -n "${PID:-}" ] && echo $PID | sudo -n tee $TP >/dev/null
-    owait(){ for i in $(seq 1 4000); do
+    # 2000 s truncated the erase-gated refill at 52%: it runs at ~12
+    # pages/s, so 49,145 pages needs about 67 minutes.
+    owait(){ for i in $(seq 1 12000); do
         R=$(grep "^RESID" $L | tail -1 | awk '{print $4}')
         awk -v r="${R:-0}" -v t="$1" 'BEGIN{exit !(r >= t)}' && return 0
         kill -0 $BG 2>/dev/null || return 1

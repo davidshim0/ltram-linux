@@ -70,7 +70,10 @@ T2=$(date +%s.%N)
 PID=$(pgrep -x matmul | head -1)
 [ -n "${PID:-}" ] && echo $PID > /sys/kernel/ltram/target_pid
 echo "  phase 2: first migration into a clean pool"
-waitres(){ for i in $(seq 1 4000); do
+# 4000 x 0.5 s = 2000 s was not enough: the erase-gated refill runs at
+# ~12 pages/s, so 49,145 pages takes about 67 minutes. The cap truncated it at
+# 52% and made the settled phase a blend rather than NOR.
+waitres(){ for i in $(seq 1 12000); do
     R=$(grep "^RESID" $L | tail -1 | awk '{print $4}')
     awk -v r="${R:-0}" -v t="$1" 'BEGIN{exit !(r >= t)}' && return 0
     kill -0 $BG 2>/dev/null || return 1
