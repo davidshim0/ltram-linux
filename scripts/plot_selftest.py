@@ -47,15 +47,41 @@ if r:
     base = next((col(x, "mean_ns", "ns_per_line") for x in r if x["poll_ms"] == "off"), None)
     has_dist = "max_ns" in r[0]
 
-    def draw(xs, ys, lo, hi, xlab, fname, title, xlim_left=None):
+    TARGET = 20.0        # the operating point worth quoting
+    def at_poll(rows_, target, key):
+        """Value at a poll setting: measured if present, linear between if not."""
+        pts = sorted(((poll_val(x), col(x, key, "ns_per_line")) for x in rows_
+                      if x["poll_ms"] != "off" and col(x, key, "ns_per_line") is not None),
+                     key=lambda t: t[0])
+        for px, py in pts:
+            if abs(px - target) < 1e-9:
+                return py
+        lo_ = max((t for t in pts if t[0] < target), default=None)
+        hi_ = min((t for t in pts if t[0] > target), default=None)
+        if not lo_ or not hi_:
+            return None
+        return lo_[1] + (target - lo_[0]) / (hi_[0] - lo_[0]) * (hi_[1] - lo_[1])
+
+    def draw(xs, ys, lo, hi, xlab, fname, title, xlim_left=None, mark=None):
         fig, ax = plt.subplots(figsize=(7.2, 4.6))
         if base:
             ax.axhline(base / US, color=C_GRID, ls="--", lw=1)
+            ax.annotate(f"read-only baseline  {base/US:.2f} us",
+                        (max(xs), base / US), fontsize=8.5, color="#3d474e",
+                        ha="right", va="top", xytext=(0, -5),
+                        textcoords="offset points")
         if lo and hi:
             ax.fill_between(xs, lo, hi, color=C_NOR, alpha=.15, lw=0,
                             label="min to max across passes")
         ax.plot(xs, ys, "o-", color=C_NOR, lw=1.8, ms=5.5, zorder=3,
                 label="mean" if lo else None)
+        if mark and base:
+            mx_, my_ = mark
+            ax.plot([mx_], [my_ / US], "o", color="#0f6b70", ms=6.5, zorder=5)
+            ax.annotate(f"{TARGET:.0f} ms:  {my_/US:.2f} us  (+{(my_/base-1)*100:.0f}%)",
+                        (mx_, my_ / US), fontsize=9, color="#0f6b70",
+                        ha="left", va="bottom", xytext=(8, 6),
+                        textcoords="offset points")
         ax.set_ylim(bottom=0)
         if xlim_left is not None: ax.set_xlim(left=xlim_left)
         if lo: ax.legend(fontsize=9, frameon=False, loc="upper left")
@@ -68,7 +94,9 @@ if r:
          [col(x, "mean_ns", "ns_per_line") / US for x in ra],
          [col(x, "min_ns") / US for x in ra] if has_dist else None,
          [col(x, "max_ns") / US for x in ra] if has_dist else None,
-         "Erases/Second", "fig4-read-vs-erase.png", TITLE, xlim_left=-1.5)
+         "Erases/Second", "fig4-read-vs-erase.png", TITLE, xlim_left=-1.5,
+         mark=(at_poll(r, TARGET, "erase_rate_per_s"), at_poll(r, TARGET, "mean_ns"))
+              if at_poll(r, TARGET, "mean_ns") and at_poll(r, TARGET, "erase_rate_per_s") else None)
     made.append("fig4-read-vs-erase")
 
     rb = sorted([x for x in r if x["poll_ms"] != "off"], key=poll_val)
@@ -77,7 +105,8 @@ if r:
              [col(x, "mean_ns", "ns_per_line") / US for x in rb],
              [col(x, "min_ns") / US for x in rb] if has_dist else None,
              [col(x, "max_ns") / US for x in rb] if has_dist else None,
-             "Erase Interval (ms)", "fig4b-read-vs-interval.png", TITLE, xlim_left=-4)
+             "Erase Interval (ms)", "fig4b-read-vs-interval.png", TITLE, xlim_left=-4,
+             mark=(TARGET, at_poll(rb, TARGET, "mean_ns")) if at_poll(rb, TARGET, "mean_ns") else None)
         made.append("fig4b-read-vs-interval")
 
 r = rows("promote-rate.csv")
