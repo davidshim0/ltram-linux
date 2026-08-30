@@ -504,7 +504,18 @@ else
         CL=$(w cycles_left)
         wd=$(awk -v t="$target" -v c="$CL" 'BEGIN{printf "%d", t*c/1000/86400 + 1}')
         setp wear_days $wd
-        sleep 3
+        sleep 1
+        # The open-form inversion lands a millisecond low every time: the
+        # kernel measures seconds_left from the epoch to NOW, and the epoch is
+        # already a day or more in the past, so ~100,000 s never counted --
+        # then integer truncation takes the rest. Rather than model the
+        # margin, walk up until the kernel agrees. Two or three days at most.
+        for _ in 1 2 3 4 5; do
+            IV=$(w interval_ms)
+            [ "${IV:-0}" -ge "$target" ] && break
+            wd=$(( wd + 1 )); setp wear_days $wd; sleep 1
+        done
+        sleep 2
         IV=$(w interval_ms)
         a0=$(gs dst_allocated); t0=$(date +%s.%N)
         sleep 8
