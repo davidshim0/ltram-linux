@@ -85,7 +85,8 @@ if r:
             return None
         return lo_[1] + (target - lo_[0]) / (hi_[0] - lo_[0]) * (hi_[1] - lo_[1])
 
-    def draw(xs, ys, lo, hi, xlab, fname, title, xlim_left=None, mark=None, worst=None):
+    def draw(xs, ys, lo, hi, xlab, fname, title, xlim_left=None, mark=None,
+             worst=None, band_label="min to p90 across passes", note=None):
         fig, ax = plt.subplots(figsize=(7.2, 4.6))
         if base:
             ax.axhline(base / US, color=C_GRID, ls="--", lw=1)
@@ -101,7 +102,7 @@ if r:
             # is the thing that behaves; the outlier is worth showing, but not
             # worth letting define the band.
             ax.fill_between(xs, lo, hi, color=C_NOR, alpha=.15, lw=0,
-                            label="min to p90 across passes")
+                            label=band_label)
         if worst:
             ax.plot(xs, worst, marker="x", ls="none", color=C_NOR, ms=5,
                     mew=1.2, alpha=.6, label="p99" if has_p99 else "worst single pass")
@@ -117,32 +118,46 @@ if r:
                         textcoords="offset points")
         ax.set_ylim(bottom=0)
         if xlim_left is not None: ax.set_xlim(left=xlim_left)
+        if note:
+            ax.annotate(note, (0.985, 0.97), xycoords="axes fraction",
+                        ha="right", va="top", fontsize=8, color="#535B58",
+                        linespacing=1.4)
         if lo: legend_by_last(ax, fontsize=9, frameon=False, loc="upper left")
         frame(ax, title, xlab, "NOR Read Latency (us)")
         fig.tight_layout(); fig.savefig(f"{OUT}/{fname}", dpi=200)
 
     TITLE = "Read latency with background erases"
-    ra = sorted(r, key=lambda x: float(x["erase_rate_per_s"]))
-    draw([float(x["erase_rate_per_s"]) for x in ra],
-         [col(x, "mean_ns", "ns_per_line") / US for x in ra],
-         [col(x, "min_ns") / US for x in ra] if has_dist else None,
-         [col(x, "p90_ns") / US for x in ra] if has_dist else None,
-         "Erases/Second", "fig4-read-vs-erase.png", TITLE, xlim_left=-1.5,
-         worst=[col(x, "p99_ns", "max_ns") / US for x in ra] if has_dist else None,
-         mark=(at_poll(r, TARGET, "erase_rate_per_s"), at_poll(r, TARGET, "mean_ns"))
-              if at_poll(r, TARGET, "mean_ns") and at_poll(r, TARGET, "erase_rate_per_s") else None)
-    made.append("fig4-read-vs-erase")
+    LINES = 1448 * 1448 * 4 // 128          # the pass J measures
+    NOTE = ("each point is one full pass:\n"
+            f"pass time / {LINES:,} cache lines,\n"
+            "so a single stall is averaged away")
 
+    # Against the INTERVAL only. The erase-rate view said the same thing with
+    # a less useful x: the rate is an outcome of the setting and of contention
+    # with the reader, so two settings could land on the same rate.
     rb = sorted([x for x in r if x["poll_ms"] != "off"], key=poll_val)
     if rb:
-        draw([poll_val(x) for x in rb],
-             [col(x, "mean_ns", "ns_per_line") / US for x in rb],
-             [col(x, "min_ns") / US for x in rb] if has_dist else None,
-             [col(x, "p90_ns") / US for x in rb] if has_dist else None,
-             "Erase Interval (ms)", "fig4b-read-vs-interval.png", TITLE, xlim_left=-4,
-             worst=[col(x, "p99_ns", "max_ns") / US for x in rb] if has_dist else None,
-             mark=(TARGET, at_poll(rb, TARGET, "mean_ns")) if at_poll(rb, TARGET, "mean_ns") else None)
-        made.append("fig4b-read-vs-interval")
+        xs = [poll_val(x) for x in rb]
+        ys = [col(x, "mean_ns", "ns_per_line") / US for x in rb]
+        mn = [col(x, "min_ns") / US for x in rb] if has_dist else None
+        p90 = [col(x, "p90_ns") / US for x in rb] if has_dist else None
+        mx = [col(x, "max_ns") / US for x in rb] if has_dist else None
+        p99 = [col(x, "p99_ns", "max_ns") / US for x in rb] if has_dist else None
+        m20 = at_poll(rb, TARGET, "mean_ns")
+
+        # Two versions of the same measurement: the envelope that behaves, and
+        # the envelope that includes the single worst pass.
+        draw(xs, ys, mn, p90, "Erase Interval (ms)", "fig4-read-vs-interval.png",
+             TITLE, xlim_left=-4,
+             mark=(TARGET, m20) if m20 else None,
+             worst=p99, band_label="min to p90 across passes", note=NOTE)
+        made.append("fig4-read-vs-interval")
+
+        draw(xs, ys, mn, mx, "Erase Interval (ms)", "fig4b-read-vs-interval-max.png",
+             TITLE, xlim_left=-4,
+             mark=(TARGET, m20) if m20 else None,
+             band_label="min to max across passes", note=NOTE)
+        made.append("fig4b-read-vs-interval-max")
 
 r = rows("promote-rate.csv")
 if r:
