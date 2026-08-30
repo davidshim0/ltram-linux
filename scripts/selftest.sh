@@ -843,7 +843,7 @@ NCSV=$SDIR/timeline.csv
 # 192 MiB is 75% of capacity, reaches full residency with erases off, and is
 # 6x the region this used to use.
 NN=7094; NPAGES_N=$(( NN * NN * 4 / 4096 )); NLINES_N=$(( NN * NN * 4 / 128 ))
-PHASE1=45; PHASE3=45
+PHASE1=60; PHASE3=60
 if ! ensure_clean $NPAGES_N; then
     skip "N  could not reach $NPAGES_N clean sectors (have $(ps_ clean), dirty $(ps_ dirty))"
 else

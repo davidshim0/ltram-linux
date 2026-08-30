@@ -34,7 +34,7 @@ cleanup(){ pkill -x matmul 2>/dev/null; echo 0 > /sys/kernel/ltram/target_pid 2>
 trap cleanup EXIT INT TERM
 
 NN=7094; NPAGES=$(( NN * NN * 4 / 4096 )); NLINES=$(( NN * NN * 4 / 128 ))
-PHASE1=45; PHASE3=90
+PHASE1=60; PHASE3=90
 if [ "$(ps_ clean)" -lt $NPAGES ]; then
     echo "  recycling: clean $(ps_ clean) -> $NPAGES (dirty $(ps_ dirty))"
     setw 65536 65535

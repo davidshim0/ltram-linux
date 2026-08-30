@@ -233,7 +233,11 @@ if r:
                           (3, "#9E2F33", "flash")):
         xs = [x for x, q in zip(t, ph) if q == p_]
         if not xs: continue
-        ax.axvspan(min(xs), max(xs), color=col_, alpha=.08, lw=0)
+        # A thin divider at each boundary, not a wash of colour across the
+        # whole canvas. Three filled bands of comparable width leave nothing
+        # unshaded, so the tint stops distinguishing anything.
+        if p_ > 1:
+            ax.axvline(min(xs), color=C_GRID, ls=":", lw=1)
         mean = sum(y for y, q in zip(ns, ph) if q == p_) / len(xs)
         ax.annotate(f"{lab}\n{mean:.0f}ns", ((min(xs) + max(xs)) / 2, max(ns) * 0.97),
                     ha="center", va="top", fontsize=10, color=col_, fontweight="medium")
