@@ -90,11 +90,16 @@ wear_row(){
     # ONLY the allocator's clean_buckets, not the log2 display histogram
     # that precedes it -- counting both gave 3 on a pool entirely in bucket 0.
     nb=$(sed -n '/^clean_buckets/,$p' <<<"$ps" | grep -c '^  \[')
+    # Median as well as mean. The mean is total/65536 by construction, so it
+    # cannot disagree with itself -- but a median below it says a few sectors
+    # are pulling the average up, which is the skew worth watching.
+    md=$(cat $DBG/erase_counts 2>/dev/null | od -An -tu4 -j16 -v | tr -s " " "\n" |
+         grep -v "^$" | sort -n | awk '{v[n++]=$1} END{print (n? v[int(n/2)] : "?")}')
     mkdir -p $STATE
     [ -f $HIST ] || echo -e "when\tevent\ttotal\tmin\tmax\tspread\tmean\tbuckets\tdata\tdirty\tclean" > $HIST
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
       "$(date -Iseconds)" "$ev" "${tot:-?}" "${mn:-?}" "${mx:-?}" "${sp:-?}" \
-      "$(awk -v t="${tot:-0}" 'BEGIN{printf "%.1f", t/65536}')" "${nb:-?}" \
+      "$(awk -v t="${tot:-0}" 'BEGIN{printf "%.1f", t/65536}')" "${md:-?}" "${nb:-?}" \
       "$(awk '/^data/{print $2; exit}' <<<"$ps")" \
       "$(awk '/^dirty/{print $2; exit}' <<<"$ps")" \
       "$(awk '/^clean/{print $2; exit}' <<<"$ps")" >> $HIST
