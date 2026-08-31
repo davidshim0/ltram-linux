@@ -22,8 +22,19 @@
 # One continuous measurement per phase. No pooling, no averaging.
 set -u
 [ "$(id -u)" = 0 ] || exec sudo -E "$0" "$@"
-SCRATCH=${SCRATCH:-/scratch/${SUDO_USER:-$(id -un)}/ltram}
-mkdir -p "$SCRATCH" 2>/dev/null || SCRATCH=/tmp   # z08 root is 4.4 GB and full
+# /scratch is root-owned on NFS, so a new top-level directory cannot be created
+# there under root_squash -- but an existing per-user one can be written. Try the
+# invoking user, then any existing writable directory, then give up to /tmp.
+scratch_dir(){
+    local d
+    for d in "${SCRATCH:-}" "/scratch/${SUDO_USER:-$(id -un)}/ltram" \
+             $(ls -d /scratch/*/ 2>/dev/null | head -20 | sed 's|$|ltram|'); do
+        [ -z "$d" ] && continue
+        mkdir -p "$d" 2>/dev/null && [ -w "$d" ] && { echo "$d"; return 0; }
+    done
+    echo /tmp
+}
+SCRATCH=$(scratch_dir)
 PREFLIGHT=$(dirname "$0")/preflight.sh
 [ -x "$PREFLIGHT" ] && { "$PREFLIGHT" --quiet || { echo "!! preflight failed"; exit 1; }; }
 

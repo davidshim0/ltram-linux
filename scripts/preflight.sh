@@ -19,6 +19,19 @@
 # Other scripts should start with:
 #   "$(dirname "$0")/preflight.sh" --quiet || exit 1
 set -u
+# /scratch is root-owned on NFS, so a new top-level directory cannot be created
+# there under root_squash -- but an existing per-user one can be written. Try the
+# invoking user, then any existing writable directory, then give up to /tmp.
+scratch_dir(){
+    local d
+    for d in "${SCRATCH:-}" "/scratch/${SUDO_USER:-$(id -un)}/ltram" \
+             $(ls -d /scratch/*/ 2>/dev/null | head -20 | sed 's|$|ltram|'); do
+        [ -z "$d" ] && continue
+        mkdir -p "$d" 2>/dev/null && [ -w "$d" ] && { echo "$d"; return 0; }
+    done
+    echo /tmp
+}
+SCRATCH=$(scratch_dir)
 PIN=${PIN:-47}
 REAL_HOME=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)
 MM=${MM:-$REAL_HOME/matmul}
@@ -146,8 +159,8 @@ else bad "root has only ${FREE} MB free -- a run log will fill it"; fi
 # Test the directory the scripts will ACTUALLY write to, not /scratch itself.
 # The mount is NFS and the top-level directory is root-owned; what matters is
 # whether the per-user subdirectory can be created and written.
-SCR=/scratch/${SUDO_USER:-$(id -un)}/ltram
-if mkdir -p "$SCR" 2>/dev/null && touch "$SCR/.pf.$$" 2>/dev/null; then
+SCR=$(scratch_dir)
+if [ "$SCR" != /tmp ] && touch "$SCR/.pf.$$" 2>/dev/null; then
     rm -f "$SCR/.pf.$$"
     ok "$SCR writable ($(df -Pm /scratch | awk 'NR==2{print $4}') MB free)"
 else
