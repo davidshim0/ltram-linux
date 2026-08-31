@@ -696,8 +696,8 @@ if r:
         prov = []
         for cond, _, label in have:
             nn = sum(c for _, c in hist(cond))
-            r = {"engine_off": "4 x 60 s", "erasing": "2 x 60 s"}.get(cond, "1 x 90 s")
-            prov.append(f"{label}: {nn/1e6:.0f} M reads, {r}")
+            reps = {"engine_off": "4 x 60 s", "erasing": "2 x 60 s"}.get(cond, "1 x 90 s")
+            prov.append(f"{label}: {nn/1e6:.0f} M reads, {reps}")
         fig2.tight_layout()
         fig2.text(0.008, 0.008, "   ".join(prov) + "   \u2014 repeats pooled as histograms, not averaged",
                   fontsize=7.4, color="#7A838A")
