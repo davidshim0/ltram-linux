@@ -128,6 +128,25 @@ static int    resid_every = 0;   /* --resid-every PASSES */
  */
 static int    evict_at = 0;      /* --evict-at PASS */
 /*
+ * Per-ACCESS latency, bucketed, for the tail rather than the average.
+ *
+ * Every other number here is a pass average. At 192 MiB a pass is 1,572,653
+ * cache lines and takes ~1.55 s, so a 16.4 ms erase stall is one percent of
+ * one sample and the per-pass maximum barely moves -- which is useless for
+ * the question people actually ask about flash, namely whether a read can
+ * randomly block for milliseconds.
+ *
+ * So time each dependent load individually and bucket it by log2 nanoseconds.
+ * The chase already serialises the accesses, so each timestamp pair brackets
+ * exactly one read with nothing overlapping it. Two clock_gettime calls cost
+ * ~50 ns against a ~900 ns flash read: about 5%, which shifts the median a
+ * little and leaves the tail -- the part being measured -- untouched.
+ */
+#define HB 28                       /* log2 buckets, 1 ns .. ~134 ms */
+static int      do_hist = 0;        /* --chase-hist */
+static uint64_t hist[HB];
+static uint64_t hist_n, hist_max_ns;
+/*
  * Or on SIGUSR1, which is how the harness drives it: the pass number at which
  * the first migration completes is not knowable in advance, so the script
  * waits for residency to reach 99% and then signals.
@@ -646,7 +665,7 @@ int main(int argc, char **argv)
         {"print-ranges",0,0,'R'}, {"phys",0,0,'A'},
         {"hold",1,0,'H'}, {"seed",1,0,'S'}, {"flush",1,0,'F'},
         {"compute-only",0,0,'C'}, {"chase",0,0,'H'+128},
-        {"wait-resident",1,0,'W'}, {"wait-timeout",1,0,'W'+128}, {"wait-stable",1,0,'W'+129}, {"wait-hold",1,0,'W'+130}, {"evict",0,0,'E'}, {"resid-every",1,0,'W'+131}, {"evict-at",1,0,'W'+132}, {0,0,0,0}
+        {"wait-resident",1,0,'W'}, {"wait-timeout",1,0,'W'+128}, {"wait-stable",1,0,'W'+129}, {"wait-hold",1,0,'W'+130}, {"evict",0,0,'E'}, {"resid-every",1,0,'W'+131}, {"evict-at",1,0,'W'+132}, {"chase-hist",0,0,'W'+133}, {0,0,0,0}
     };
     int c;
     while ((c = getopt_long(argc, argv, "n:i:r:VPRAH:S:F:W:E", lo, NULL)) != -1) {
@@ -666,6 +685,7 @@ int main(int argc, char **argv)
         case 'E': do_evict = 1; break;
         case 'W'+131: resid_every = atoi(optarg); break;
         case 'W'+132: evict_at = atoi(optarg); break;
+        case 'W'+133: do_hist = 1; break;
         case 'S': SEED = strtoull(optarg, NULL, 0); break;
         case 'F': flush_mb = strtoul(optarg, NULL, 0); break;
         case 'C': compute_only = 1; break;
@@ -676,7 +696,7 @@ int main(int argc, char **argv)
               "          [--protect-weights] [--print-ranges] [--phys]\n"
               "          [--hold SECS] [--seed S] [--flush MB] [--compute-only] [--chase]\n"
               "          [--wait-resident PCT] [--wait-timeout SECS] [--evict]\n"
-              "          [--resid-every PASSES] [--evict-at PASS]\n", argv[0]);
+              "          [--resid-every PASSES] [--evict-at PASS] [--chase-hist]\n", argv[0]);
             return 2;
         }
     }
@@ -874,13 +894,40 @@ int main(int argc, char **argv)
              * waiting on the previous. lines accesses, no overlap. */
             size_t lines = Wbytes / 128, k;
             uint32_t cur = 0;
-            for (k = 0; k < lines; k++)
-                cur = *(volatile uint32_t *)((char *)W + (size_t)cur * 128);
+
+            if (do_hist) {
+                for (k = 0; k < lines; k++) {
+                    double a0 = now();
+                    cur = *(volatile uint32_t *)((char *)W + (size_t)cur * 128);
+                    {
+                        double d = (now() - a0) * 1e9;   /* ns for this one read */
+                        uint64_t ns = d < 1 ? 1 : (uint64_t)d;
+                        int b = 0;
+                        while ((ns >> b) && b < HB - 1) b++;
+                        hist[b]++; hist_n++;
+                        if (ns > hist_max_ns) hist_max_ns = ns;
+                    }
+                }
+            } else {
+                for (k = 0; k < lines; k++)
+                    cur = *(volatile uint32_t *)((char *)W + (size_t)cur * 128);
+            }
             chase_sink += cur;
             t[r] = now() - t0;
             printf("  run %2d/%d  %8.3f s   %7.1f ns/access\n",
                    r + 1, RUNS, t[r], t[r] * 1e9 / (double)lines);
             printf("POINT %d %.6f %.3f\n", r + 1, t[r], now() - t_start);
+            if (do_hist && hist_n) {
+                int b;
+
+                printf("HIST %d %llu %llu", r + 1,
+                       (unsigned long long)hist_n, (unsigned long long)hist_max_ns);
+                for (b = 0; b < HB; b++)
+                    printf(" %llu", (unsigned long long)hist[b]);
+                printf("\n");
+                memset(hist, 0, sizeof hist);
+                hist_n = 0; hist_max_ns = 0;
+            }
             fflush(stdout);
             if (do_phys) {
                 char tag[16];
