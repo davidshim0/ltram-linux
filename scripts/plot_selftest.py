@@ -544,36 +544,60 @@ if r:
     if have:
         QS = [(0.50, "p50"), (0.99, "p99"), (0.999, "p99.9"),
               (0.9999, "p99.99"), (0.99999, "p99.999"), (1.0, "max")]
-        fig, ax = plt.subplots(figsize=(10.5, 5.4))
+        # Same bars, log x. Linear was honest but spent 99% of its width on
+        # the tail, so every percentile below p99.999 was a sliver against the
+        # axis. Log gives 1 us and 34 ms room on the same picture; the table
+        # carries the digits so nothing has to be traced off the axis.
+        fig, (ax, axt) = plt.subplots(
+            2, 1, figsize=(11, 7.2), gridspec_kw=dict(height_ratios=[3, 1], hspace=0.34))
+        X0 = 5e-4                                        # ms, i.e. 0.5 us
+        top = max(pct(c, 1.0) for c, _, _ in have) / 1e6 * 3
+        ax.set_xscale("log"); ax.set_xlim(X0, top)
         nb = len(have); h = 0.8 / nb
         for k, (cond, colour, label) in enumerate(have):
-            vals = [pct(cond, q) / 1e6 for q, _ in QS]          # ms
+            vals = [pct(cond, q) / 1e6 for q, _ in QS]
             ys = [len(QS) - 1 - j + (nb - 1 - k) * h - (nb - 1) * h / 2
                   for j in range(len(QS))]
-            ax.barh(ys, vals, height=h * 0.92, color=colour, label=label, zorder=3)
-            for y, v, (q, _) in zip(ys, vals, QS):
-                ax.annotate(fmt(pct(cond, q)), (v, y), xytext=(5, 0),
-                            textcoords="offset points", va="center", ha="left",
-                            fontsize=8.6, color=colour, zorder=4)
+            # left=X0 explicitly: a bar from 0 has no left edge on a log axis.
+            ax.barh(ys, [v - X0 for v in vals], left=X0, height=h * 0.92,
+                    color=colour, label=label, zorder=3)
+        ax.axvline(16.4, color=C_GRID, lw=1, ls="--", zorder=2)
+        ax.annotate("one erase, 16.4 ms", (16.4, len(QS) - 0.45),
+                    xytext=(-5, 0), textcoords="offset points",
+                    ha="right", va="top", fontsize=8.5, color="#5b6670", rotation=90)
         ax.set_yticks(range(len(QS)))
         ax.set_yticklabels([n for _, n in QS][::-1], fontsize=10)
-        ax.set_xlim(0, max(pct(c, 1.0) for c, _, _ in have) / 1e6 * 1.22)
-        frame(ax, "Read Latency Percentiles, per Access",
-              "Read Latency (ms)  \u2014  one erase is 16.4 ms", "")
+        ax.set_xticks([1e-3, 1e-2, 1e-1, 1, 10])
+        ax.set_xticklabels(["1 \u00b5s", "10 \u00b5s", "100 \u00b5s", "1 ms", "10 ms"])
+        ax.set_ylim(-0.6, len(QS) - 0.4)
+        frame(ax, "Read Latency Percentiles, per Access", "Read Latency", "")
         ax.grid(axis="y", visible=False)
-        ax.legend(fontsize=9, frameon=False, loc="upper right")
+        # No legend: the table's row labels are colour-coded and carry the
+        # same information, and a legend box lands on the max bars.
 
-        # The max is the same either side -- 12 reads of 67 million land there
-        # with the engine OFF, which is the OS, not the flash. What separates
-        # the conditions is how OFTEN, so state that rather than leaving the
-        # equal maxima to imply the tails are equal.
-        lines = []
-        for cond, _, label in have:
+        # The digits, so no one has to read them off a log axis.
+        axt.axis("off")
+        cols = [n for _, n in QS] + ["reads \u2265 8 ms"]
+        cells, rowlab, rowcol = [], [], []
+        for cond, colour, label in have:
             c8, n = slower_than(cond, 8_000_000)
-            lines.append(f"reads >= 8 ms   {label}:  {c8:,} of {n:,}"
-                         + (f"   =  1 in {n//c8:,}" if c8 else "   =  none"))
-        figure_note(fig, lines, size=8.2)
-        fig.savefig(f"{OUT}/fig9-latency-tail.png", dpi=200)
+            cells.append([fmt(pct(cond, q)) for q, _ in QS]
+                         + [f"1 in {n//c8:,}" if c8 else "none"])
+            rowlab.append(label); rowcol.append(colour)
+        tb = axt.table(cellText=cells, colLabels=cols, rowLabels=rowlab,
+                       cellLoc="center", rowLoc="right", loc="upper center")
+        tb.auto_set_font_size(False); tb.set_fontsize(9); tb.scale(1, 1.6)
+        for (row, col), cell in tb.get_celld().items():
+            cell.set_edgecolor("#D5D8DA"); cell.set_linewidth(.6)
+            if row == 0:
+                cell.set_text_props(weight="semibold", color="#3d474e")
+                cell.set_facecolor("#F2F3F4")
+            elif col == -1:
+                cell.set_text_props(color=rowcol[row - 1], weight="semibold")
+                cell.set_facecolor("none"); cell.set_edgecolor("none")
+            else:
+                cell.set_text_props(color=rowcol[row - 1])
+        fig.savefig(f"{OUT}/fig9-latency-tail.png", dpi=200, bbox_inches="tight")
         made.append("fig9-latency-tail")
 
         print("\n  per-read latency")
