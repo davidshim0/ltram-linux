@@ -84,8 +84,17 @@ def report(path, tag):
         print("   " + " ".join(f"{b.get(i,0):>7,}" for i in range(NB)))
         chi = sum((b.get(i,0)-exp)**2/exp for i in range(NB))
         print(f"  chi-square vs uniform = {chi:.1f} (9 dof; >21.7 is p<0.01)")
-        print("  => POSITIONAL, tied to where in the loop." if chi > 21.7
-              else "  => positionally uniform: not the code or data at any one spot.")
+        if chi > 21.7:
+            # Significant is not the same as meaningful. At tens of thousands
+            # of samples a 10% skew clears p<0.01 easily, so print how big the
+            # skew actually is next to the verdict, and say where to look.
+            worst = max(range(NB), key=lambda i: abs(b.get(i, 0) - exp))
+            print(f"  => POSITIONAL (bin {worst} is {b.get(worst,0)/exp:.2f}x uniform,"
+                  f" {100*abs(b.get(worst,0)-exp)/len(slow):.1f}% of all events)")
+            print("     Check whether it sits in the very first iterations (cold cache)")
+            print("     or is spread flat across the bin (something else).")
+        else:
+            print("  => positionally uniform: not the code or data at any one spot.")
 
     # 3. size classes
     print("\n  size classes:")
