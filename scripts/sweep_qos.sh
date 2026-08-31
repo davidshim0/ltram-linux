@@ -16,6 +16,8 @@
 # Same resident data either side, so the difference in the tail is erasing.
 set -u
 [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+SCRATCH=${SCRATCH:-/scratch/${SUDO_USER:-$(id -un)}/ltram}
+mkdir -p "$SCRATCH" 2>/dev/null || SCRATCH=/tmp   # z08 root is 4.4 GB and full
 
 # Refuse to measure on a machine that is not in a state where the result would
 # mean anything. Costs milliseconds; has already caught a stale binary, a
@@ -94,7 +96,7 @@ engine_on
 [ "$(ps_ dirty)" -ge 4000 ] || echo "  warning: only $(ps_ dirty) dirty, phase B may have little to erase"
 
 setp promote_batch 1; setp wear_governor 1; setp wear_days 379
-L=/tmp/sweep-qos.log
+L=$SCRATCH/sweep-qos.log
 # Pinned and prioritised -- a MEASUREMENT technique, not a deployment
 # requirement. Nothing about LtRAM needs this; it just removes migration and
 # most preemption so a stall is attributable.

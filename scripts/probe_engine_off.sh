@@ -22,6 +22,8 @@
 # the phases is visible rather than guessed at.
 set -u
 [ "$(id -u)" = 0 ] || exec sudo -E "$0" "$@"
+SCRATCH=${SCRATCH:-/scratch/${SUDO_USER:-$(id -un)}/ltram}
+mkdir -p "$SCRATCH" 2>/dev/null || SCRATCH=/tmp   # z08 root is 4.4 GB and full
 PREFLIGHT=$(dirname "$0")/preflight.sh
 [ -x "$PREFLIGHT" ] && { "$PREFLIGHT" --quiet || { echo "!! preflight failed"; exit 1; }; }
 
@@ -30,7 +32,7 @@ REAL_HOME=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)
 MM=${MM:-$REAL_HOME/matmul}
 PIN=${PIN:-47}; NN=${NN:-2896}; HOLD=${HOLD:-60}
 SETTLE=${SETTLE:-0}          # seconds of quiet between the fill and the first phase
-OUT=${OUT:-/var/lib/ltram/selftest/engineoff}
+OUT=${OUT:-$SCRATCH/engineoff}
 mkdir -p "$OUT"
 
 ps_(){ awk -v k="$1" '$1==k{print $2; exit}' $DBG/pagestate; }
@@ -56,7 +58,7 @@ fi
 engine_on
 setp promote_batch 1; setp wear_governor 1; setp wear_days 379
 
-L=/tmp/engineoff.log
+L=$SCRATCH/engineoff.log
 taskset -c $PIN nice -n -20 $MM --n $NN --iters 1 --runs 100000 --chase --chase-hist \
     --slow-ns 5000 --print-ranges --phys --resid-every 20 > $L 2>&1 &
 BG=$!

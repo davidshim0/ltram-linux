@@ -132,6 +132,28 @@ fi
     || bad "no /sys/kernel/debug/ltram/pagestate (run as root?)"
 
 # ---- 7. the endurance ledger ------------------------------------------------
+# z08's root is 4.4 GB and mostly system files. A run log can fill it, and a
+# full root has already ended one campaign. /scratch is NFS with 503 GB.
+# Root is 4.4 GB and 3.4 GB of that is /usr, so it is permanently tight. What
+# matters is not a generous margin but that run output is not going there:
+# below 50 MB a single log can fill it, and a full root has ended a campaign
+# here before.
+FREE=$(df -Pm / | awk 'NR==2{print $4}')
+if   [ "${FREE:-0}" -ge 200 ]; then ok "root has ${FREE} MB free"
+elif [ "${FREE:-0}" -ge 50  ]; then ok "root has ${FREE} MB free (tight -- keep logs on /scratch)"
+else bad "root has only ${FREE} MB free -- a run log will fill it"; fi
+
+# Test the directory the scripts will ACTUALLY write to, not /scratch itself.
+# The mount is NFS and the top-level directory is root-owned; what matters is
+# whether the per-user subdirectory can be created and written.
+SCR=/scratch/${SUDO_USER:-$(id -un)}/ltram
+if mkdir -p "$SCR" 2>/dev/null && touch "$SCR/.pf.$$" 2>/dev/null; then
+    rm -f "$SCR/.pf.$$"
+    ok "$SCR writable ($(df -Pm /scratch | awk 'NR==2{print $4}') MB free)"
+else
+    bad "cannot write $SCR -- large logs have nowhere safe to go"
+fi
+
 [ -s /var/lib/ltram/erase_counts ] && ok "erase-count ledger present" \
     || bad "no /var/lib/ltram/erase_counts -- the endurance record is the one thing not reproducible"
 

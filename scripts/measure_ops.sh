@@ -14,6 +14,8 @@
 # clean sectors, so the engine runs, while promotion consumes what it produces.
 set -u
 [ "$(id -u)" = 0 ] || exec sudo -E "$0" "$@"
+SCRATCH=${SCRATCH:-/scratch/${SUDO_USER:-$(id -un)}/ltram}
+mkdir -p "$SCRATCH" 2>/dev/null || SCRATCH=/tmp   # z08 root is 4.4 GB and full
 PREFLIGHT=$(dirname "$0")/preflight.sh
 [ -x "$PREFLIGHT" ] && { "$PREFLIGHT" --quiet || { echo "!! preflight failed -- run $PREFLIGHT"; exit 1; }; }
 
@@ -43,7 +45,7 @@ echo "  pool: clean $(ps_ clean)  dirty $(ps_ dirty)  data $(ps_ data)"
 setw 65536 65535
 setp promote_batch 1; setp wear_governor 1; setp wear_days 379
 
-L=/tmp/measure-ops.log
+L=$SCRATCH/measure-ops.log
 taskset -c $PIN nice -n -20 \
   $MM --n $NN --iters 1 --runs 100000 --chase --print-ranges --phys --resid-every 20 > $L 2>&1 &
 BG=$!

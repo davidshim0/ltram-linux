@@ -22,6 +22,8 @@
 # One continuous measurement per phase. No pooling, no averaging.
 set -u
 [ "$(id -u)" = 0 ] || exec sudo -E "$0" "$@"
+SCRATCH=${SCRATCH:-/scratch/${SUDO_USER:-$(id -un)}/ltram}
+mkdir -p "$SCRATCH" 2>/dev/null || SCRATCH=/tmp   # z08 root is 4.4 GB and full
 PREFLIGHT=$(dirname "$0")/preflight.sh
 [ -x "$PREFLIGHT" ] && { "$PREFLIGHT" --quiet || { echo "!! preflight failed"; exit 1; }; }
 
@@ -29,7 +31,7 @@ DBG=/sys/kernel/debug/ltram; PAR=/sys/module/ltram_policy/parameters
 REAL_HOME=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)
 MM=${MM:-$REAL_HOME/matmul}
 PIN=${PIN:-47}; NN=${NN:-2896}; HOLD=${HOLD:-300}; POLL=${POLL:-30}
-OUT=${OUT:-/var/lib/ltram/selftest/qos3}
+OUT=${OUT:-$SCRATCH/qos3}
 mkdir -p "$OUT"
 
 ps_(){ awk -v k="$1" '$1==k{print $2; exit}' $DBG/pagestate; }
@@ -62,7 +64,7 @@ setp erase_poll_ms $POLL; setp promote_batch 1; setp wear_governor 1; setp wear_
 # scanner can promote, so nothing migrates because of it.
 sleep 100000 & SLEEPER=$!
 
-L=/tmp/qos3.log
+L=$SCRATCH/qos3.log
 eng_off
 taskset -c $PIN nice -n -20 $MM --n $NN --iters 1 --runs 100000 --chase --chase-hist \
     --slow-ns 5000 --print-ranges --phys --resid-every 50 > $L 2>&1 &

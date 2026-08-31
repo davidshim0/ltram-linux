@@ -12,6 +12,8 @@
 # survive with the memory access gone?
 set -u
 [ "$(id -u)" = 0 ] || exec sudo -E "$0" "$@"   # nice -n -20 needs root
+SCRATCH=${SCRATCH:-/scratch/${SUDO_USER:-$(id -un)}/ltram}
+mkdir -p "$SCRATCH" 2>/dev/null || SCRATCH=/tmp   # z08 root is 4.4 GB and full
 
 # Refuse to measure on a machine that is not in a state where the result would
 # mean anything. Costs milliseconds; has already caught a stale binary, a
@@ -27,7 +29,7 @@ REAL_HOME=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)
 MM=${MM:-$REAL_HOME/matmul}
 N=${N:-2048}
 THRESH=${THRESH:-5000}          # ns; record anything slower
-OUT=${OUT:-/tmp/stallprobe}
+OUT=${OUT:-$SCRATCH/stallprobe}
 [ -x "$MM" ] || { echo "no binary at $MM"; exit 1; }
 mkdir -p $OUT
 
