@@ -442,6 +442,10 @@ if r:
               max(1, sum(1 for q in ph if q == mig + 1))
         note += [
           f"Promotion interference scales with promotion RATE, not with the cost of an erase.",
+          f"  NOTE: both runs use wear_days=379 to finish in reasonable time. At the shipped",
+          f"  5-year default the scanner ticks every 24 ms, not 5 ms, so the clean-pool rate is",
+          f"  37/s, not {r7:.0f}/s. The gated rate is erase-supply-limited and barely moves, so at",
+          f"  the real operating point the ratio is ~3.5x, not {r7/r8:.1f}x.",
           f"  clean pool (fig7)  {r7:5.1f} pages/s   {o7[1]:+.0f} +/- {o7[2]:.0f} ns over settled",
           f"  erase-gated        {r8:5.1f} pages/s   {o8[1]:+.0f} +/- {o8[2]:.0f} ns over settled",
           f"  {r7/r8:.1f}x fewer promotions, so linear scaling predicts {o7[1]/(r7/r8):+.0f} ns -- under the noise floor. It is not",
