@@ -60,16 +60,32 @@ IS=$(cat /sys/devices/system/cpu/isolated  2>/dev/null)
 # second zero and the variable becomes "0\n0", which every numeric test then
 # rejects. Same trap grep -c set for this project once already. Capture the
 # output and ignore the status.
-STALE=$(pgrep -c -f '[m]atmul|[s]weep_|[s]elftest\.sh|[p]robe_stalls' 2>/dev/null)
+# Match the BINARY by name and the scripts by their interpreter invocation.
+# Matching full command lines caught this gate's own diagnostics: any shell
+# whose arguments merely mention "matmul" looked like a run in progress. And
+# exclude this process and its ancestors, since preflight is itself invoked
+# from the scripts it is looking for.
+stale_pids(){
+    local self=$$ p
+    { pgrep -x matmul
+      pgrep -f '^/bin/[a-z]*sh /.*/\(sweep_\|probe_\|qos_\|measure_ops\|selftest\)'
+    } 2>/dev/null | sort -un | while read -r p; do
+        [ "$p" = "$self" ] && continue
+        [ "$p" = "$PPID" ] && continue
+        echo "$p"
+    done
+}
+STALE=$(stale_pids | wc -l)
 STALE=${STALE:-0}
 case "$STALE" in ''|*[!0-9]*) STALE=0;; esac
 if [ "$STALE" -eq 0 ]; then ok "no stale measurement processes"
 elif [ $FIX = 1 ]; then
-    pkill -9 -f '[m]atmul|[s]weep_|[s]elftest\.sh|[p]robe_stalls' 2>/dev/null
+    stale_pids | xargs -r kill -9 2>/dev/null
     sleep 1; ok "killed $STALE stale process(es)"
 else
     bad "$STALE stale process(es) running -- they will corrupt this run (use --fix)"
-    pgrep -af '[m]atmul|[s]weep_|[s]elftest\.sh|[p]robe_stalls' | sed 's/^/        /'
+    stale_pids | while read -r p; do
+        sed -n "s|^|        $p  |p" /proc/$p/comm 2>/dev/null; done
 fi
 
 # ---- 3. does isolation actually WORK? --------------------------------------
