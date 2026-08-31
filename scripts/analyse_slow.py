@@ -98,26 +98,55 @@ def report(path, tag):
 
     # 3. tick or not?
     #
-    # The tick fires on a fixed 1 ms grid at a fixed phase, so every tick-caused
-    # stall lands in the same narrow slice of (timestamp mod 1 ms). Anything
-    # asynchronous to the timer -- a flash erase, say -- cannot. That separates
-    # the machine from the medium by arithmetic, with no need to disable
-    # anything: measure with the tick running, then subtract it.
+    # The tick fires on a 1 ms grid at a phase that does not move: measured
+    # drift is 0.05 ppm and the full-run spread of the phase is 0.59 us against
+    # a 1000 us period. So a narrow window around the modal phase captures every
+    # tick, while anything asynchronous to the timer -- a flash erase -- is
+    # uniform in phase and mostly falls outside it.
+    #
+    # Two refinements matter once there IS a second population:
+    #   * classify by phase AND size. A tick costs 8-33 us and an erase 16.4 ms,
+    #     three orders apart, so an erase that happens to start inside the
+    #     window is still obviously not a tick.
+    #   * the window excludes 2W/1000 of the phase space, so it also swallows
+    #     that fraction of the off-tick population. Correct for it rather than
+    #     quietly under-reporting the medium.
+    W = 5.0                                   # us either side of the mode
+    TICK_MAX_NS = 1_000_000                   # a tick is never a millisecond
     ph = [(s_[2] * 1e6) % 1000.0 for s_ in slow]
-    hp = collections.Counter(int(x // 25) for x in ph)
-    peak = max(hp, key=lambda k: hp[k])
-    keep = {(peak - 1) % 40, peak, (peak + 1) % 40}      # +/- one bin of slack
-    ontick = sum(hp.get(k, 0) for k in keep)
-    off = [s_ for s_, x in zip(slow, ph) if int(x // 25) not in keep]
-    print(f"\n  phase within the 1 ms tick grid: peak at {peak*25}-{peak*25+25} us")
-    print(f"    on-tick  {ontick:>8,}  ({100*ontick/len(slow):5.1f}%)")
-    print(f"    off-tick {len(off):>8,}  ({100*len(off)/len(slow):5.1f}%)  <- not the timer")
+    coarse = collections.Counter(int(x // 25) for x in ph)
+    peak = max(coarse, key=lambda k: coarse[k])
+    cand = sorted(x for x in ph if int(x // 25) == peak)
+    mode = cand[len(cand) // 2] if cand else 0.0
+
+    def near(x):
+        d = abs(x - mode)
+        return min(d, 1000.0 - d) <= W       # wrap around the grid
+
+    on  = [s_ for s_, x in zip(slow, ph) if near(x) and s_[3] < TICK_MAX_NS]
+    off = [s_ for s_, x in zip(slow, ph) if not (near(x) and s_[3] < TICK_MAX_NS)]
+    lost = 2 * W / 1000.0                     # fraction of phase space masked
+    print(f"\n  tick phase: mode {mode:.2f} us on the 1 ms grid, window +/-{W:.0f} us")
+    print(f"    on-tick  {len(on):>8,}  ({100*len(on)/len(slow):5.1f}%)")
+    print(f"    off-tick {len(off):>8,}  ({100*len(off)/len(slow):5.1f}%)  <- NOT the timer")
     if off:
         d = sorted(o[3] for o in off)
+        est = len(off) / (1 - lost)
         print(f"    off-tick sizes: median {d[len(d)//2]/1000:.1f} us, "
               f"p99 {d[int(0.99*len(d))]/1000:.1f} us, max {d[-1]/1000:.1f} us")
+        # Only correct for masked phase space when the two populations are NOT
+        # separable by size. If they are -- an erase is 16 ms and a tick is
+        # tens of us -- then the size test already recovered the events inside
+        # the window, and applying the correction on top over-reports them.
+        sep = d[0] > 10 * TICK_MAX_NS / 1000
+        if sep:
+            print(f"    sizes are {d[0]/1000/33:.0f}x the tick, so the size test already")
+            print(f"    recovered anything inside the window: no correction needed.")
+        else:
+            print(f"    sizes overlap the tick range, so the window masks {100*lost:.1f}% of")
+            print(f"    them: true off-tick count is about {est:,.0f} (+{est-len(off):.0f})")
     else:
-        print("    => nothing survives the subtraction: the tail here is ALL timer.")
+        print("    => nothing survives the subtraction: this tail is ALL timer.")
 
     # 3. size classes
     print("\n  size classes:")
