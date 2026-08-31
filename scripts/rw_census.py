@@ -35,7 +35,8 @@ WHAT IS REPORTED
                Without root the accessed column is skipped and the write-cold
                curve, which is the half the argument rests on, still works.
 """
-import argparse, os, struct, sys, time, subprocess, signal
+import argparse, os, shlex, struct, sys, time, subprocess, signal
+import numpy as np
 
 PAGE = os.sysconf("SC_PAGE_SIZE")
 PM_SOFT_DIRTY, PM_PRESENT = 1 << 55, 1 << 63
@@ -54,7 +55,12 @@ a = ap.parse_args()
 
 proc = None
 if a.cmd:
-    proc = subprocess.Popen(a.cmd, shell=True, preexec_fn=os.setsid)
+    # NOT shell=True. It returns the SHELL's pid -- dash forks rather than
+    # execs here -- so the census silently measured a 972 kB shell instead of a
+    # 263 MB workload and reported 461 pages. Exec the argv directly and the
+    # pid is the workload's. Anything needing shell syntax should be started
+    # separately and passed with --pid.
+    proc = subprocess.Popen(shlex.split(a.cmd), preexec_fn=os.setsid)
     pid = proc.pid
     print(f"# launched pid {pid}: {a.cmd}", file=sys.stderr)
     time.sleep(a.warmup)
@@ -107,14 +113,30 @@ for lo, hi in regions:
         if e & PM_PRESENT: va_pfn[lo + i * PAGE] = e & PFN_MASK
 N = len(va_pfn)
 if not N: sys.exit("no resident pages")
+# Cross-check the snapshot against the kernel's own RSS. Measuring the wrong
+# process, or snapshotting before a workload has faulted its memory in, both
+# show up here as a large shortfall -- and both are silent otherwise.
+try:
+    rss_pages = int(open(f"/proc/{pid}/statm").read().split()[1])
+    if rss_pages and N < 0.5 * rss_pages:
+        print(f"!! snapshot has {N:,} pages but RSS is {rss_pages:,} -- measuring the "
+              f"wrong process, or it has not faulted in yet. Refusing.", file=sys.stderr)
+        if proc:
+            try: os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception: pass
+        sys.exit(2)
+except FileNotFoundError:
+    pass
 order = sorted(va_pfn)
 idx = {va: i for i, va in enumerate(order)}
 pfns = [va_pfn[va] for va in order]
 
 NW = a.run // a.interval
 if NW < 2: sys.exit(f"--run {a.run} gives only {NW} window(s) at S={a.interval}; need >= 2")
-last_w = [-10**9] * N          # last window in which the page was written
-last_a = [-10**9] * N          # ... accessed
+NEVER = -10**9
+last_w = np.full(N, NEVER, dtype=np.int32)   # last window the page was written
+last_a = np.full(N, NEVER, dtype=np.int32)   # ... accessed
+pfn_arr = np.array(pfns, dtype=np.int64)
 acc_wc = {}; acc_cold = {}; nobs = {}
 
 print(f"# {label}: {N:,} pages = {N*PAGE/2**20:.0f} MiB, S={a.interval}s, "
@@ -130,23 +152,33 @@ for w in range(NW):
         print(f"# workload exited during window {w}", file=sys.stderr); break
     try:
         for lo, hi in regions:
-            try: ents = pagemap(lo, hi)
+            try:
+                with open(f"/proc/{pid}/pagemap", "rb") as f:
+                    f.seek((lo // PAGE) * 8)
+                    raw = f.read(((hi - lo) // PAGE) * 8)
             except Exception: continue
-            for i, e in enumerate(ents):
-                va = lo + i * PAGE
-                if (e & PM_PRESENT) and (e & PM_SOFT_DIRTY):
-                    j = idx.get(va)
-                    if j is not None: last_w[j] = w
+            e = np.frombuffer(raw, dtype=np.uint64)
+            hit = np.nonzero(((e & np.uint64(PM_PRESENT)) != 0) &
+                             ((e & np.uint64(PM_SOFT_DIRTY)) != 0))[0]
+            for i in hit:
+                j = idx.get(lo + int(i) * PAGE)
+                if j is not None: last_w[j] = w
         if HAVE_IDLE:
             still = idle_read([p for p in pfns if p])
             for i, p in enumerate(pfns):
                 if p and p not in still: last_a[i] = w
     except (FileNotFoundError, ProcessLookupError): break
     # Every T that is a multiple of S, evaluated at this boundary.
+    # Counting by prefix sum over a histogram of last-written windows, so a
+    # boundary costs O(windows) rather than O(pages) per T.
+    hw = np.bincount(np.clip(last_w - (w - NW), 0, None).astype(np.int64), minlength=NW + 2)
+    ha = np.bincount(np.clip(last_a - (w - NW), 0, None).astype(np.int64), minlength=NW + 2)
+    cw, ca = np.cumsum(hw), np.cumsum(ha)
     for k in range(1, w + 2):
         T = k * a.interval
-        wc = sum(1 for v in last_w if v <= w - k)
-        cd = sum(1 for v in last_a if v <= w - k) if HAVE_IDLE else 0
+        b = (w - k) - (w - NW)
+        wc = int(cw[b]) if b >= 0 else 0
+        cd = (int(ca[b]) if b >= 0 else 0) if HAVE_IDLE else 0
         acc_wc[T] = acc_wc.get(T, 0) + wc
         acc_cold[T] = acc_cold.get(T, 0) + cd
         nobs[T] = nobs.get(T, 0) + 1
