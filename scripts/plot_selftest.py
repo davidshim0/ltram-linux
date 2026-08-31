@@ -575,7 +575,7 @@ if r:
     # real, but it is not an operating point the system runs in, because the
     # 30 ms reader spacing is only disabled by clearing target_pid, which is a
     # measurement artefact. Both stay in qos.csv.
-    HIDE = {"engine_normal", "engine_flat_out", "engine_on"}
+    HIDE = {"engine_normal", "engine_flat_out", "engine_on", "nor_erase"}
     have = [(c,) + LABEL.get(c, (C_MODEL, c.replace("_", " "))) for c in present
             if hist(c) and c not in HIDE]
     if have:
@@ -708,7 +708,9 @@ if r:
                   f"all {len(have)} conditions measured in one run, {reps[0]} each, identical settings: "
                   f"same binary, same pinned CPU, target_pid held on a sleeper throughout.\n"
                   f"{ns[0]/1e6:.0f}\u2013{ns[-1]/1e6:.0f} M individually timed reads per condition. "
-                  f"No pooling, no averaging.",
+                  f"No pooling, no averaging.\n"
+                  f"A fifth condition, erases without writes, was measured and is kept in the data; "
+                  f"it is omitted here because the combined case shows the same erase step.",
                   fontsize=7.6, color="#7A838A", va="bottom", linespacing=1.5)
         fig2.subplots_adjust(bottom=0.185)
         fig2.savefig(f"{OUT}/fig9b-quantiles.png", dpi=200)
