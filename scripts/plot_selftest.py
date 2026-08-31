@@ -494,37 +494,44 @@ if r and len(r) > 2:
 
 r = rows("qos.csv")
 if r:
-    # Per-READ latency, not per-pass. Plotted as a complementary CDF: the y
-    # value at x is the fraction of reads that took longer than x. A tail is
-    # a shape here, not a single number that an average has already eaten.
-    # Log y, because the interesting part is the one read in 10^5.
-    def ccdf(cond):
-        b = sorted(((int(x["bucket_hi_ns"]), int(x["count"])) for x in r
-                    if x["condition"] == cond and int(x["count"])), key=lambda t: t[0])
-        if not b: return None, None, 0
-        n = sum(c for _, c in b)
-        # Start at the bottom edge of the first occupied bucket with y=1, so
-        # the drop off the body is drawn. Without it the curve begins in
-        # mid-air at 1e-3 and the reader cannot see where the mass sits.
-        xs, ys, rem = [max(1, (b[0][0] + 1) // 2)], [1.0], n
-        for hi, c in b:
-            xs.append(hi); rem -= c; ys.append(rem / n)
-        return xs, ys, n
+    # Per-READ latency, not per-pass. A pass average cannot answer "does a
+    # read randomly stall": at 192 MiB a pass is 1.5M reads, so one 16.4 ms
+    # erase moves the mean by 1% and the read that waited is gone.
+    #
+    # Drawn as percentiles on a LINEAR millisecond axis rather than a log-log
+    # CCDF. The CCDF is the right object mathematically and unreadable in
+    # practice -- five decades of y, and the number a reader actually wants
+    # (what IS p99.99) has to be traced off an axis. Here every value is
+    # printed. The bars below p99.9 are invisible slivers, and that is the
+    # finding: nothing moves until the tail, then it explodes.
+    def hist(cond):
+        return sorted(((int(x["bucket_hi_ns"]), int(x["count"])) for x in r
+                       if x["condition"] == cond and int(x["count"])), key=lambda t: t[0])
 
     def pct(cond, q):
-        """Latency below which q of reads fall -- reported as the bucket's
-        upper edge, so it reads as 'no slower than'."""
-        b = sorted(((int(x["bucket_hi_ns"]), int(x["count"])) for x in r
-                    if x["condition"] == cond and int(x["count"])), key=lambda t: t[0])
+        """Bucket upper edge below which q of reads fall -- "no slower than".
+        Buckets are octaves, so this is coarse by construction, which is the
+        right resolution for a tail spanning 1 us to 34 ms."""
+        b = hist(cond)
+        if not b: return 0
         n = sum(c for _, c in b); seen = 0
         for hi, c in b:
             seen += c
             if seen >= q * n: return hi
-        return b[-1][0] if b else 0
+        return b[-1][0]
 
-    # Whatever conditions the run recorded. The operating point turned out to
-    # matter by more than an order of magnitude, so the set is not fixed at
-    # two: off / module defaults / pinned flat out.
+    def slower_than(cond, ns):
+        # Count on the bucket's LOWER edge, so every read counted is
+        # definitely at least ns. Counting on the upper edge would sweep in a
+        # bucket spanning 4.2-8.4 ms and overstate by one.
+        b = hist(cond); n = sum(c for _, c in b)
+        return sum(c for hi, c in b if (hi + 1) // 2 >= ns), n
+
+    def fmt(ns):
+        if ns < 1000:            return f"{ns} ns"
+        if ns < 1_000_000:       return f"{ns/1000:.1f} \u00b5s"
+        return f"{ns/1e6:.1f} ms"
+
     LABEL = {"engine_off":      (C_DRAM, "no background erasing"),
              "engine_normal":   ("#B8860B", "erasing, module defaults"),
              "engine_on":       ("#B8860B", "erasing, module defaults"),
@@ -532,45 +539,47 @@ if r:
     order = ["engine_off", "engine_normal", "engine_on", "engine_flat_out"]
     present = [c for c in order if any(x["condition"] == c for x in r)]
     present += sorted({x["condition"] for x in r} - set(order))
-    CONDS = [(c,) + LABEL.get(c, (C_MODEL, c.replace("_", " "))) for c in present]
-    have = [c for c in CONDS if ccdf(c[0])[2]]
+    have = [(c,) + LABEL.get(c, (C_MODEL, c.replace("_", " "))) for c in present
+            if hist(c)]
     if have:
-        fig, ax = plt.subplots(figsize=(7.6, 4.8))
-        floor = 1.0
+        QS = [(0.50, "p50"), (0.99, "p99"), (0.999, "p99.9"),
+              (0.9999, "p99.99"), (0.99999, "p99.999"), (1.0, "max")]
+        fig, ax = plt.subplots(figsize=(10.5, 5.4))
+        nb = len(have); h = 0.8 / nb
         for k, (cond, colour, label) in enumerate(have):
-            xs, ys, n = ccdf(cond)
-            floor = min(floor, 1.0 / n)
-            # Step: the count in a bucket is not resolved within it.
-            ax.step(xs, ys, where="post", color=colour, lw=1.8, label=label)
-            mx = pct(cond, 1.0)
-            ax.plot([mx], [1.0 / n], "o", color=colour, ms=5, zorder=5)
-            ax.annotate(f"max {mx/1000:.0f} µs", (mx, 1.0 / n),
-                        # Buckets are octaves, so two conditions can share a
-                        # top bucket and their labels land on each other.
-                        textcoords="offset points", xytext=(-6, 7 + 12 * k),
-                        ha="right", fontsize=8.5, color=colour)
-        ax.set_xscale("log"); ax.set_yscale("log")
-        for q, lab in ((0.99, "p99"), (0.999, "p99.9"), (0.9999, "p99.99")):
-            if 1 - q < floor: continue
-            ax.axhline(1 - q, color=C_GRID, lw=.7, ls=":", zorder=0)
-            # x in axes fraction so the label sits on the axis regardless of
-            # where the data happens to start.
-            ax.annotate(lab, (0.995, 1 - q), xycoords=("axes fraction", "data"),
-                        textcoords="offset points", xytext=(0, 3),
-                        ha="right", fontsize=8, color=C_GRID)
-        ax.set_ylim(bottom=floor * 0.6, top=1.2)
-        frame(ax, "Per-Read Latency Tail Under Background Erasing",
-              "Read Latency (ns)", "Fraction of Reads Slower Than x")
-        legend_by_last(ax, fontsize=9, frameon=False, loc="lower left")
-        fig.tight_layout(); fig.savefig(f"{OUT}/fig9-latency-tail.png", dpi=200)
+            vals = [pct(cond, q) / 1e6 for q, _ in QS]          # ms
+            ys = [len(QS) - 1 - j + (nb - 1 - k) * h - (nb - 1) * h / 2
+                  for j in range(len(QS))]
+            ax.barh(ys, vals, height=h * 0.92, color=colour, label=label, zorder=3)
+            for y, v, (q, _) in zip(ys, vals, QS):
+                ax.annotate(fmt(pct(cond, q)), (v, y), xytext=(5, 0),
+                            textcoords="offset points", va="center", ha="left",
+                            fontsize=8.6, color=colour, zorder=4)
+        ax.set_yticks(range(len(QS)))
+        ax.set_yticklabels([n for _, n in QS][::-1], fontsize=10)
+        ax.set_xlim(0, max(pct(c, 1.0) for c, _, _ in have) / 1e6 * 1.22)
+        frame(ax, "Read Latency Percentiles, per Access",
+              "Read Latency (ms)  \u2014  one erase is 16.4 ms", "")
+        ax.grid(axis="y", visible=False)
+        ax.legend(fontsize=9, frameon=False, loc="upper right")
+
+        # The max is the same either side -- 12 reads of 67 million land there
+        # with the engine OFF, which is the OS, not the flash. What separates
+        # the conditions is how OFTEN, so state that rather than leaving the
+        # equal maxima to imply the tails are equal.
+        lines = []
+        for cond, _, label in have:
+            c8, n = slower_than(cond, 8_000_000)
+            lines.append(f"reads >= 8 ms   {label}:  {c8:,} of {n:,}"
+                         + (f"   =  1 in {n//c8:,}" if c8 else "   =  none"))
+        figure_note(fig, lines, size=8.2)
+        fig.savefig(f"{OUT}/fig9-latency-tail.png", dpi=200)
         made.append("fig9-latency-tail")
 
-        print("\n  per-read latency (bucket upper edge, ns)")
-        print(f"    {'':26} {'p50':>8} {'p99':>8} {'p99.9':>9} {'p99.99':>9} {'max':>10}")
+        print("\n  per-read latency")
+        print(f"    {'':34}" + "".join(f"{n:>11}" for _, n in QS))
         for cond, _, label in have:
-            n = ccdf(cond)[2]
-            qs = [pct(cond, q) for q in (0.5, 0.99, 0.999, 0.9999, 1.0)]
-            print(f"    {label:26} " + " ".join(f"{v:>8}" for v in qs[:2])
-                  + f" {qs[2]:>9} {qs[3]:>9} {qs[4]:>10}   (n={n})")
+            print(f"    {label:34}" + "".join(f"{fmt(pct(cond, q)):>11}" for q, _ in QS))
+
 print("plotted:", ", ".join(made) if made else "nothing found")
 for m in made: print(f"  {OUT}/{m}.png")
