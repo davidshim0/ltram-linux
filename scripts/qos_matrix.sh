@@ -112,15 +112,16 @@ phase(){   # $1 = name
     c1=$(awk '/^ctxt/{print $2}' /proc/stat); irqsnap > /tmp/q1.$$
     iv=$(awk -v a="$h0" -v b="$h1" '/^CTX/{n++; if(n>a&&n<=b) s+=$4} END{print s+0}' $L)
     echo "$1 $h0 $h1" >> $OUT/marks.txt
-    # data rising means pages were promoted, i.e. programs happened. clean
-    # rising means sectors were blanked, i.e. erases happened. Printing both
-    # per phase means a phase that silently did nothing -- as engine_normal
-    # once did -- is visible rather than mistaken for a clean result.
+    # A promotion takes one clean -> data; an erase takes one dirty -> clean.
+    # So d_clean = erases - promotions, and clean-delta ALONE is the net, which
+    # reads as zero in any phase doing both -- nor_write_erase did ~1,001 erases
+    # and reported +2. erases = d_clean + d_data.
     printf "  %-16s %5d passes  writes %+7d (%5.1f/s)  erases %+7d (%5.1f/s)  invol %d\n" \
         "$1" "$(( h1 - h0 ))" "$(( da1 - da0 ))" \
         "$(awk -v a=$da0 -v b=$da1 -v t=$HOLD 'BEGIN{printf "%.1f",(b-a)/t}')" \
-        "$(( cl1 - cl0 ))" \
-        "$(awk -v a=$cl0 -v b=$cl1 -v t=$HOLD 'BEGIN{printf "%.1f",(b-a)/t}')" "$iv"
+        "$(( (da1 - da0) + (cl1 - cl0) ))" \
+        "$(awk -v a=$cl0 -v b=$cl1 -v c=$da0 -v d=$da1 -v t=$HOLD \
+              'BEGIN{printf "%.1f",((b-a)+(d-c))/t}')" "$iv"
     join -j1 /tmp/q0.$$ /tmp/q1.$$ | awk -v p="$1" '{d=$3-$2; if(d>0) print p,$1,d}' >> $OUT/irq.txt
     rm -f /tmp/q0.$$ /tmp/q1.$$
 }
@@ -197,12 +198,14 @@ def pct(m,q):
         if s>=q*t: return edges(b)[1]
     return 0
 def fmt(v): return f"{v/1e6:.1f} ms" if v>=1e6 else (f"{v/1000:.1f} us" if v>=1000 else f"{v} ns")
-print(f"\n  {'condition':<13}{'reads':>14}{'p50':>9}{'p99.9':>10}{'p99.99':>10}{'p99.999':>11}{'max':>11}")
+print(f"\n  {'condition':<17}{'reads':>14}{'p50':>9}{'p99.9':>10}{'p99.99':>10}"
+      f"{'p99.999':>11}{'p99.9999':>11}{'max':>11}")
 for g in ("dram","nor_read","nor_erase","nor_write","nor_write_erase"):
     m=tot[g]
     if not m: continue
-    print(f"  {g:<13}{sum(m.values()):>14,}{fmt(pct(m,.5)):>9}{fmt(pct(m,.999)):>10}"
-          f"{fmt(pct(m,.9999)):>10}{fmt(pct(m,.99999)):>11}{fmt(pct(m,1.0)):>11}")
+    print(f"  {g:<17}{sum(m.values()):>14,}{fmt(pct(m,.5)):>9}{fmt(pct(m,.999)):>10}"
+          f"{fmt(pct(m,.9999)):>10}{fmt(pct(m,.99999)):>11}{fmt(pct(m,.999999)):>11}"
+          f"{fmt(pct(m,1.0)):>11}")
 PY
 echo "  wrote $OUT/qos.csv"
 rm -f $L

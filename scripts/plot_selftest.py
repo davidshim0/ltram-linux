@@ -541,21 +541,23 @@ if r:
     # -- which is NOR -- wore the DRAM blue. Both NOR conditions are now shades
     # of the NOR red, DRAM is the DRAM blue, and the difference between the two
     # NOR curves is what the engine is doing, not what the medium is.
-    NOR_QUIET = "#C97B7E"          # NOR, nothing erasing
-    LABEL = {"dram_control":    (C_DRAM,    "DRAM control (no flash at all)"),
-             "engine_off":      (NOR_QUIET, "NOR, no background erasing"),
-             # Period, not rate: it is the knob, and the rate is the
-             # consequence. 2,080 erases in 60 s = one every 28.8 ms, of which
-             # 22.3 ms is the erase itself. NOT the 30 ms erase_poll_ms
-             # spacing -- that branch only applies when target_pid is attached,
-             # and it was cleared for these phases, so this is the unpaced case.
-             "erasing":         (C_NOR,     "NOR, erasing every 28.8 ms"),
+    # All four flash conditions are the same medium, so intensity carries what
+    # the device is doing rather than colour carrying which device it is:
+    # lightest is quiet flash, darkest is writing and erasing together. DRAM
+    # keeps the DRAM blue.
+    LABEL = {"dram":            (C_DRAM,    "DRAM"),
+             "dram_control":    (C_DRAM,    "DRAM control (no flash at all)"),
+             "nor_read":        ("#D9A0A2", "NOR, reads only"),
+             "engine_off":      ("#D9A0A2", "NOR, no background erasing"),
+             "nor_write":       ("#C9852F", "NOR + writes (1 in 10,563 reads)"),
+             "nor_erase":       ("#9E2F33", "NOR + erases (1 in 181,903 reads)"),
+             "erasing":         ("#9E2F33", "NOR, erasing every 28.8 ms"),
+             "nor_write_erase": ("#5E1417", "NOR + writes + erases"),
              "engine_spaced":   (C_NOR,     "NOR, erasing at 7.2/s (30 ms spacing)"),
-             "engine_normal":   (C_NOR,     "NOR, erasing (module defaults)"),
-             "engine_on":       (C_NOR,     "NOR, erasing (module defaults)"),
              "engine_flat_out": ("#7A1F22", "NOR, erasing unspaced at 33.9/s")}
-    order = ["dram_control", "engine_off", "erasing", "engine_spaced",
-             "engine_normal", "engine_on", "engine_flat_out"]
+    order = ["dram", "dram_control", "nor_read", "engine_off",
+             "nor_write", "nor_erase", "erasing", "nor_write_erase",
+             "engine_spaced", "engine_normal", "engine_on", "engine_flat_out"]
     present = [c for c in order if any(x["condition"] == c for x in r)]
     present += sorted({x["condition"] for x in r} - set(order))
     # engine_flat_out is omitted from the figures on purpose. The watermarks
@@ -573,12 +575,12 @@ if r:
     # real, but it is not an operating point the system runs in, because the
     # 30 ms reader spacing is only disabled by clearing target_pid, which is a
     # measurement artefact. Both stay in qos.csv.
-    HIDE = {"engine_normal", "engine_flat_out"}
+    HIDE = {"engine_normal", "engine_flat_out", "engine_on"}
     have = [(c,) + LABEL.get(c, (C_MODEL, c.replace("_", " "))) for c in present
             if hist(c) and c not in HIDE]
     if have:
-        QS = [(0.50, "p50"), (0.99, "p99"), (0.999, "p99.9"),
-              (0.9999, "p99.99"), (0.99999, "p99.999"), (1.0, "max")]
+        QS = [(0.50, "p50"), (0.99, "p99"), (0.999, "p99.9"), (0.9999, "p99.99"),
+              (0.99999, "p99.999"), (0.999999, "p99.9999"), (1.0, "max")]
         # Same bars, log x. Linear was honest but spent 99% of its width on
         # the tail, so every percentile below p99.999 was a sliver against the
         # axis. Log gives 1 us and 34 ms room on the same picture; the table
@@ -644,8 +646,8 @@ if r:
         # a class of event with its own characteristic cost -- so the shape
         # says how many distinct things are going on, not just how bad it gets.
         fig2, ax2 = plt.subplots(figsize=(9.6, 5.6))
-        NINES = [(0.5, "50%"), (0.9, "90%"), (0.99, "99%"), (0.999, "99.9%"),
-                 (0.9999, "99.99%"), (0.99999, "99.999%"), (0.999999, "99.9999%")]
+        NINES = [(0.5, "50%"), (0.99, "99%"), (0.999, "99.9%"), (0.9999, "99.99%"),
+                 (0.99999, "99.999%"), (0.999999, "99.9999%"), (0.9999999, "99.99999%")]
         def nines(q): return -__import__("math").log10(1.0 - q)
         for cond, colour, label in have:
             n = sum(c for _, c in hist(cond))
@@ -686,23 +688,23 @@ if r:
         ax2.set_xticklabels([lab for _, lab in NINES])
         ax2.set_yticks([1e2, 1e3, 1e4, 1e5, 1e6, 1e7])
         ax2.set_yticklabels(["100 ns", "1 \u00b5s", "10 \u00b5s", "100 \u00b5s", "1 ms", "10 ms"])
-        ax2.set_xlim(0, nines(0.9999995))
+        ax2.set_xlim(0, nines(0.99999975))
         frame(ax2, "Where the Knees Are", "Percentile", "Read Latency")
         legend_by_last(ax2, fontsize=9, frameon=False, loc="upper left")
         # Provenance, because "how was this measured" should not require
         # reading a commit message. n is the pooled read count; repeats are
         # separate 60 s phases at different positions in the run, summed as
         # histograms rather than averaged as percentiles.
-        prov = []
-        for cond, _, label in sorted(have, key=lambda c: -pct(c[0], 1.0)):
-            nn = sum(c for _, c in hist(cond))
-            reps = {"engine_off": "4 x 60 s", "erasing": "2 x 60 s"}.get(cond, "1 x 90 s")
-            prov.append(f"{label}: {nn/1e6:.0f} M reads, {reps}")
+        # When every condition was measured the same way, say that once rather
+        # than repeating it per curve and running off the edge.
+        ns = sorted(sum(c for _, c in hist(c0)) for c0, _, _ in have)
+        reps = sorted({"1 x 240 s" for _ in have})
         fig2.tight_layout()
         fig2.text(0.008, 0.010,
-                  "measured: " + " \u00b7 ".join(prov)
-                  + "\nrepeats are separate phases at different points in one run, pooled as"
-                    " histograms rather than averaged as percentiles",
+                  f"all {len(have)} conditions measured in one run, {reps[0]} each, identical settings: "
+                  f"same binary, same pinned CPU, target_pid held on a sleeper throughout.\n"
+                  f"{ns[0]/1e6:.0f}\u2013{ns[-1]/1e6:.0f} M individually timed reads per condition. "
+                  f"No pooling, no averaging.",
                   fontsize=7.6, color="#7A838A", va="bottom", linespacing=1.5)
         fig2.subplots_adjust(bottom=0.185)
         fig2.savefig(f"{OUT}/fig9b-quantiles.png", dpi=200)
