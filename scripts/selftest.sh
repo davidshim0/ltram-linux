@@ -1029,6 +1029,11 @@ else
         PRES=$(grep "^RESID" $L | tail -1 | awk '{print $4}'); PRES=${PRES:-0}
         awk -v r="$PRES" 'BEGIN{exit !(r >= 99.9)}' && break
         kill -0 $BG 2>/dev/null || break
+        # Same guard as sweep_qos.sh: no RESID at all is a matmul regression,
+        # not a slow fill, and waiting it out costs the whole suite an hour.
+        if [ "$i" -eq 120 ] && [ "$(grep -c '^RESID' $L)" -eq 0 ]; then
+            kill $BG 2>/dev/null; break
+        fi
         sleep 0.5
     done
     # Stop promoting: from here the only thing that can touch a read is the

@@ -66,6 +66,14 @@ for i in $(seq 1 20000); do
     R=$(grep "^RESID" $L | tail -1 | awk '{print $4}')
     awk -v r="${R:-0}" 'BEGIN{exit !(r >= 99.9)}' && break
     kill -0 $BG 2>/dev/null || break
+    # A missing RESID line is indistinguishable from a slow fill, and the
+    # difference is 2 minutes against 2.8 hours of spinning. --chase skipped
+    # the RESID emission entirely once; fail loudly rather than wait it out.
+    if [ "$i" -eq 120 ] && [ "$(grep -c '^RESID' $L)" -eq 0 ]; then
+        echo "!! no RESID line after 60s -- matmul is not reporting residency."
+        echo "   $(grep -c '^POINT' $L) passes done, so the run itself is alive."
+        kill $BG 2>/dev/null; exit 1
+    fi
     [ $(( i % 120 )) -eq 0 ] && echo "    residency ${R:-?}%"
     sleep 0.5
 done
