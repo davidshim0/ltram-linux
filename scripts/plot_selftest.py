@@ -92,6 +92,27 @@ def mark_peak(ax, t, ns, ph, mig, ref, colour, dx=-14, dy=8):
                                 shrinkA=0, shrinkB=3))
 
 
+def figure_note(fig, lines, size=7.4):
+    """Prose in the bottom margin, not over the plot.
+
+    The other figures carry no prose on purpose -- what a figure shows belongs
+    where it is presented. fig8 is the exception by request: the reason its
+    overshoot is zero took a wrong estimator and a rate argument to establish,
+    and that is worth having attached to the picture rather than in a commit
+    message. Reserved as margin via tight_layout's rect, so the axes keep
+    their proportions and the note cannot land on the data.
+    """
+    # Grow the canvas for the note rather than reserving margin out of it --
+    # reserving squashed a 5.2 inch plot into a 2 inch strip.
+    w, h0 = fig.get_size_inches()
+    hn = len(lines) * size * 1.55 / 72 + 0.35     # inches the note needs
+    fig.set_size_inches(w, h0 + hn, forward=True)
+    frac = hn / (h0 + hn)
+    fig.tight_layout(rect=[0, frac, 1, 1])
+    fig.text(0.010, frac * 0.93, "\n".join(lines), fontsize=size,
+             color="#4a5560", va="top", ha="left", linespacing=1.55)
+
+
 made = []
 r = rows("read-vs-erase.csv")
 if r:
@@ -394,7 +415,56 @@ if r:
     ax.set_ylim(0, top); ax.set_xlim(left=0)
     frame(ax, "Latency when migration must wait for erases",
           "Time (sec)", "Average Latency per Cache line (ns)")
-    fig.tight_layout(); fig.savefig(f"{OUT}/fig8-worst-case.png", dpi=200)
+    # Everything below is derived from the runs, so a re-measurement moves the
+    # note with it. 49,152 pages is the 192 MiB working set both runs promote.
+    WS = 49152
+    def rate(rows_, mig_):
+        tt = [float(x["elapsed_s"]) for x in rows_ if int(x["phase"]) == mig_]
+        return WS / (max(tt) - min(tt)) if tt and max(tt) > min(tt) else 0.0
+
+    o8 = overshoot(t, ns, ph, mig, mig + 1)
+    r8 = rate(r, mig)
+    t7 = rows("timeline.csv")
+    note = ["Why the erase-gated overshoot is zero, and what is still open"]
+    if t7 and o8:
+        t7t = [float(x["elapsed_s"]) for x in t7]
+        t7n = [float(x["ns_per_line"]) for x in t7]
+        t7p = [int(x["phase"]) for x in t7]
+        o7 = overshoot(t7t, t7n, t7p, 2, 3)
+        r7 = rate(t7, 2)
+        # fig7's settled value, for the duty-cycle comparison. Read it rather
+        # than typing it, so a re-measurement cannot leave a stale constant.
+        s7 = [y for y, q in zip(t7n, t7p) if q == 3]
+        set7 = sum(s7) / len(s7)
+        quiet = sum(y for y, q in zip(ns, ph) if q == mig + 2) / \
+                max(1, sum(1 for q in ph if q == mig + 2)) if 4 in ph else None
+        eng = sum(y for y, q in zip(ns, ph) if q == mig + 1) / \
+              max(1, sum(1 for q in ph if q == mig + 1))
+        note += [
+          f"Promotion interference scales with promotion RATE, not with the cost of an erase.",
+          f"  clean pool (fig7)  {r7:5.1f} pages/s   {o7[1]:+.0f} +/- {o7[2]:.0f} ns over settled",
+          f"  erase-gated        {r8:5.1f} pages/s   {o8[1]:+.0f} +/- {o8[2]:.0f} ns over settled",
+          f"  {r7/r8:.1f}x fewer promotions, so linear scaling predicts {o7[1]/(r7/r8):+.0f} ns -- under the noise floor. It is not",
+          f"  smaller than fig7's, it is below what this measurement can detect.",
+          f"Mechanism: a program is 1.2 ms/page, so {r7:.1f}/s is {100*r7*0.0012:.1f}% duty against {100*o7[1]/set7:.1f}% observed",
+          f"  slowdown. Kernel-side work (TLB shootdown, 4 KiB copy, L2 writeback) is ~0.7% at that",
+          f"  rate -- an order of magnitude too small to be the term.",
+        ]
+        if quiet:
+            note += [
+          f"OPEN: an erase is 16.4 ms and the engine runs ~40/s = ~65% duty, yet erase interference is",
+          f"  only {eng-quiet:+.0f} ns ({100*(eng-quiet)/quiet:.1f}%) -- ~10x too small to be blocking reads the way programs do.",
+          f"  Either bank-level read-while-erase, or programs are correlated with the read stream (a",
+          f"  promotion writes the page the reader is about to touch) while erases hit scattered free",
+          f"  sectors. fig9, the per-read latency tail, separates these.",
+        ]
+        note += [
+          f"ESTIMATOR: peak-minus-settled is NOT the overshoot. The peak is the max of {sum(1 for q in ph if q == mig):,} passes with",
+          f"  sd {o8[2]:.0f}, so noise alone puts it ~3 sigma high -- that route gave a spurious +54. Use the",
+          f"  last-60 s window mean with its scatter, as annotated.",
+        ]
+    figure_note(fig, note)
+    fig.savefig(f"{OUT}/fig8-worst-case.png", dpi=200)
     made.append("fig8-worst-case")
 
 r = rows("wear-history.tsv", "\t")
