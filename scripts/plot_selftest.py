@@ -694,14 +694,17 @@ if r:
         # separate 60 s phases at different positions in the run, summed as
         # histograms rather than averaged as percentiles.
         prov = []
-        for cond, _, label in have:
+        for cond, _, label in sorted(have, key=lambda c: -pct(c[0], 1.0)):
             nn = sum(c for _, c in hist(cond))
             reps = {"engine_off": "4 x 60 s", "erasing": "2 x 60 s"}.get(cond, "1 x 90 s")
             prov.append(f"{label}: {nn/1e6:.0f} M reads, {reps}")
         fig2.tight_layout()
-        fig2.text(0.008, 0.008, "   ".join(prov) + "   \u2014 repeats pooled as histograms, not averaged",
-                  fontsize=7.4, color="#7A838A")
-        fig2.subplots_adjust(bottom=0.155)
+        fig2.text(0.008, 0.010,
+                  "measured: " + " \u00b7 ".join(prov)
+                  + "\nrepeats are separate phases at different points in one run, pooled as"
+                    " histograms rather than averaged as percentiles",
+                  fontsize=7.6, color="#7A838A", va="bottom", linespacing=1.5)
+        fig2.subplots_adjust(bottom=0.185)
         fig2.savefig(f"{OUT}/fig9b-quantiles.png", dpi=200)
         made.append("fig9b-quantiles")
 
