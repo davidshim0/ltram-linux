@@ -536,13 +536,24 @@ if r:
         if ns < 1_000_000:       return f"{ns/1000:.1f} \u00b5s"
         return f"{ns/1e6:.1f} ms"
 
-    LABEL = {"dram_control":    ("#6B7280", "DRAM control (no flash at all)"),
-             "engine_spaced":   ("#2F6B4F", "erasing, 30 ms spacing (real operating point)"),
-             "erasing":         (C_NOR,  "erasing at 34.7/s (measured)"),
-             "engine_off":      (C_DRAM, "no background erasing"),
-             "engine_normal":   ("#B8860B", "erasing, module defaults"),
-             "engine_on":       ("#B8860B", "erasing, module defaults"),
-             "engine_flat_out": (C_NOR,  "erasing, engine pinned flat out")}
+    # Colour is the MEDIUM, which is this project's rule everywhere else and
+    # was broken here: the DRAM control was grey while "no background erasing"
+    # -- which is NOR -- wore the DRAM blue. Both NOR conditions are now shades
+    # of the NOR red, DRAM is the DRAM blue, and the difference between the two
+    # NOR curves is what the engine is doing, not what the medium is.
+    NOR_QUIET = "#C97B7E"          # NOR, nothing erasing
+    LABEL = {"dram_control":    (C_DRAM,    "DRAM control (no flash at all)"),
+             "engine_off":      (NOR_QUIET, "NOR, no background erasing"),
+             # Period, not rate: it is the knob, and the rate is the
+             # consequence. 2,080 erases in 60 s = one every 28.8 ms, of which
+             # 22.3 ms is the erase itself. NOT the 30 ms erase_poll_ms
+             # spacing -- that branch only applies when target_pid is attached,
+             # and it was cleared for these phases, so this is the unpaced case.
+             "erasing":         (C_NOR,     "NOR, erasing every 28.8 ms"),
+             "engine_spaced":   (C_NOR,     "NOR, erasing at 7.2/s (30 ms spacing)"),
+             "engine_normal":   (C_NOR,     "NOR, erasing (module defaults)"),
+             "engine_on":       (C_NOR,     "NOR, erasing (module defaults)"),
+             "engine_flat_out": ("#7A1F22", "NOR, erasing unspaced at 33.9/s")}
     order = ["dram_control", "engine_off", "erasing", "engine_spaced",
              "engine_normal", "engine_on", "engine_flat_out"]
     present = [c for c in order if any(x["condition"] == c for x in r)]
@@ -677,7 +688,7 @@ if r:
         ax2.set_yticklabels(["100 ns", "1 \u00b5s", "10 \u00b5s", "100 \u00b5s", "1 ms", "10 ms"])
         ax2.set_xlim(0, nines(0.9999995))
         frame(ax2, "Where the Knees Are", "Percentile", "Read Latency")
-        ax2.legend(fontsize=9, frameon=False, loc="upper left")
+        legend_by_last(ax2, fontsize=9, frameon=False, loc="upper left")
         fig2.tight_layout()
         fig2.savefig(f"{OUT}/fig9b-quantiles.png", dpi=200)
         made.append("fig9b-quantiles")
