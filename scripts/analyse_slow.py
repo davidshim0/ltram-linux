@@ -96,6 +96,29 @@ def report(path, tag):
         else:
             print("  => positionally uniform: not the code or data at any one spot.")
 
+    # 3. tick or not?
+    #
+    # The tick fires on a fixed 1 ms grid at a fixed phase, so every tick-caused
+    # stall lands in the same narrow slice of (timestamp mod 1 ms). Anything
+    # asynchronous to the timer -- a flash erase, say -- cannot. That separates
+    # the machine from the medium by arithmetic, with no need to disable
+    # anything: measure with the tick running, then subtract it.
+    ph = [(s_[2] * 1e6) % 1000.0 for s_ in slow]
+    hp = collections.Counter(int(x // 25) for x in ph)
+    peak = max(hp, key=lambda k: hp[k])
+    keep = {(peak - 1) % 40, peak, (peak + 1) % 40}      # +/- one bin of slack
+    ontick = sum(hp.get(k, 0) for k in keep)
+    off = [s_ for s_, x in zip(slow, ph) if int(x // 25) not in keep]
+    print(f"\n  phase within the 1 ms tick grid: peak at {peak*25}-{peak*25+25} us")
+    print(f"    on-tick  {ontick:>8,}  ({100*ontick/len(slow):5.1f}%)")
+    print(f"    off-tick {len(off):>8,}  ({100*len(off)/len(slow):5.1f}%)  <- not the timer")
+    if off:
+        d = sorted(o[3] for o in off)
+        print(f"    off-tick sizes: median {d[len(d)//2]/1000:.1f} us, "
+              f"p99 {d[int(0.99*len(d))]/1000:.1f} us, max {d[-1]/1000:.1f} us")
+    else:
+        print("    => nothing survives the subtraction: the tail here is ALL timer.")
+
     # 3. size classes
     print("\n  size classes:")
     cls = collections.Counter()

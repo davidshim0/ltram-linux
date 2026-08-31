@@ -81,7 +81,7 @@ L=/tmp/sweep-qos.log
 PIN=${PIN:-47}
 taskset -c $PIN nice -n -20 \
 $MM --n $NN --iters 1 --runs 100000 --chase --chase-hist --print-ranges --phys \
-    --resid-every 5 > $L 2>&1 &
+    --slow-ns ${SLOWNS:-5000} --resid-every 5 > $L 2>&1 &
 BG=$!
 for i in $(seq 1 900); do grep -q "^TSTART" $L 2>/dev/null && break; sleep 0.1; done
 PID=$(pgrep -x matmul | head -1)
