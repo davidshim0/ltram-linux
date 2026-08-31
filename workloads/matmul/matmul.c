@@ -157,6 +157,34 @@ static int      do_hist = 0;        /* --chase-hist */
 static uint64_t hist[HB];
 static uint64_t hist_n, hist_max_ns;
 static long     ctx_vol, ctx_invol;   /* rusage baselines, for the CTX line */
+
+/*
+ * Localising a stall instead of guessing at it.
+ *
+ * --slow-ns N   record every access slower than N ns with its loop index AND
+ *               its absolute timestamp, not just its size. Two questions then
+ *               become answerable without assuming anything about the cause:
+ *               are the stalls PERIODIC IN TIME (inter-arrival clustered at
+ *               some fixed period -> something external interrupts the loop
+ *               regardless of what it is doing), or POSITIONAL IN THE LOOP
+ *               (clustered at particular indices -> it is the code or the
+ *               data at that spot).
+ *
+ * --null-load   the same measurement loop with the memory access REMOVED.
+ *               Same two clock reads, same arithmetic, no load. If the tail is
+ *               unchanged, the tail was never the memory -- it is the
+ *               instrument or something hitting the instrument. This is the
+ *               control that needs no theory of what the something is.
+ *
+ * SECT lines divide the whole pass into gap / scrub / chase, so if the time is
+ * going somewhere outside the timed loop entirely, that shows up too.
+ */
+#define MAXSLOW 8192
+static uint64_t slow_ns_thresh = 0;   /* --slow-ns; 0 = off */
+static int      null_load = 0;        /* --null-load */
+static struct { uint32_t idx; double t; uint32_t d; } slowrec[MAXSLOW];
+static int      nslow;
+static double   prev_pass_end;
 /*
  * Or on SIGUSR1, which is how the harness drives it: the pass number at which
  * the first migration completes is not knowable in advance, so the script
@@ -697,7 +725,7 @@ int main(int argc, char **argv)
         {"print-ranges",0,0,'R'}, {"phys",0,0,'A'},
         {"hold",1,0,'H'}, {"seed",1,0,'S'}, {"flush",1,0,'F'},
         {"compute-only",0,0,'C'}, {"chase",0,0,'H'+128},
-        {"wait-resident",1,0,'W'}, {"wait-timeout",1,0,'W'+128}, {"wait-stable",1,0,'W'+129}, {"wait-hold",1,0,'W'+130}, {"evict",0,0,'E'}, {"resid-every",1,0,'W'+131}, {"evict-at",1,0,'W'+132}, {"chase-hist",0,0,'W'+133}, {0,0,0,0}
+        {"wait-resident",1,0,'W'}, {"wait-timeout",1,0,'W'+128}, {"wait-stable",1,0,'W'+129}, {"wait-hold",1,0,'W'+130}, {"evict",0,0,'E'}, {"resid-every",1,0,'W'+131}, {"evict-at",1,0,'W'+132}, {"chase-hist",0,0,'W'+133}, {"slow-ns",1,0,'W'+134}, {"null-load",0,0,'W'+135}, {0,0,0,0}
     };
     int c;
     while ((c = getopt_long(argc, argv, "n:i:r:VPRAH:S:F:W:E", lo, NULL)) != -1) {
@@ -718,6 +746,8 @@ int main(int argc, char **argv)
         case 'W'+131: resid_every = atoi(optarg); break;
         case 'W'+132: evict_at = atoi(optarg); break;
         case 'W'+133: do_hist = 1; break;
+        case 'W'+134: slow_ns_thresh = strtoull(optarg, NULL, 10); break;
+        case 'W'+135: null_load = 1; break;
         case 'S': SEED = strtoull(optarg, NULL, 0); break;
         case 'F': flush_mb = strtoul(optarg, NULL, 0); break;
         case 'C': compute_only = 1; break;
@@ -728,7 +758,8 @@ int main(int argc, char **argv)
               "          [--protect-weights] [--print-ranges] [--phys]\n"
               "          [--hold SECS] [--seed S] [--flush MB] [--compute-only] [--chase]\n"
               "          [--wait-resident PCT] [--wait-timeout SECS] [--evict]\n"
-              "          [--resid-every PASSES] [--evict-at PASS] [--chase-hist]\n", argv[0]);
+              "          [--resid-every PASSES] [--evict-at PASS] [--chase-hist]\n"
+              "          [--slow-ns N] [--null-load]\n", argv[0]);
             return 2;
         }
     }
@@ -921,6 +952,8 @@ int main(int argc, char **argv)
     fflush(stdout);
     double t_start = now();   /* wall origin for POINT lines */
     for (int r = 0; r < RUNS; r++) {
+        double p_start = now();
+
         memset(y, 0, ybytes);
         cache_scrub();          /* BEFORE t0: excluded from the measurement */
         double t0 = now();
@@ -933,7 +966,16 @@ int main(int argc, char **argv)
             if (do_hist) {
                 for (k = 0; k < lines; k++) {
                     double a0 = now();
-                    cur = *(volatile uint32_t *)((char *)W + (size_t)cur * 128);
+
+                    /*
+                     * --null-load keeps the loop and both clock reads and
+                     * drops only the memory access. The compiler barrier
+                     * stops it hoisting the timestamps together.
+                     */
+                    if (null_load)
+                        __asm__ __volatile__("" ::: "memory");
+                    else
+                        cur = *(volatile uint32_t *)((char *)W + (size_t)cur * 128);
                     {
                         double d = (now() - a0) * 1e9;   /* ns for this one read */
                         uint64_t ns = d < 1 ? 1 : (uint64_t)d;
@@ -955,6 +997,15 @@ int main(int argc, char **argv)
                         }
                         hist[oct * HB_SUB + sub]++; hist_n++;
                         if (ns > hist_max_ns) hist_max_ns = ns;
+                        /* Keep the WHEN and the WHERE, not just the size. */
+                        if (slow_ns_thresh && ns >= slow_ns_thresh &&
+                            nslow < MAXSLOW) {
+                                slowrec[nslow].idx = (uint32_t)k;
+                                slowrec[nslow].t   = a0;
+                                slowrec[nslow].d   = (uint32_t)(ns > 0xffffffffu
+                                                                ? 0xffffffffu : ns);
+                                nslow++;
+                        }
                     }
                 }
             } else {
@@ -963,9 +1014,30 @@ int main(int argc, char **argv)
             }
             chase_sink += cur;
             t[r] = now() - t0;
+            /*
+             * Divide the whole pass into gap / scrub / chase. If time is
+             * disappearing somewhere OUTSIDE the timed loop -- printing, the
+             * pagemap walk, the scrub -- it shows up here rather than being
+             * invisible. gap is everything between the end of the last chase
+             * and the start of this pass.
+             */
+            if (slow_ns_thresh)
+                    printf("SECT %d %.0f %.0f %.0f\n", r + 1,
+                           prev_pass_end > 0 ? (p_start - prev_pass_end) * 1e9 : 0.0,
+                           (t0 - p_start) * 1e9, t[r] * 1e9);
             printf("  run %2d/%d  %8.3f s   %7.1f ns/access\n",
                    r + 1, RUNS, t[r], t[r] * 1e9 / (double)lines);
             printf("POINT %d %.6f %.3f\n", r + 1, t[r], now() - t_start);
+            if (do_hist && nslow) {
+                int q;
+
+                /* idx = where in the loop; t = when, relative to TSTART. */
+                for (q = 0; q < nslow; q++)
+                        printf("SLOW %d %u %.9f %u\n", r + 1,
+                               slowrec[q].idx, slowrec[q].t - t_start,
+                               slowrec[q].d);
+                nslow = 0;
+            }
             if (do_hist && hist_n) {
                 int b;
                 /*
@@ -1000,6 +1072,7 @@ int main(int argc, char **argv)
                 snprintf(tag, sizeof tag, "run%d", r + 1);
                 phys_report(tag);
             }
+            prev_pass_end = now();
             continue;
         }
         for (int it = 0; it < ITERS; it++) {
