@@ -38,7 +38,15 @@ setw(){ echo "$1" > $PAR/erase_high_water; echo "$2" > $PAR/erase_low_water; }
 # Named engine states. "setw $HW0 $LW0" reads like "engine on" but means
 # "whatever was there", and an aborted run leaves 0/0 -- so restoring it as if
 # it meant on turns the engine OFF. That cost a run.
-engine_on(){  setw 8192 2048; }     # ltram_policy defaults: normal operating point
+engine_on(){
+    # Setting the watermarks is NOT enough. The latch is sticky between the two
+    # marks -- "start below the low mark, keep going until the high one, and in
+    # between keep whatever state you had". Coming out of engine_off with clean
+    # sitting between 2048 and 8192, the engine stays OFF and the phase measures
+    # nothing. That is exactly what engine_normal did: ~0 erases in 90 s.
+    # So force the latch on first, then hand it the real watermarks.
+    setw 65536 65535; sleep 0.3; setw 8192 2048
+}
 engine_max(){ setw 65536 65535; }   # recycle everything, for pool preparation
 engine_off(){ setw 0 0; }
 
@@ -276,5 +284,10 @@ for C in $(awk '{print $1}' $MARKS); do
         "$(pq $C 0.9999)" "$(pq $C 1.0)" "$(pn $C)"
 done
 echo "  (ns; one erase is 16,400,000 ns)"
+# Keep the per-event records: they are what lets a stall be attributed
+# individually rather than only as a histogram, and they cost nothing to store.
+grep "^SLOW" $L > "$(dirname "$OUT")/qos-slow.txt" 2>/dev/null
+grep "^SECT" $L > "$(dirname "$OUT")/qos-sect.txt" 2>/dev/null
+echo "  per-event records -> $(dirname "$OUT")/qos-slow.txt"
 rm -f $L $MARKS
 echo "wrote $OUT"
