@@ -621,12 +621,18 @@ if r:
         cells, rowlab, rowcol = [], [], []
         for cond, colour, label in have:
             cells.append([fmt(pct(cond, q)) for q, _ in QS])
-            rowlab.append(label); rowcol.append(colour)
+            # Strip the "(1 in N reads)" frequency here. In the table the row
+            # labels are the only place the incremental structure shows, and
+            # left-aligned with the parenthetical gone they stack as
+            # reads / reads + writes / reads + writes + erases -- so what each
+            # row adds is legible down the column.
+            rowlab.append(label.split("  (")[0].split(" (")[0])
+            rowcol.append(colour)
         nrow = len(have)
         figt, axt = plt.subplots(figsize=(11.5, 0.42 * nrow + 0.8))
         axt.axis("off")
         tb = axt.table(cellText=cells, colLabels=cols, rowLabels=rowlab,
-                       cellLoc="center", rowLoc="right", loc="center")
+                       cellLoc="center", rowLoc="left", loc="center")
         tb.auto_set_font_size(False); tb.set_fontsize(9.5); tb.scale(1, 1.75)
         for (row, col), cell in tb.get_celld().items():
             cell.set_edgecolor("#D5D8DA"); cell.set_linewidth(.6)
@@ -634,8 +640,10 @@ if r:
                 cell.set_text_props(weight="semibold", color="#3d474e")
                 cell.set_facecolor("#F2F3F4")
             elif col == -1:
-                cell.set_text_props(color=rowcol[row - 1], weight="semibold")
+                cell.set_text_props(color=rowcol[row - 1], weight="semibold",
+                                    ha="left")
                 cell.set_facecolor("none"); cell.set_edgecolor("none")
+                cell.PAD = 0.04
             else:
                 cell.set_text_props(color=rowcol[row - 1])
         axt.set_title("Read Latency Percentiles, per Access", fontsize=13,
@@ -679,22 +687,30 @@ if r:
                          (0.015, fl * 2.6), xycoords=("axes fraction", "data"),
                          fontsize=8.5, color="#5b6670", va="bottom")
         ax2.axhline(16_400_000, color=C_GRID, lw=1, ls="--", zorder=1)
+        ax2.axhline(75_000, color=C_GRID, lw=1, ls="--", zorder=1)
+        ax2.annotate("one 256 B program, 75 \u00b5s  (1.2 ms page \u00f7 16)",
+                     (0.012, 75_000), xycoords=("axes fraction", "data"),
+                     xytext=(0, 5), textcoords="offset points", ha="left",
+                     fontsize=8.5, color="#5b6670")
         # Right-aligned: the legend owns the top-left, and the curves reach
         # this line only at the far right, so the label sits over empty axis.
         # Mid-axis: the legend owns the top-left and the erase curve climbs
         # through the top-right, so the only clear span is the middle.
-        ax2.annotate("one erase, 16.4 ms", (0.34, 16_400_000),
+        ax2.annotate("one erase, 16.4 ms", (0.012, 16_400_000),
                      xycoords=("axes fraction", "data"), xytext=(0, 5),
                      textcoords="offset points", ha="left",
                      fontsize=8.5, color="#5b6670")
         ax2.set_yscale("log")
-        ax2.set_xticks([nines(q) for q, _ in NINES])
-        ax2.set_xticklabels([lab for _, lab in NINES])
+        XR = nines(0.99999975)
+        ax2.set_xticks([nines(q) for q, _ in NINES] + [XR])
+        ax2.set_xticklabels([lab for _, lab in NINES] + ["100%\n(max)"])
         ax2.set_yticks([1e2, 1e3, 1e4, 1e5, 1e6, 1e7])
         ax2.set_yticklabels(["100 ns", "1 \u00b5s", "10 \u00b5s", "100 \u00b5s", "1 ms", "10 ms"])
-        ax2.set_xlim(0, nines(0.99999975))
+        ax2.set_xlim(0, XR)
         frame(ax2, "Where the Knees Are", "Percentile", "Read Latency")
-        legend_by_last(ax2, fontsize=9, frameon=False, loc="upper left")
+        legend_by_last(ax2, fontsize=9, frameon=False, loc="upper left",
+                       bbox_to_anchor=(0.012, 16_400_000 / 1.9),
+                       bbox_transform=ax2.get_yaxis_transform())
         # Provenance, because "how was this measured" should not require
         # reading a commit message. n is the pooled read count; repeats are
         # separate 60 s phases at different positions in the run, summed as
@@ -703,7 +719,7 @@ if r:
         # than repeating it per curve and running off the edge.
         ns = sorted(sum(c for _, c in hist(c0)) for c0, _, _ in have)
         reps = sorted({"1 x 240 s" for _ in have})
-        fig2.tight_layout()
+        fig2.tight_layout(rect=[0, 0.075, 1, 1])
         fig2.text(0.008, 0.010,
                   f"all {len(have)} conditions measured in one run, {reps[0]} each, identical settings: "
                   f"same binary, same pinned CPU, target_pid held on a sleeper throughout.\n"

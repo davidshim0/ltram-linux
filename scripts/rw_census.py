@@ -185,12 +185,18 @@ for w in range(NW):
     print(f"# window {w+1}/{NW} done", file=sys.stderr)
 
 out = sys.stdout if a.out == "-" else open(a.out, "w")
-print("workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged", file=out)
+# csv.writer, not an f-string: a label like "redis (ycsb-c, 95/5)" carries a
+# comma, and hand-formatted rows shift every column after it by one.
+import csv as _csv
+w_ = _csv.writer(out, lineterminator="\n")
+w_.writerow(["workload", "T_sec", "pages", "write_cold_pct", "cold_pct",
+             "windows_averaged"])
 for T in sorted(acc_wc):
     n = nobs[T]
     wc = 100.0 * acc_wc[T] / n / N
-    cd = (100.0 * acc_cold[T] / n / N) if HAVE_IDLE else float("nan")
-    print(f"{label},{T},{N},{wc:.2f},{cd:.2f},{n}", file=out)
+    # -1, not nan: it round-trips through CSV and the plotter tests for it.
+    cd = (100.0 * acc_cold[T] / n / N) if HAVE_IDLE else -1.0
+    w_.writerow([label, T, N, f"{wc:.2f}", f"{cd:.2f}", n])
 if proc:
     try: os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
     except Exception: pass
