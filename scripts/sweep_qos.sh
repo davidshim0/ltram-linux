@@ -27,6 +27,12 @@ w(){  awk -v k="$1" '$1==k{print $2; exit}' $DBG/wear; }
 ps_(){ awk -v k="$1" '$1==k{print $2; exit}' $DBG/pagestate; }
 setp(){ [ -n "${2:-}" ] || return 0; echo "$2" > $PAR/$1; }
 setw(){ echo "$1" > $PAR/erase_high_water; echo "$2" > $PAR/erase_low_water; }
+# Named engine states. "setw $HW0 $LW0" reads like "engine on" but means
+# "whatever was there", and an aborted run leaves 0/0 -- so restoring it as if
+# it meant on turns the engine OFF. That cost a run.
+engine_on(){  setw 8192 2048; }     # ltram_policy defaults: normal operating point
+engine_max(){ setw 65536 65535; }   # recycle everything, for pool preparation
+engine_off(){ setw 0 0; }
 
 [ -r $DBG/wear ] || { echo "no $DBG/wear"; exit 1; }
 lsmod | grep -q nor_eci || insmod "$KO" provide_ops=1 test=0 inline_erase=0 verify_erased=1 || exit 1
@@ -42,15 +48,22 @@ echo "  $(( NN * NN * 4 / 1048576 )) MiB, $NPAGES pages, ${HOLD}s per condition"
 
 if [ "$(ps_ clean)" -lt $NPAGES ]; then
     echo "  recycling: clean $(ps_ clean) -> $NPAGES"
-    setw 65536 65535
+    engine_max
     for i in $(seq 1 2400); do
         [ "$(ps_ clean)" -ge "$NPAGES" ] && break
         [ "$(ps_ dirty)" -eq 0 ] && break
         sleep 1
     done
 fi
-setw 0 0
 [ "$(ps_ clean)" -ge "$NPAGES" ] || { echo "!! only $(ps_ clean) clean"; exit 1; }
+# The engine RUNS during the fill. Sizing the clean pool exactly to the
+# weights and pinning the engine off leaves no slack: the process touches more
+# than W -- the 32 MiB scrub buffer is in the same address space and is a
+# promotion candidate too -- those pages eat clean sectors, and the fill
+# strands a few dozen pages short with no way to make more. It stalled at
+# 99.45% with clean=0 for exactly that reason. Phases A and B set the
+# watermarks explicitly, so the fill state cannot leak into the measurement.
+engine_on
 [ "$(ps_ dirty)" -ge 4000 ] || echo "  warning: only $(ps_ dirty) dirty, phase B may have little to erase"
 
 setp promote_batch 1; setp wear_governor 1; setp wear_days 379
@@ -74,18 +87,33 @@ for i in $(seq 1 20000); do
         echo "   $(grep -c '^POINT' $L) passes done, so the run itself is alive."
         kill $BG 2>/dev/null; exit 1
     fi
-    [ $(( i % 120 )) -eq 0 ] && echo "    residency ${R:-?}%"
+    # Flat is as fatal as missing: with no clean sectors and no engine the
+    # last pages can never promote, and this loop would spin for 2.8 hours.
+    if [ "${R:-0}" = "${RPREV:-}" ]; then STUCK=$(( ${STUCK:-0} + 1 ))
+    else STUCK=0; RPREV=${R:-0}; fi
+    if [ "${STUCK:-0}" -ge 360 ]; then
+        echo "!! residency stuck at ${R:-?}% for 180s (clean $(ps_ clean),"
+        echo "   engine high=$(cat $PAR/erase_high_water) low=$(cat $PAR/erase_low_water))"
+        kill $BG 2>/dev/null; exit 1
+    fi
+    [ $(( i % 120 )) -eq 0 ] && echo "    residency ${R:-?}%  clean $(ps_ clean)"
     sleep 0.5
 done
 echo 0 > /sys/kernel/ltram/target_pid       # stop promoting: isolate the medium
 sleep 2
 echo "  phase A: ${HOLD}s, engine OFF (residency ${R:-?}%)"
-setw 0 0
+engine_off
 A0=$(grep -c "^HIST" $L); sleep $HOLD; A1=$(grep -c "^HIST" $L)
 echo "  phase B: ${HOLD}s, engine ON (dirty $(ps_ dirty))"
-setw 65536 65535
+engine_max
+EC0=$(w cycles_used)
 B0=$(grep -c "^HIST" $L); sleep $HOLD; B1=$(grep -c "^HIST" $L)
-setw 0 0
+EC1=$(w cycles_used)
+engine_off
+# Measured, not assumed: the figure should say what the engine actually did
+# rather than claim a budget it might not have hit.
+ERPS=$(awk -v a="${EC0:-0}" -v b="${EC1:-0}" -v t="$HOLD" 'BEGIN{printf "%.1f", (b-a)/t}')
+echo "  phase B erased $(( ${EC1:-0} - ${EC0:-0} )) sectors in ${HOLD}s = ${ERPS}/s"
 kill $BG 2>/dev/null; wait $BG 2>/dev/null
 
 mkdir -p "$(dirname "$OUT")"

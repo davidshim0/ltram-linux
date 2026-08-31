@@ -94,6 +94,12 @@ LW0=$(cat $PAR/erase_low_water); HW0=$(cat $PAR/erase_high_water)
 PB0=$(cat $PAR/promote_batch)
 EG0=$(cat $PAR/ec_grain 2>/dev/null || echo 1000)
 setw(){ echo "$1" | sudo -n tee $PAR/erase_high_water >/dev/null; echo "$2" | sudo -n tee $PAR/erase_low_water >/dev/null; }
+# Named engine states. "setw $HW0 $LW0" reads like "engine on" but means
+# "whatever was there", and an aborted run leaves 0/0 -- so using it as "on"
+# turns the engine OFF. That stranded a fill at 99.45% with clean=0.
+engine_on(){  setw 8192 2048; }     # ltram_policy defaults: normal operating point
+engine_max(){ setw 65536 65535; }   # recycle everything, for pool preparation
+engine_off(){ setw 0 0; }
 # Make the pool meet a section's needs instead of inspecting whatever the
 # previous one left behind.
 #
@@ -928,7 +934,7 @@ OP1=60; OP3=45; OP5=60
 if ! ensure_clean $OPAGES; then
     skip "O  could not reach $OPAGES clean sectors (have $(ps_ clean), dirty $(ps_ dirty))"
 else
-    setw $HW0 $LW0                 # engine ON: phase 4 cannot proceed without it
+    engine_on                      # phase 4 cannot proceed without erases
     setp promote_batch 1; setp wear_governor 1; setp wear_days 379
     L=/tmp/st-o.log
     sudo -n $MM --n $ON --iters 1 --runs 100000 --flush 32 --print-ranges --phys \
@@ -1023,7 +1029,9 @@ else
     for i in $(seq 1 900); do grep -q "^TSTART" $L 2>/dev/null && break; sleep 0.1; done
     PID=$(pgrep -x matmul | head -1)
     [ -n "${PID:-}" ] && echo $PID | sudo -n tee $TP >/dev/null
-    setw $HW0 $LW0                      # engine on during the fill
+    engine_on                           # must RUN during the fill: sizing the
+                                        # pool to W exactly leaves no slack for
+                                        # the other pages the process touches
     PRES=0
     for i in $(seq 1 6000); do
         PRES=$(grep "^RESID" $L | tail -1 | awk '{print $4}'); PRES=${PRES:-0}
@@ -1043,7 +1051,7 @@ else
     setw 0 0
     PA0=$(grep -c "^HIST" $L); sleep $PHOLD; PA1=$(grep -c "^HIST" $L)
     PDIRTY=$(ps_ dirty)
-    setw $HW0 $LW0
+    engine_max
     PB0_=$(grep -c "^HIST" $L); sleep $PHOLD; PB1=$(grep -c "^HIST" $L)
     setw 0 0
     kill $BG 2>/dev/null; wait $BG 2>/dev/null

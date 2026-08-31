@@ -29,6 +29,12 @@ w(){  awk -v k="$1" '$1==k{print $2; exit}' $DBG/wear; }
 ps_(){ awk -v k="$1" '$1==k{print $2; exit}' $DBG/pagestate; }
 setp(){ [ -n "${2:-}" ] || return 0; echo "$2" > $PAR/$1; }
 setw(){ echo "$1" > $PAR/erase_high_water; echo "$2" > $PAR/erase_low_water; }
+# Named engine states. "setw $HW0 $LW0" reads like "engine on" but means
+# "whatever was there", and an aborted run leaves 0/0 -- so using it as "on"
+# turns the engine OFF. That stranded a fill at 99.45% with clean=0.
+engine_on(){  setw 8192 2048; }     # ltram_policy defaults: normal operating point
+engine_max(){ setw 65536 65535; }   # recycle everything, for pool preparation
+engine_off(){ setw 0 0; }
 
 [ -r $DBG/wear ] || { echo "no $DBG/wear -- wrong kernel?"; exit 1; }
 lsmod | grep -q nor_eci || insmod "$KO" provide_ops=1 test=0 inline_erase=0 verify_erased=1 \
@@ -52,7 +58,7 @@ if [ "$CLEAN0" -gt 2000 ]; then
     echo "        from the gated portion only."
 fi
 
-setw $HW0 $LW0                        # the engine must run, or nothing recycles
+engine_on                             # the engine must run, or nothing recycles
 setp promote_batch 1; setp wear_governor 1; setp wear_days 379
 L=/tmp/sweep-gated.log
 $MM --n $NN --iters 1 --runs 200000 --flush 32 --print-ranges --phys --resid-every 5 > $L 2>&1 &
