@@ -44,6 +44,8 @@ trap cleanup EXIT INT TERM
 
 NN=${NN:-2896}; NPAGES=$(( NN * NN * 4 / 4096 ))
 HOLD=${HOLD:-90}
+TARGET=${TARGET:-99.5}      # stop filling here
+FLOOR=${FLOOR:-99.0}        # ... or here, if it plateaus first
 echo "  $(( NN * NN * 4 / 1048576 )) MiB, $NPAGES pages, ${HOLD}s x 4 conditions"
 
 if [ "$(ps_ clean)" -lt $NPAGES ]; then
@@ -108,7 +110,7 @@ phase dram_control "DRAM, nothing promoted"
 echo "  filling..."
 for i in $(seq 1 20000); do
     R=$(grep "^RESID" $L | tail -1 | awk '{print $4}')
-    awk -v r="${R:-0}" 'BEGIN{exit !(r >= 99.9)}' && break
+    awk -v r="${R:-0}" -v t="$TARGET" 'BEGIN{exit !(r >= t)}' && break
     kill -0 $BG 2>/dev/null || break
     # A missing RESID line is indistinguishable from a slow fill, and the
     # difference is 2 minutes against 2.8 hours of spinning. --chase skipped
@@ -122,8 +124,18 @@ for i in $(seq 1 20000); do
     # last pages can never promote, and this loop would spin for 2.8 hours.
     if [ "${R:-0}" = "${RPREV:-}" ]; then STUCK=$(( ${STUCK:-0} + 1 ))
     else STUCK=0; RPREV=${R:-0}; fi
-    if [ "${STUCK:-0}" -ge 360 ]; then
-        echo "!! residency stuck at ${R:-?}% for 180s (clean $(ps_ clean),"
+    if [ "${STUCK:-0}" -ge 240 ]; then
+        # A plateau above FLOOR is not a failure, it is the answer. About 30
+        # of 8,191 pages never promote -- the scanner will not take every page
+        # of a live mapping -- so 99.9% is unreachable and waiting for it just
+        # burns the run. 99.6% residency leaves 0.4% of reads in DRAM, which
+        # moves the mean by ~3 ns against a 767 ns DRAM-to-NOR gap. Below
+        # FLOOR it IS a failure, and still exits.
+        if awk -v r="${R:-0}" -v f="$FLOOR" 'BEGIN{exit !(r >= f)}'; then
+            echo "    plateaued at ${R}% after 120s -- above the ${FLOOR}% floor, proceeding"
+            break
+        fi
+        echo "!! residency stuck at ${R:-?}%, below the ${FLOOR}% floor (clean $(ps_ clean),"
         echo "   engine high=$(cat $PAR/erase_high_water) low=$(cat $PAR/erase_low_water))"
         kill $BG 2>/dev/null; exit 1
     fi
