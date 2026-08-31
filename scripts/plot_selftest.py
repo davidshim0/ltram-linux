@@ -638,12 +638,26 @@ if r:
             xs = [nines(q) for q in qs]
             ys = [pct(cond, q) for q in qs]
             ax2.plot(xs, ys, "-", color=colour, lw=1.9, label=label)
+        # Both populations are now identified, so name them on the figure
+        # rather than leaving two anonymous knees. The lower band is the
+        # scheduler tick: 60,012 arch_timer interrupts counted on the pinned
+        # CPU over 60 s, and the latency data independently gives a period of
+        # 999.9 us with 100% of inter-arrivals integer multiples of it. It
+        # survives with the memory access removed, so it is the machine, not
+        # the medium. The upper line is one erase.
+        ax2.axhspan(8_000_000 / 1000, 33_000_000 / 1000, color=C_GRID,
+                    alpha=.12, lw=0, zorder=0)
+        ax2.annotate("scheduler tick \u2014 1000/s, counted\n(present with no memory access at all)",
+                     (0.015, 26_000), xycoords=("axes fraction", "data"),
+                     fontsize=8.5, color="#5b6670", va="center")
         ax2.axhline(16_400_000, color=C_GRID, lw=1, ls="--", zorder=1)
         # Right-aligned: the legend owns the top-left, and the curves reach
         # this line only at the far right, so the label sits over empty axis.
-        ax2.annotate("one erase, 16.4 ms", (0.99, 16_400_000),
+        # Mid-axis: the legend owns the top-left and the erase curve climbs
+        # through the top-right, so the only clear span is the middle.
+        ax2.annotate("one erase, 16.4 ms", (0.34, 16_400_000),
                      xycoords=("axes fraction", "data"), xytext=(0, 5),
-                     textcoords="offset points", ha="right",
+                     textcoords="offset points", ha="left",
                      fontsize=8.5, color="#5b6670")
         ax2.set_yscale("log")
         ax2.set_xticks([nines(q) for q, _ in NINES])
