@@ -689,7 +689,19 @@ if r:
         ax2.set_xlim(0, nines(0.9999995))
         frame(ax2, "Where the Knees Are", "Percentile", "Read Latency")
         legend_by_last(ax2, fontsize=9, frameon=False, loc="upper left")
+        # Provenance, because "how was this measured" should not require
+        # reading a commit message. n is the pooled read count; repeats are
+        # separate 60 s phases at different positions in the run, summed as
+        # histograms rather than averaged as percentiles.
+        prov = []
+        for cond, _, label in have:
+            nn = sum(c for _, c in hist(cond))
+            r = {"engine_off": "4 x 60 s", "erasing": "2 x 60 s"}.get(cond, "1 x 90 s")
+            prov.append(f"{label}: {nn/1e6:.0f} M reads, {r}")
         fig2.tight_layout()
+        fig2.text(0.008, 0.008, "   ".join(prov) + "   \u2014 repeats pooled as histograms, not averaged",
+                  fontsize=7.4, color="#7A838A")
+        fig2.subplots_adjust(bottom=0.155)
         fig2.savefig(f"{OUT}/fig9b-quantiles.png", dpi=200)
         made.append("fig9b-quantiles")
 
