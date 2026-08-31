@@ -356,6 +356,26 @@ if r:
                         ha="left", va="top", fontsize=10, color="#3d474e")
             nleft += 1
     ax.plot(t, ns, "-", color=C_NOR, lw=1.5, solid_joinstyle="round", zorder=3)
+
+    # The same mark fig7 carries, so the two overshoots read against each
+    # other. Restricted to the migrating phase: the global max here lands in
+    # the settled-engine-on sliver, which is a different quantity.
+    #
+    # Measured against the settled phase that still has the engine running.
+    # The engine is on during migration, so referencing the engine-off value
+    # would charge promotion for the erase interference as well.
+    mig = max((p_ for p_, lab in PH if "Migrating" in lab), default=None)
+    if mig is not None and seg.get(mig) and seg.get(mig + 1):
+        pk = max((i for i, q in enumerate(ph) if q == mig), key=lambda k: ns[k])
+        on = [y for y, q in zip(ns, ph) if q == mig + 1]
+        settled = sum(on) / len(on)
+        ax.plot([t[pk]], [ns[pk]], "o", color=C_NOR, ms=6, zorder=4)
+        ax.annotate(f"{ns[pk]:.0f} ns while still promoting\n"
+                    f"{ns[pk] - settled:+.0f} ns over settled",
+                    (t[pk], ns[pk]), textcoords="offset points", xytext=(-14, 8),
+                    ha="right", fontsize=9, color=C_NOR,
+                    arrowprops=dict(arrowstyle="-", color=C_NOR, lw=.9,
+                                    shrinkA=0, shrinkB=3))
     ax.set_ylim(0, top); ax.set_xlim(left=0)
     frame(ax, "Latency when migration must wait for erases",
           "Time (sec)", "Average Latency per Cache line (ns)")

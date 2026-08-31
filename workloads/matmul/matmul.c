@@ -657,6 +657,27 @@ static double weights_ltram_pct(void)
     return s.pages ? 100.0 * (double)s.in_ltram / (double)s.pages : 0.0;
 }
 
+/*
+ * RESID, in one place because it has now gone missing twice -- once in each
+ * direction. It used to be printed only from the chase branch, so the normal
+ * path emitted nothing; that was fixed by moving it to the shared epilogue,
+ * which is below a `continue` that the chase branch takes, so --chase emitted
+ * nothing. Two epilogues, one line: make it one function and call it from
+ * both, so the next epilogue that appears cannot drop it silently.
+ *
+ * Sampled after the clock stops, so the pagemap walk never lands inside a
+ * measurement.
+ */
+static void emit_resid(int r, double t_start)
+{
+    if (!resid_every || (r % resid_every))
+        return;
+    if (!phys_ready)
+        phys_open();
+    printf("RESID %d %.3f %.2f\n", r + 1, now() - t_start, weights_ltram_pct());
+    fflush(stdout);
+}
+
 int main(int argc, char **argv)
 {
     static struct option lo[] = {
@@ -929,6 +950,7 @@ int main(int argc, char **argv)
                 hist_n = 0; hist_max_ns = 0;
             }
             fflush(stdout);
+            emit_resid(r, t_start);
             if (do_phys) {
                 char tag[16];
                 snprintf(tag, sizeof tag, "run%d", r + 1);
@@ -1016,13 +1038,7 @@ int main(int argc, char **argv)
             printf("EVICTAT %d %.3f\n", r + 1, now() - t_start);
             fflush(stdout);
         }
-        if (resid_every && (r % resid_every) == 0) {
-            if (!phys_ready)
-                phys_open();
-            printf("RESID %d %.3f %.2f\n", r + 1, now() - t_start,
-                   weights_ltram_pct());
-            fflush(stdout);
-        }
+        emit_resid(r, t_start);
         if (do_phys) {
             char tag[16];
             snprintf(tag, sizeof tag, "run%d", r + 1);
