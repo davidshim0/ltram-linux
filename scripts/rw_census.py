@@ -60,7 +60,12 @@ if a.cmd:
     # 263 MB workload and reported 461 pages. Exec the argv directly and the
     # pid is the workload's. Anything needing shell syntax should be started
     # separately and passed with --pid.
-    proc = subprocess.Popen(shlex.split(a.cmd), preexec_fn=os.setsid)
+    # The workload's own output is not the measurement. GAPBS prints a line
+    # per trial and llama.cpp prints every token, either of which buries the
+    # census's progress and the "workload exited" warning that matters.
+    clog = (a.out + ".workload.log") if a.out != "-" else os.devnull
+    proc = subprocess.Popen(shlex.split(a.cmd), preexec_fn=os.setsid,
+                            stdout=open(clog, "w"), stderr=subprocess.STDOUT)
     pid = proc.pid
     print(f"# launched pid {pid}: {a.cmd}", file=sys.stderr)
     time.sleep(a.warmup)
@@ -102,24 +107,94 @@ def idle_read(pfns):
             if len(d) == 8: words[k] = struct.unpack("<Q", d)[0]
     return {p for p in pfns if words.get(p >> 6, 0) & (1 << (p & 63))}
 
-# Fix the page set at t=0 and follow those pages. A workload whose footprint
-# grows mid-run would otherwise change the denominator underneath the curve.
-regions = vmas()
-va_pfn = {}
-for lo, hi in regions:
-    try: ents = pagemap(lo, hi)
-    except Exception: continue
-    for i, e in enumerate(ents):
-        if e & PM_PRESENT: va_pfn[lo + i * PAGE] = e & PFN_MASK
-N = len(va_pfn)
-if not N: sys.exit("no resident pages")
-# Cross-check the snapshot against the kernel's own RSS. Measuring the wrong
-# process, or snapshotting before a workload has faulted its memory in, both
-# show up here as a large shortfall -- and both are silent otherwise.
+# Re-enumerate every window rather than fixing the page set at t=0.
+#
+# Fixing it was wrong in a way that flattered the result. GAPBS pagerank frees
+# its 32 MiB score array between trials, so a snapshot that lands in that gap
+# permanently excludes 8,203 pages which are written 100% of the time -- and
+# the workload came out 99.92% write-cold instead of ~94%. Any page not
+# resident at one arbitrary instant was dropped from the denominator forever.
+#
+# So: the denominator is the pages resident AT EACH BOUNDARY, and a page that
+# appears for the first time counts as written in that window. First touch of
+# an anon page is a write, and for a read-faulted file page it merely denies
+# the page a history it never had. Both directions of that choice are
+# conservative -- they can only lower the write-cold fraction we claim.
+NEVER = -10 ** 9
+
+def regions_now():
+    return tuple(vmas())
+
+layout, off, total = (), {}, 0
+last_w = np.zeros(0, dtype=np.int32)
+last_a = np.zeros(0, dtype=np.int32)
+# "Never written" and "never seen before" are different facts, and using one
+# sentinel for both made window 0 mark every resident page as freshly written
+# -- including a 522 MiB read-only graph -- so nothing was write-cold at the
+# longest T. The baseline population is seen but unwritten.
+seen = np.zeros(0, dtype=bool)
+
+def relayout(regs, w):
+    """Rebuild the slot mapping, carrying each surviving page's history by VA."""
+    global layout, off, total, last_w, last_a, seen
+    old_va = {}
+    if layout:
+        for (lo, hi) in layout:
+            b = off[(lo, hi)]
+            for k in range((hi - lo) // PAGE):
+                if seen[b + k]:
+                    old_va[lo + k * PAGE] = (last_w[b + k], last_a[b + k])
+    off = {}; total = 0
+    for (lo, hi) in regs:
+        off[(lo, hi)] = total; total += (hi - lo) // PAGE
+    last_w = np.full(total, NEVER, dtype=np.int32)
+    last_a = np.full(total, NEVER, dtype=np.int32)
+    seen = np.zeros(total, dtype=bool)
+    if old_va:
+        for (lo, hi) in regs:
+            b = off[(lo, hi)]
+            for va, (vw, va_) in old_va.items():
+                if lo <= va < hi:
+                    last_w[b + (va - lo) // PAGE] = vw
+                    last_a[b + (va - lo) // PAGE] = va_
+                    seen[b + (va - lo) // PAGE] = True
+    layout = regs
+
+def scan(regs):
+    """present, soft-dirty and pfn slots for the current layout, vectorised."""
+    pres, dirty, pfn_of = [], [], {}
+    with open(f"/proc/{pid}/pagemap", "rb") as f:
+        for (lo, hi) in regs:
+            try:
+                f.seek((lo // PAGE) * 8)
+                raw = f.read(((hi - lo) // PAGE) * 8)
+            except Exception:
+                continue
+            if len(raw) < ((hi - lo) // PAGE) * 8:
+                raw = raw[:len(raw) // 8 * 8]
+            e = np.frombuffer(raw, dtype=np.uint64)
+            b = off[(lo, hi)]
+            pm = (e & np.uint64(PM_PRESENT)) != 0
+            sd = (e & np.uint64(PM_SOFT_DIRTY)) != 0
+            ip = np.nonzero(pm)[0]
+            pres.append(b + ip)
+            dirty.append(b + np.nonzero(pm & sd)[0])
+            if HAVE_IDLE and len(ip):
+                pfn_of[(lo, hi)] = (b + ip,
+                                    (e[ip] & np.uint64(PFN_MASK)).astype(np.int64))
+    cat = lambda xs: np.concatenate(xs) if xs else np.zeros(0, dtype=np.int64)
+    return cat(pres), cat(dirty), pfn_of
+
+# The first pass only establishes a layout and a residency baseline.
+relayout(regions_now(), -1)
+p0, _, _ = scan(layout)
+seen[p0] = True          # the baseline population, not a run of fresh faults
+N0 = len(p0)
+if not N0: sys.exit("no resident pages")
 try:
     rss_pages = int(open(f"/proc/{pid}/statm").read().split()[1])
-    if rss_pages and N < 0.5 * rss_pages:
-        print(f"!! snapshot has {N:,} pages but RSS is {rss_pages:,} -- measuring the "
+    if rss_pages and N0 < 0.5 * rss_pages:
+        print(f"!! snapshot has {N0:,} pages but RSS is {rss_pages:,} -- measuring the "
               f"wrong process, or it has not faulted in yet. Refusing.", file=sys.stderr)
         if proc:
             try: os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -127,62 +202,61 @@ try:
         sys.exit(2)
 except FileNotFoundError:
     pass
-order = sorted(va_pfn)
-idx = {va: i for i, va in enumerate(order)}
-pfns = [va_pfn[va] for va in order]
 
 NW = a.run // a.interval
 if NW < 2: sys.exit(f"--run {a.run} gives only {NW} window(s) at S={a.interval}; need >= 2")
-NEVER = -10**9
-last_w = np.full(N, NEVER, dtype=np.int32)   # last window the page was written
-last_a = np.full(N, NEVER, dtype=np.int32)   # ... accessed
-pfn_arr = np.array(pfns, dtype=np.int64)
-acc_wc = {}; acc_cold = {}; nobs = {}
+sum_wc = {}; sum_cold = {}; nobs = {}; resident = []
 
-print(f"# {label}: {N:,} pages = {N*PAGE/2**20:.0f} MiB, S={a.interval}s, "
-      f"{NW} windows, idle tracking {'on' if HAVE_IDLE else 'OFF (needs root)'}", file=sys.stderr)
+print(f"# {label}: {N0:,} pages = {N0*PAGE/2**20:.0f} MiB resident at t=0, "
+      f"S={a.interval}s, {NW} windows, "
+      f"idle tracking {'on' if HAVE_IDLE else 'OFF (needs root)'}", file=sys.stderr)
 
 for w in range(NW):
     try:
+        regs = regions_now()
+        if regs != layout: relayout(regs, w)
         with open(f"/proc/{pid}/clear_refs", "w") as f: f.write("4")
-        if HAVE_IDLE: idle_write([p for p in pfns if p])
+        if HAVE_IDLE:
+            _, _, pf = scan(layout)
+            for slots, pfns_ in pf.values():
+                idle_write([int(x) for x in pfns_ if x])
     except (FileNotFoundError, ProcessLookupError): break
     time.sleep(a.interval)
     if proc and proc.poll() is not None:
         print(f"# workload exited during window {w}", file=sys.stderr); break
     try:
-        for lo, hi in regions:
-            try:
-                with open(f"/proc/{pid}/pagemap", "rb") as f:
-                    f.seek((lo // PAGE) * 8)
-                    raw = f.read(((hi - lo) // PAGE) * 8)
-            except Exception: continue
-            e = np.frombuffer(raw, dtype=np.uint64)
-            hit = np.nonzero(((e & np.uint64(PM_PRESENT)) != 0) &
-                             ((e & np.uint64(PM_SOFT_DIRTY)) != 0))[0]
-            for i in hit:
-                j = idx.get(lo + int(i) * PAGE)
-                if j is not None: last_w[j] = w
-        if HAVE_IDLE:
-            still = idle_read([p for p in pfns if p])
-            for i, p in enumerate(pfns):
-                if p and p not in still: last_a[i] = w
+        regs = regions_now()
+        if regs != layout: relayout(regs, w)
+        present, dirty, pf = scan(regs)
     except (FileNotFoundError, ProcessLookupError): break
-    # Every T that is a multiple of S, evaluated at this boundary.
-    # Counting by prefix sum over a histogram of last-written windows, so a
-    # boundary costs O(windows) rather than O(pages) per T.
-    hw = np.bincount(np.clip(last_w - (w - NW), 0, None).astype(np.int64), minlength=NW + 2)
-    ha = np.bincount(np.clip(last_a - (w - NW), 0, None).astype(np.int64), minlength=NW + 2)
-    cw, ca = np.cumsum(hw), np.cumsum(ha)
+    if not len(present): break
+
+    # A page seen for the first time has no history; call it written now.
+    fresh = present[~seen[present]]
+    seen[present] = True
+    last_w[fresh] = w
+    last_a[fresh] = w
+    last_w[dirty] = w
+    if HAVE_IDLE:
+        for slots, pfns_ in pf.values():
+            still = idle_read([int(x) for x in pfns_ if x])
+            touched = slots[np.array([int(x) not in still for x in pfns_], dtype=bool)]
+            last_a[touched] = w
+
+    # Denominator is what is resident NOW, not what was resident at t=0.
+    Nw = len(present)
+    resident.append(Nw)
+    lw = last_w[present]; la = last_a[present]
     for k in range(1, w + 2):
         T = k * a.interval
-        b = (w - k) - (w - NW)
-        wc = int(cw[b]) if b >= 0 else 0
-        cd = (int(ca[b]) if b >= 0 else 0) if HAVE_IDLE else 0
-        acc_wc[T] = acc_wc.get(T, 0) + wc
-        acc_cold[T] = acc_cold.get(T, 0) + cd
+        wc = int(np.count_nonzero(lw <= w - k))
+        cd = int(np.count_nonzero(la <= w - k)) if HAVE_IDLE else 0
+        sum_wc[T] = sum_wc.get(T, 0.0) + 100.0 * wc / Nw
+        sum_cold[T] = sum_cold.get(T, 0.0) + 100.0 * cd / Nw
         nobs[T] = nobs.get(T, 0) + 1
-    print(f"# window {w+1}/{NW} done", file=sys.stderr)
+    print(f"# window {w+1}/{NW} done, {Nw:,} resident", file=sys.stderr)
+
+N = int(sum(resident) / len(resident)) if resident else N0
 
 out = sys.stdout if a.out == "-" else open(a.out, "w")
 # csv.writer, not an f-string: a label like "redis (ycsb-c, 95/5)" carries a
@@ -191,11 +265,11 @@ import csv as _csv
 w_ = _csv.writer(out, lineterminator="\n")
 w_.writerow(["workload", "T_sec", "pages", "write_cold_pct", "cold_pct",
              "windows_averaged"])
-for T in sorted(acc_wc):
+for T in sorted(sum_wc):
     n = nobs[T]
-    wc = 100.0 * acc_wc[T] / n / N
+    wc = sum_wc[T] / n
     # -1, not nan: it round-trips through CSV and the plotter tests for it.
-    cd = (100.0 * acc_cold[T] / n / N) if HAVE_IDLE else -1.0
+    cd = (sum_cold[T] / n) if HAVE_IDLE else -1.0
     w_.writerow([label, T, N, f"{wc:.2f}", f"{cd:.2f}", n])
 if proc:
     try: os.killpg(os.getpgid(proc.pid), signal.SIGTERM)

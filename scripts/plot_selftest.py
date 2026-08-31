@@ -646,7 +646,7 @@ if r:
                 cell.PAD = 0.04
             else:
                 cell.set_text_props(color=rowcol[row - 1])
-        axt.set_title("Read Latency Distribution, per Access", fontsize=13,
+        axt.set_title("Read Latency Distribution", fontsize=13,
                       weight="semibold", color="#22282c", pad=16)
         figt.savefig(f"{OUT}/fig9c-table.png", dpi=200, bbox_inches="tight")
         made.append("fig9c-table")
@@ -719,7 +719,7 @@ if r:
         ax2.set_yticks([1e2, 1e3, 1e4, 1e5, 1e6, 1e7])
         ax2.set_yticklabels(["100 ns", "1 \u00b5s", "10 \u00b5s", "100 \u00b5s", "1 ms", "10 ms"])
         ax2.set_xlim(nines(0.5), XR)
-        frame(ax2, "Read Latency Distribution, per Access", "Percentile", "Read Latency")
+        frame(ax2, "Read Latency Distribution", "Percentile", "Read Latency")
         legend_by_last(ax2, fontsize=9, frameon=False, loc="upper left",
                        bbox_to_anchor=(0.012, 20_000_000 / 2.2),
                        bbox_transform=ax2.get_yaxis_transform())
