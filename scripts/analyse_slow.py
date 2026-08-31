@@ -26,6 +26,13 @@ def read(path):
             sect.append(tuple(float(x) for x in f[2:5]))
     return slow, sect
 
+def chase_ns(path):
+    """Median nanoseconds per access, from the SECT chase column."""
+    L = nlines(path)
+    v = sorted(float(l.split()[4]) for l in open(path) if l.startswith("SECT"))
+    return (v[len(v)//2] / L) if (v and L) else None
+
+
 def nlines(path):
     for l in open(path):
         if l.startswith("CHASE"):
@@ -43,21 +50,30 @@ def report(path, tag):
           f"   loop length {L:,} lines" if L else "")
 
     # 1. periodic in time?
+    #
+    # NOT a tightness test. An event is only recorded when it lands inside a
+    # timed bracket, so most firings are missed and the gaps come out as
+    # integer MULTIPLES of the true period. Clustering around the median then
+    # fails badly -- it called a perfectly quantised 1 kHz signal "not
+    # periodic" because only 59% of gaps were 1x. Test quantisation instead:
+    # take the smallest common gap as the candidate period and ask what
+    # fraction of all gaps are integer multiples of it.
     ts = sorted(s[2] for s in slow)
-    gaps = [(ts[i+1]-ts[i])*1e6 for i in range(len(ts)-1)]   # microseconds
-    gaps = [g for g in gaps if g > 0]
+    gaps = sorted(g for g in ((ts[i+1]-ts[i])*1e6 for i in range(len(ts)-1)) if g > 0)
     if gaps:
-        gaps_s = sorted(gaps)
-        med = gaps_s[len(gaps_s)//2]
-        # how tightly are gaps packed around the median?
-        near = sum(1 for g in gaps if 0.8*med <= g <= 1.2*med)
-        print(f"\n  inter-arrival: median {med:8.1f} us  -> {1e6/med:7.0f}/s")
-        print(f"                 {100*near/len(gaps):5.1f}% of gaps within +/-20% of the median")
-        print(f"                 p10 {gaps_s[len(gaps_s)//10]:8.1f}   p90 {gaps_s[9*len(gaps_s)//10]:8.1f} us")
-        if near/len(gaps) > 0.6:
-            print(f"  => PERIODIC. Something fires every ~{med:.0f} us regardless of the loop.")
+        base = gaps[len(gaps)//20]            # 5th percentile ~ one period
+        mult = collections.Counter(round(g/base) for g in gaps)
+        on = sum(1 for g in gaps
+                 if round(g/base) >= 1 and abs(g/base - round(g/base)) < 0.02)
+        print(f"\n  inter-arrival: base period {base:8.1f} us  -> {1e6/base:7.0f}/s")
+        print(f"                 {100*on/len(gaps):5.1f}% of gaps are integer multiples of it")
+        print("                 " + "  ".join(f"{k}x:{100*mult[k]/len(gaps):.0f}%"
+                                              for k in sorted(mult)[:6]))
+        if on/len(gaps) > 0.9:
+            print(f"  => PERIODIC at {1e6/base:.0f} Hz. Multiples mean firings were missed,")
+            print(f"     not that the source is irregular; the miss rate gives the duty cycle.")
         else:
-            print("  => not periodic; gaps are broadly spread.")
+            print("  => not quantised to any single period.")
 
     # 2. positional in the loop?
     if L:
@@ -90,8 +106,25 @@ a = report(sys.argv[1], "REAL LOAD")
 if len(sys.argv) > 2:
     b = report(sys.argv[2], "NULL LOAD (no memory access)")
     if a and b:
+        # Comparing raw rates is wrong: the two runs observe through DIFFERENT
+        # window sizes, because removing the load shortens the timed bracket.
+        # Normalise. If the same external event is being sampled by a shorter
+        # window, then solving for the clock-read overhead X from each run
+        # separately must give the same answer.
+        ra, rb = chase_ns(sys.argv[1]), chase_ns(sys.argv[2])
         print(f"\n=== verdict ===")
-        print(f"  real {a:.0f}/s vs null {b:.0f}/s  ratio {a/b:.2f}")
-        print("  => the tail is NOT the memory access: it survives with the load removed."
-              if 0.7 < a/b < 1.4 else
-              "  => the load matters: removing it changes the stall rate materially.")
+        print(f"  raw rate: real {a:.0f}/s vs null {b:.0f}/s  (ratio {a/b:.2f})")
+        if ra and rb:
+            load = ra - rb
+            per = 1e6 / (a / (a / 1000.0) if False else 1000.0)   # assumed 1 kHz source
+            Xr = (a / 1000.0) * ra - load
+            Xn = (b / 1000.0) * rb
+            print(f"  per access: real {ra:.1f} ns, null {rb:.1f} ns -> the load costs {load:.1f} ns")
+            print(f"  implied clock-read overhead X: {Xr:.1f} ns (real) vs {Xn:.1f} ns (null)")
+            agree = 100 * abs(Xr - Xn) / ((Xr + Xn) / 2)
+            print(f"  agreement {agree:.1f}%")
+            if agree < 15:
+                print("  => SAME EVENT, two window sizes. The tail is NOT the memory access:")
+                print("     the whole rate difference is explained by the shorter bracket.")
+            else:
+                print("  => the load changes the tail beyond what window size explains.")

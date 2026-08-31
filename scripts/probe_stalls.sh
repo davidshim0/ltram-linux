@@ -37,7 +37,21 @@ echo "probe: N=$N ($(( N * N * 4 / 1048576 )) MiB), threshold ${THRESH} ns, pinn
 run real
 run null --null-load
 echo
-echo "interrupt counts on CPU$PIN during the run were NOT sampled here on purpose:"
-echo "this probe is meant to localise first and attribute second."
+# Attribution, now that localisation is done. Everything else has been excluded:
+# the stalls are quantised to a single period, uniform in loop position, absent
+# from gap/scrub, and they survive with the memory access removed. What remains
+# is "some external source at 1 kHz", and this counts the candidates directly.
+echo "  interrupt deltas on CPU$PIN over one ${SECS}s run:"
+snap(){ awk -v cpu="CPU$PIN" '
+    NR==1 { for (i=1;i<=NF;i++) if ($i==cpu) c=i+1; next }
+    c && NF>=c { n=$1; sub(/:$/,"",n); print n, $c }' /proc/interrupts; }
+snap > $OUT/irq.0
+timeout $SECS taskset -c $PIN nice -n -20 \
+    $MM --n $N --iters 1 --runs 100000 --chase --chase-hist > /dev/null 2>&1
+snap > $OUT/irq.1
+join -j1 $OUT/irq.0 $OUT/irq.1 \
+  | awk -v t="$SECS" '{d=$3-$2; if (d>0) printf "    %-10s %9d  %7.0f/s\n", $1, d, d/t}' \
+  | sort -k2 -nr | head -6
+echo "    (irq 11 is arch_timer on this board; CONFIG_HZ=1000)"
 echo
 echo "wrote $OUT/real.log and $OUT/null.log"
