@@ -35,6 +35,7 @@
 #include <math.h>
 #include <getopt.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <fcntl.h>
 #include <errno.h>
 #include "sha256.h"
@@ -155,6 +156,7 @@ static int    evict_at = 0;      /* --evict-at PASS */
 static int      do_hist = 0;        /* --chase-hist */
 static uint64_t hist[HB];
 static uint64_t hist_n, hist_max_ns;
+static long     ctx_vol, ctx_invol;   /* rusage baselines, for the CTX line */
 /*
  * Or on SIGUSR1, which is how the harness drives it: the pass number at which
  * the first migration completes is not knowable in advance, so the script
@@ -966,7 +968,23 @@ int main(int argc, char **argv)
             printf("POINT %d %.6f %.3f\n", r + 1, t[r], now() - t_start);
             if (do_hist && hist_n) {
                 int b;
+                /*
+                 * Was the thread taken off the CPU during this pass?
+                 *
+                 * A stall of milliseconds has two possible causes and they
+                 * look identical in the histogram: the flash made the load
+                 * wait, or the scheduler took the thread away between the two
+                 * clock reads. Involuntary context switches separate them. A
+                 * pass with long stalls and zero of these was not descheduled,
+                 * so the wait was the medium.
+                 */
+                struct rusage ru;
 
+                if (!getrusage(RUSAGE_SELF, &ru)) {
+                    printf("CTX %d %ld %ld\n", r + 1,
+                           ru.ru_nvcsw - ctx_vol, ru.ru_nivcsw - ctx_invol);
+                    ctx_vol = ru.ru_nvcsw; ctx_invol = ru.ru_nivcsw;
+                }
                 printf("HIST %d %llu %llu", r + 1,
                        (unsigned long long)hist_n, (unsigned long long)hist_max_ns);
                 for (b = 0; b < HB; b++)

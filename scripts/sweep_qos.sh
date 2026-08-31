@@ -68,6 +68,16 @@ engine_on
 
 setp promote_batch 1; setp wear_governor 1; setp wear_days 379
 L=/tmp/sweep-qos.log
+# Pinned and prioritised -- a MEASUREMENT technique, not a deployment
+# requirement. Nothing about LtRAM needs this; it just removes migration and
+# most preemption so a stall is attributable.
+#
+# Deliberately NOT SCHED_FIFO. This loop is CPU-bound, and RT throttling
+# (sched_rt_runtime_us 950000 of 1000000) would stop it for 50 ms once a
+# second -- injecting a bigger artifact than the one being removed. nice -20
+# gets most of the benefit with none of that.
+PIN=${PIN:-47}
+taskset -c $PIN nice -n -20 \
 $MM --n $NN --iters 1 --runs 100000 --chase --chase-hist --print-ranges --phys \
     --resid-every 5 > $L 2>&1 &
 BG=$!
@@ -75,13 +85,21 @@ for i in $(seq 1 900); do grep -q "^TSTART" $L 2>/dev/null && break; sleep 0.1; 
 PID=$(pgrep -x matmul | head -1)
 MARKS=/tmp/sweep-qos.marks; : > $MARKS
 phase(){        # $1 = condition name, $2 = human label
-    local e0 e1 h0 h1 rate
+    local e0 e1 h0 h1 rate iv
     h0=$(grep -c "^HIST" $L); e0=$(w cycles_used)
     sleep $HOLD
     h1=$(grep -c "^HIST" $L); e1=$(w cycles_used)
     rate=$(awk -v a="${e0:-0}" -v b="${e1:-0}" -v t="$HOLD" 'BEGIN{printf "%.1f", (b-a)/t}')
-    echo "$1 $h0 $h1 $rate" >> $MARKS
-    echo "    $2: $(( ${e1:-0} - ${e0:-0} )) erases in ${HOLD}s = ${rate}/s"
+    # Involuntary context switches over the same passes. A stall of
+    # milliseconds is either the medium or the scheduler, and these separate
+    # them: measured on a DRAM-only chase, one preemption costs 18-77 us and
+    # never a millisecond, so a phase with ms stalls and few of these was not
+    # descheduled -- it waited on the device.
+    iv=$(awk -v a="$h0" -v b="$h1" '/^CTX/ { n++; if (n > a && n <= b) s += $4 }
+                                    END { print s + 0 }' $L)
+    echo "$1 $h0 $h1 $rate $iv" >> $MARKS
+    echo "    $2: $(( ${e1:-0} - ${e0:-0} )) erases in ${HOLD}s = ${rate}/s,"\
+         "$(( h1 - h0 )) passes, $iv involuntary ctx switches"
 }
 engine_off
 echo "  phase 0: ${HOLD}s in DRAM -- the measurement's own noise floor"
