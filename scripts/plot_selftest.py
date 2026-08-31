@@ -549,10 +549,10 @@ if r:
              "dram_control":    (C_DRAM,    "DRAM control (no flash at all)"),
              "nor_read":        ("#D9A0A2", "NOR, reads only"),
              "engine_off":      ("#D9A0A2", "NOR, no background erasing"),
-             "nor_write":       ("#C9852F", "NOR + writes (1 in 10,563 reads)"),
-             "nor_erase":       ("#9E2F33", "NOR + erases (1 in 181,903 reads)"),
+             "nor_write":       ("#C9852F", "NOR, reads + writes (1 in 10,563 reads)"),
+             "nor_erase":       ("#9E2F33", "NOR, reads + erases (1 in 181,903 reads)"),
              "erasing":         ("#9E2F33", "NOR, erasing every 28.8 ms"),
-             "nor_write_erase": ("#5E1417", "NOR + writes + erases"),
+             "nor_write_erase": ("#5E1417", "NOR, reads + writes + erases"),
              "engine_spaced":   (C_NOR,     "NOR, erasing at 7.2/s (30 ms spacing)"),
              "engine_flat_out": ("#7A1F22", "NOR, erasing unspaced at 33.9/s")}
     order = ["dram", "dram_control", "nor_read", "engine_off",
@@ -585,19 +585,17 @@ if r:
         # the tail, so every percentile below p99.999 was a sliver against the
         # axis. Log gives 1 us and 34 ms room on the same picture; the table
         # carries the digits so nothing has to be traced off the axis.
-        fig, (ax, axt) = plt.subplots(
-            2, 1, figsize=(11, 7.2), gridspec_kw=dict(height_ratios=[3, 1], hspace=0.34))
-        # 100 ns: the DRAM control's p50 is 159 ns, and at 0.5 us its first
-        # three bars fell off the left edge entirely.
+        # Chart and table as SEPARATE images, so each can be used on its own.
+        # A combined figure forces whoever is placing it to take both.
+        fig, ax = plt.subplots(figsize=(11, 5.0))
         X0 = 1e-4                                        # ms, i.e. 100 ns
         top = max(pct(c, 1.0) for c, _, _ in have) / 1e6 * 3
         ax.set_xscale("log"); ax.set_xlim(X0, top)
         nb = len(have); h = 0.8 / nb
         for k, (cond, colour, label) in enumerate(have):
             vals = [pct(cond, q) / 1e6 for q, _ in QS]
-            ys = [len(QS) - 1 - j + (nb - 1 - k) * h - (nb - 1) * h / 2
-                  for j in range(len(QS))]
-            # left=X0 explicitly: a bar from 0 has no left edge on a log axis.
+            ys = [len(QS) - 1 - j2 + (nb - 1 - k) * h - (nb - 1) * h / 2
+                  for j2 in range(len(QS))]
             ax.barh(ys, [v - X0 for v in vals], left=X0, height=h * 0.92,
                     color=colour, label=label, zorder=3)
         ax.axvline(16.4, color=C_GRID, lw=1, ls="--", zorder=2)
@@ -611,21 +609,25 @@ if r:
         ax.set_ylim(-0.6, len(QS) - 0.4)
         frame(ax, "Read Latency Percentiles, per Access", "Read Latency", "")
         ax.grid(axis="y", visible=False)
-        # No legend: the table's row labels are colour-coded and carry the
-        # same information, and a legend box lands on the max bars.
+        ax.legend(fontsize=9, frameon=False, loc="upper center",
+                  labelspacing=0.5, handlelength=1.6, borderpad=0.7)
+        fig.tight_layout()
+        fig.savefig(f"{OUT}/fig9-latency-tail.png", dpi=200)
+        made.append("fig9-latency-tail")
 
-        # The digits, so no one has to read them off a log axis.
-        axt.axis("off")
-        cols = [n for _, n in QS] + ["reads \u2265 8 ms"]
+        # The same numbers as a standalone table, carrying its own legend so it
+        # is self-describing away from the chart.
+        cols = [n for _, n in QS]
         cells, rowlab, rowcol = [], [], []
         for cond, colour, label in have:
-            c8, n = slower_than(cond, 8_000_000)
-            cells.append([fmt(pct(cond, q)) for q, _ in QS]
-                         + [f"1 in {n//c8:,}" if c8 else "none"])
+            cells.append([fmt(pct(cond, q)) for q, _ in QS])
             rowlab.append(label); rowcol.append(colour)
+        nrow = len(have)
+        figt, axt = plt.subplots(figsize=(11.5, 0.42 * nrow + 0.8))
+        axt.axis("off")
         tb = axt.table(cellText=cells, colLabels=cols, rowLabels=rowlab,
-                       cellLoc="center", rowLoc="right", loc="upper center")
-        tb.auto_set_font_size(False); tb.set_fontsize(9); tb.scale(1, 1.6)
+                       cellLoc="center", rowLoc="right", loc="center")
+        tb.auto_set_font_size(False); tb.set_fontsize(9.5); tb.scale(1, 1.75)
         for (row, col), cell in tb.get_celld().items():
             cell.set_edgecolor("#D5D8DA"); cell.set_linewidth(.6)
             if row == 0:
@@ -636,8 +638,10 @@ if r:
                 cell.set_facecolor("none"); cell.set_edgecolor("none")
             else:
                 cell.set_text_props(color=rowcol[row - 1])
-        fig.savefig(f"{OUT}/fig9-latency-tail.png", dpi=200, bbox_inches="tight")
-        made.append("fig9-latency-tail")
+        axt.set_title("Read Latency Percentiles, per Access", fontsize=13,
+                      weight="semibold", color="#22282c", pad=16)
+        figt.savefig(f"{OUT}/fig9c-table.png", dpi=200, bbox_inches="tight")
+        made.append("fig9c-table")
 
         # fig9b: the quantile function. x is percentile on a "number of nines"
         # scale (-log10(1-p)), y is latency, log. A CDF hides knees because it
