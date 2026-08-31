@@ -317,25 +317,44 @@ if r:
     PH = (((1, "DRAM"), (2, "Migrating\n(erase-gated)"), (3, "NOR"))
           if max(ph) == 3 else
           ((1, "DRAM"), (2, "Migrating\n(erase-gated)"),
-           (3, "NOR\nengine on"), (4, "NOR\nengine off"))
+           (3, "NOR, engine on"), (4, "NOR, engine off"))
           if max(ph) == 4 else
           ((1, "DRAM"), (2, "Migrating"), (3, "Evicted"),
            (4, "Migrating\n(erase-gated)"), (5, "NOR")))
     fig, ax = plt.subplots(figsize=(10, 5.2))
-    top = max(ns) * 1.16
+    span = max(t) - min(t)
+    seg = {p_: [x for x, q in zip(t, ph) if q == p_] for p_, _ in PH}
+    seg = {k: v for k, v in seg.items() if v}
+    wide = {k: (max(v) - min(v)) > 0.12 * span for k, v in seg.items()}
+    # A 60 s phase at the end of a 4800 s run is a sliver: its label cannot
+    # sit in it, and two adjacent slivers cannot both sit at their divider.
+    # Hang each sliver off the nearer edge and stack it, then reserve enough
+    # headroom above the trace that the stack never lands on the data.
+    right = [k for k, v in seg.items() if not wide[k]
+             and (min(v) + max(v)) / 2 > min(t) + span / 2]
+    band = 0.105 * max(ns)
+    top = max(ns) + band * (len(right) + 0.6) if right else max(ns) * 1.16
+    nleft = 0
     for p_, lab in PH:
-        xs = [x for x, q in zip(t, ph) if q == p_]
+        xs = seg.get(p_)
         if not xs: continue
         if p_ > 1:
             ax.axvline(min(xs), color=C_GRID, ls=":", lw=1, zorder=1)
         mean = sum(y for y, q in zip(ns, ph) if q == p_) / len(xs)
-        # The settled phases are ~60 s against a fill of thousands, so their
-        # labels are placed at the divider rather than centred in a sliver.
-        wide = (max(xs) - min(xs)) > 0.12 * (max(t) - min(t))
-        ax.annotate(f"{lab}\n{mean:.0f} ns",
-                    ((min(xs) + max(xs)) / 2 if wide else min(xs), top * 0.985),
-                    ha="center" if wide else "left", va="top",
-                    fontsize=10, color="#3d474e")
+        if wide[p_]:
+            ax.annotate(f"{lab}\n{mean:.0f} ns", ((min(xs) + max(xs)) / 2, top * 0.985),
+                        ha="center", va="top", fontsize=10, color="#3d474e")
+        elif p_ in right:
+            ax.annotate(f"{lab}  {mean:.0f} ns",
+                        (0.995, top - band * (right.index(p_) + 0.15)),
+                        xycoords=("axes fraction", "data"),
+                        ha="right", va="top", fontsize=10, color="#3d474e")
+        else:
+            ax.annotate(f"{lab}  {mean:.0f} ns",
+                        (0.005, top - band * (nleft + 0.15)),
+                        xycoords=("axes fraction", "data"),
+                        ha="left", va="top", fontsize=10, color="#3d474e")
+            nleft += 1
     ax.plot(t, ns, "-", color=C_NOR, lw=1.5, solid_joinstyle="round", zorder=3)
     ax.set_ylim(0, top); ax.set_xlim(left=0)
     frame(ax, "Latency when migration must wait for erases",
