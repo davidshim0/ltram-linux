@@ -68,7 +68,8 @@ IS=$(cat /sys/devices/system/cpu/isolated  2>/dev/null)
 stale_pids(){
     local self=$$ p
     { pgrep -x matmul
-      pgrep -f '^/bin/[a-z]*sh /.*/\(sweep_\|probe_\|qos_\|measure_ops\|selftest\)'
+      pgrep -f '^/bin/[a-z]*sh /.*/(sweep_|probe_|qos_|measure_ops|selftest)'
+      pgrep '^(sweep_|probe_|qos_|measure_ops|selftest)'
     } 2>/dev/null | sort -un | while read -r p; do
         [ "$p" = "$self" ] && continue
         [ "$p" = "$PPID" ] && continue
