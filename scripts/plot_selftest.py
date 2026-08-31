@@ -316,6 +316,9 @@ if r:
     # the same block draws either.
     PH = (((1, "DRAM"), (2, "Migrating\n(erase-gated)"), (3, "NOR"))
           if max(ph) == 3 else
+          ((1, "DRAM"), (2, "Migrating\n(erase-gated)"),
+           (3, "NOR\nengine on"), (4, "NOR\nengine off"))
+          if max(ph) == 4 else
           ((1, "DRAM"), (2, "Migrating"), (3, "Evicted"),
            (4, "Migrating\n(erase-gated)"), (5, "NOR")))
     # A BROKEN AXIS. The gated fill runs 4,512 s against 60 s at either end,

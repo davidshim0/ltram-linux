@@ -8,7 +8,8 @@
 #
 #   phase 1  DRAM              nothing targeted
 #   phase 2  erase-gated fill  every promotion waiting on the erase engine
-#   phase 3  NOR               settled
+#   phase 3  NOR, engine on    settled, still recycling
+#   phase 4  NOR, engine off   settled, nothing recycling
 #
 # Phases 1 and 2 of sweep_timeline.sh are the clean-pool comparison: same
 # size, same interval, same workload, so the two migrations can be read
@@ -62,15 +63,26 @@ sleep $P1
 T2=$(date +%s.%N)
 PID=$(pgrep -x matmul | head -1)
 [ -n "${PID:-}" ] && echo $PID > /sys/kernel/ltram/target_pid
-echo "  phase 2: erase-gated fill, waiting for 99%"
-for i in $(seq 1 12000); do
+# 99.9%, not 99%. At 99% the fill is still creeping -- residency climbed
+# 99.17 -> 99.74 through the last run's settled phase -- so any excess over
+# the clean-pool value could be argued as leftover migration rather than
+# erase interference. Run it out and the argument disappears.
+echo "  phase 2: erase-gated fill, waiting for 99.9%"
+for i in $(seq 1 20000); do
     R=$(grep "^RESID" $L | tail -1 | awk '{print $4}')
-    awk -v r="${R:-0}" 'BEGIN{exit !(r >= 99)}' && break
+    awk -v r="${R:-0}" 'BEGIN{exit !(r >= 99.9)}' && break
     kill -0 $BG 2>/dev/null || break
     [ $(( i % 120 )) -eq 0 ] && echo "    residency ${R:-?}%  clean $(ps_ clean) dirty $(ps_ dirty)"
     sleep 0.5
 done
-T3=$(date +%s.%N); echo "  phase 3: ${P3}s settled (reached ${R:-?}%)"
+T3=$(date +%s.%N); echo "  phase 3: ${P3}s settled, engine ON (reached ${R:-?}%)"
+sleep $P3
+
+# And then the same thing with the engine pinned off. Fully resident either
+# side of this line, so the difference between phase 3 and phase 4 is erase
+# interference and nothing else.
+setw 0 0
+T4=$(date +%s.%N); echo "  phase 4: ${P3}s settled, engine OFF (residency $(grep '^RESID' $L | tail -1 | awk '{print $4}')%)"
 sleep $P3
 kill $BG 2>/dev/null; wait $BG 2>/dev/null
 echo 0 > /sys/kernel/ltram/target_pid
@@ -78,14 +90,14 @@ echo 0 > /sys/kernel/ltram/target_pid
 TS=$(awk '/^TSTART/{print $2; exit}' $L)
 mkdir -p "$(dirname "$OUT")"
 { echo "elapsed_s,ns_per_line,resid_pct,phase"
-  awk -v ts="$TS" -v l="$NLINES" -v a="$T1" -v b="$T2" -v c="$T3" '
+  awk -v ts="$TS" -v l="$NLINES" -v a="$T1" -v b="$T2" -v c="$T3" -v d="$T4" '
     NR==FNR { if ($1 == "RESID") rp[$2] = $4; next }
     /^POINT/ { at = ts + $4
-               ph = (at<b)?1:((at<c)?2:3)
+               ph = (at<b)?1:((at<c)?2:((at<d)?3:4))
                printf "%.3f,%.1f,%s,%d\n", at - a, $3*1e9/l, ($2 in rp ? rp[$2] : ""), ph }
   ' $L $L
 } > "$OUT"
-for p in 1 2 3; do
+for p in 1 2 3 4; do
   awk -F, -v p=$p 'NR>1 && $4==p {n++; s+=$2} END{if(n) printf "  phase %d: %6.0f ns/line over %5d passes\n", p, s/n, n}' "$OUT"
 done
 rm -f $L
