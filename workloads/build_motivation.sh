@@ -37,7 +37,7 @@ fi
 
 step "YCSB-C"
 if [ -x "$W/YCSB-C/ycsbc" ]; then ok "ycsbc (cached)"; else
-  ( cd "$W/YCSB-C" && make -j$J ) >"$L/ycsbc.log" 2>&1 && ok ycsbc || bad ycsbc "$L/ycsbc.log"
+  ( cd "$W/YCSB-C" && make -j1 ) >"$L/ycsbc.log" 2>&1 && ok ycsbc || bad ycsbc "$L/ycsbc.log"
 fi
 
 step "llama.cpp"

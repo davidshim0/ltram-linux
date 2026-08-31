@@ -547,10 +547,10 @@ if r:
     # keeps the DRAM blue.
     LABEL = {"dram":            (C_DRAM,    "DRAM"),
              "dram_control":    (C_DRAM,    "DRAM control (no flash at all)"),
-             "nor_read":        ("#D9A0A2", "NOR, reads only"),
+             "nor_read":        ("#D9A0A2", "NOR, reads"),
              "engine_off":      ("#D9A0A2", "NOR, no background erasing"),
-             "nor_write":       ("#C9852F", "NOR, reads + writes (1 in 10,563 reads)"),
-             "nor_erase":       ("#9E2F33", "NOR, reads + erases (1 in 181,903 reads)"),
+             "nor_write":       ("#C9852F", "NOR, reads + writes"),
+             "nor_erase":       ("#9E2F33", "NOR, reads + erases"),
              "erasing":         ("#9E2F33", "NOR, erasing every 28.8 ms"),
              "nor_write_erase": ("#5E1417", "NOR, reads + writes + erases"),
              "engine_spaced":   (C_NOR,     "NOR, erasing at 7.2/s (30 ms spacing)"),
@@ -598,8 +598,8 @@ if r:
                   for j2 in range(len(QS))]
             ax.barh(ys, [v - X0 for v in vals], left=X0, height=h * 0.92,
                     color=colour, label=label, zorder=3)
-        ax.axvline(16.4, color=C_GRID, lw=1, ls="--", zorder=2)
-        ax.annotate("one erase, 16.4 ms", (16.4, len(QS) - 0.45),
+        ax.axvline(20.0, color=C_GRID, lw=1, ls="--", zorder=2)
+        ax.annotate("one erase, 20 ms", (20.0, len(QS) - 0.45),
                     xytext=(-5, 0), textcoords="offset points",
                     ha="right", va="top", fontsize=8.5, color="#5b6670", rotation=90)
         ax.set_yticks(range(len(QS)))
@@ -661,16 +661,22 @@ if r:
         NINES = [(0.5, "50%"), (0.99, "99%"), (0.999, "99.9%"), (0.9999, "99.99%"),
                  (0.99999, "99.999%"), (0.999999, "99.9999%"), (0.9999999, "99.99999%")]
         def nines(q): return -__import__("math").log10(1.0 - q)
+        # The axis ends where the data does. With n reads the largest
+        # observation IS the quantile at 1 - 1/n, so that is the real right
+        # edge; truncating earlier and drawing a straight line out to the max
+        # would invent a slope through percentiles that were never resolved.
+        NS = {c: sum(k for _, k in hist(c)) for c, _, _ in have}
+        XR = max(nines(1.0 - 1.0 / n) for n in NS.values())
         for cond, colour, label in have:
-            n = sum(c for _, c in hist(cond))
-            # Resolve only as far as the sample count supports: the last
-            # meaningful quantile is 1 - 1/n, past which we are plotting one
-            # observation and calling it a percentile.
+            n = NS[cond]
             qmax = 1.0 - 1.0 / n
-            qs = [0.5 + (1 - 0.5) * (1 - 10 ** (-t / 40.0)) for t in range(0, 241)]
+            qs = [1.0 - 0.5 * 10 ** (-t / 40.0) for t in range(0, 401)]
             qs = [q for q in qs if q <= qmax]
             xs = [nines(q) for q in qs]
             ys = [pct(cond, q) for q in qs]
+            # Past its own 1 - 1/n a condition has nothing left to say, and
+            # the empirical quantile is flat at the maximum by definition.
+            xs.append(XR); ys.append(pct(cond, 1.0))
             ax2.plot(xs, ys, "-", color=colour, lw=1.9, label=label)
         # The floor, drawn from the control rather than asserted. With
         # nohz_full=47 isolcpus=47 the scheduler tick is gone -- 60,012
@@ -686,30 +692,36 @@ if r:
                          f"(nothing above it in {sum(c for _, c in hist(ctl[0])):,} control reads)",
                          (0.015, fl * 2.6), xycoords=("axes fraction", "data"),
                          fontsize=8.5, color="#5b6670", va="bottom")
-        ax2.axhline(16_400_000, color=C_GRID, lw=1, ls="--", zorder=1)
-        ax2.axhline(75_000, color=C_GRID, lw=1, ls="--", zorder=1)
-        ax2.annotate("one 256 B program, 75 \u00b5s  (1.2 ms page \u00f7 16)",
-                     (0.012, 75_000), xycoords=("axes fraction", "data"),
+        ax2.axhline(20_000_000, color=C_GRID, lw=1, ls="--", zorder=1)
+        ax2.axhline(80_000, color=C_GRID, lw=1, ls="--", zorder=1)
+        ax2.annotate("one 256 B page program, 80 \u00b5s",
+                     (0.012, 80_000), xycoords=("axes fraction", "data"),
                      xytext=(0, 5), textcoords="offset points", ha="left",
                      fontsize=8.5, color="#5b6670")
         # Right-aligned: the legend owns the top-left, and the curves reach
         # this line only at the far right, so the label sits over empty axis.
         # Mid-axis: the legend owns the top-left and the erase curve climbs
         # through the top-right, so the only clear span is the middle.
-        ax2.annotate("one erase, 16.4 ms", (0.012, 16_400_000),
+        ax2.annotate("one erase, 20 ms", (0.012, 20_000_000),
                      xycoords=("axes fraction", "data"), xytext=(0, 5),
                      textcoords="offset points", ha="left",
                      fontsize=8.5, color="#5b6670")
         ax2.set_yscale("log")
-        XR = nines(0.99999975)
-        ax2.set_xticks([nines(q) for q, _ in NINES] + [XR])
-        ax2.set_xticklabels([lab for _, lab in NINES] + ["100%\n(max)"])
+        # nines(1 - 10**-k) == k exactly for k >= 1, but nines(0.5) is 0.301,
+        # not 0 -- placing the 50% tick at the origin puts it a third of a
+        # decade left of the data.
+        tk = [(nines(0.5), "50%")] + \
+             [(float(k), "%s%%" % ("99.99999999"[:k + 2] if k > 1 else "99"))
+              # ...but not one that collides with the 100% tick at the end.
+              for k in range(1, int(XR) + 1) if XR - k >= 0.9]
+        ax2.set_xticks([k for k, _ in tk] + [XR])
+        ax2.set_xticklabels([lab for _, lab in tk] + ["100%\n(max)"])
         ax2.set_yticks([1e2, 1e3, 1e4, 1e5, 1e6, 1e7])
         ax2.set_yticklabels(["100 ns", "1 \u00b5s", "10 \u00b5s", "100 \u00b5s", "1 ms", "10 ms"])
-        ax2.set_xlim(0, XR)
+        ax2.set_xlim(nines(0.5), XR)
         frame(ax2, "Where the Knees Are", "Percentile", "Read Latency")
         legend_by_last(ax2, fontsize=9, frameon=False, loc="upper left",
-                       bbox_to_anchor=(0.012, 16_400_000 / 1.9),
+                       bbox_to_anchor=(0.012, 20_000_000 / 2.2),
                        bbox_transform=ax2.get_yaxis_transform())
         # Provenance, because "how was this measured" should not require
         # reading a commit message. n is the pooled read count; repeats are
