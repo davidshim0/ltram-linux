@@ -56,12 +56,15 @@ if have bfs; then say "bfs on kron22"
 fi
 
 if have llama; then say "llama.cpp, tinyllama 1.1B"
-  # -n -1 with context shifting on: it generates until killed, so the run
-  # length is the census's decision. Weights are mmap'd and never written,
-  # which is the cleanest write-cold case we have.
+  # -n -1 --context-shift --ignore-eos: generates until killed, so the run
+  # length is the census's decision and not the model's. Without --ignore-eos
+  # it stops at the first EOS -- measured, it lasted 30 s. Weights are mmap'd
+  # and never written: the cleanest write-cold case we have. 1,214 MiB
+  # resident, 79 tok/s on 16 threads.
   census --label "llama.cpp (tinyllama 1.1B)" --cmd \
     "$W/llama.cpp/build/bin/llama-cli -m $W/models/tinyllama-1.1b-q4.gguf \
-     -t $THREADS -c 4096 -n -1 -no-cnv --no-warmup -p 'Write a long technical report about memory systems.'" \
+     -t $THREADS -c 4096 -n -1 -st --context-shift --ignore-eos --no-warmup \
+     -p Write_a_long_technical_report_about_memory_systems." \
     --out "$OUT/llama.csv"
 fi
 
@@ -82,7 +85,7 @@ if have redis; then say "redis, 95/5 zipfian, ~1 GiB"
 fi
 
 if have memcached; then say "memcached, 95/5 zipfian, ~1 GiB"
-  SP=$(serve memcached "true" "$W/memcached/memcached" -m 2048 -t 8 -u root)
+  SP=$(serve memcached "true" "$W/memcached/memcached" -m 2048 -t 8 -u nobody)
   sleep 2
   "$R/scripts/kv_load.py" --proto memcached --keys "$KEYS" --value "$VSZ" \
       --read-ratio 0.95 --threads 8 & LP=$!
