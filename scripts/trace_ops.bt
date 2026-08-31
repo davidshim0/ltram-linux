@@ -1,0 +1,60 @@
+#!/usr/bin/env bpftrace
+/*
+ * What the device is actually doing, measured rather than assumed.
+ *
+ * Everything we have says a read stalls for "one erase, 16.4 ms" and a program
+ * "costs 1.2 ms" -- but both of those came from datasheets and arithmetic, not
+ * from timing the operations. And nothing has ever measured whether a program
+ * and an erase can proceed together or whether one waits for the other, which
+ * is the question that decides how promotion behaves under a busy engine.
+ *
+ * ltram_erase_page and ltram_write_page are both global symbols, so the whole
+ * operation is timed including whatever the backend does inside it.
+ *
+ * The overlap counters are the point. If a write that starts while an erase is
+ * in flight takes materially longer than one that starts on an idle device,
+ * they serialise. If not, they proceed together.
+ */
+BEGIN { printf("tracing ltram_erase_page / ltram_write_page -- Ctrl-C for the report\n"); }
+
+kprobe:ltram_erase_page {
+        @e_start[tid] = nsecs;
+        @erase_inflight = 1;
+        @e_last_start = nsecs;
+}
+kretprobe:ltram_erase_page /@e_start[tid]/ {
+        $d = nsecs - @e_start[tid];
+        @erase_us = hist($d / 1000);
+        @erase_total_ms = sum($d / 1000000);
+        @erase_n = count();
+        delete(@e_start[tid]);
+        @erase_inflight = 0;
+        @e_last_end = nsecs;
+}
+
+kprobe:ltram_write_page {
+        @w_start[tid] = nsecs;
+        /* Was the device already erasing when this write began? */
+        @w_saw_erase[tid] = @erase_inflight;
+        if (@erase_inflight == 1) { @write_started_during_erase = count(); }
+        else                      { @write_started_idle = count(); }
+}
+kretprobe:ltram_write_page /@w_start[tid]/ {
+        $d = nsecs - @w_start[tid];
+        if (@w_saw_erase[tid] == 1) { @write_us_DURING_erase = hist($d / 1000); }
+        else                        { @write_us_idle_device  = hist($d / 1000); }
+        @write_total_ms = sum($d / 1000000);
+        @write_n = count();
+        delete(@w_start[tid]);
+        delete(@w_saw_erase[tid]);
+}
+
+/* Gap between consecutive erases: this is the pacing, measured. */
+kprobe:ltram_erase_page /@e_last_end > 0/ {
+        @erase_gap_us = hist((nsecs - @e_last_end) / 1000);
+}
+
+END {
+        clear(@e_start); clear(@w_start); clear(@w_saw_erase);
+        clear(@erase_inflight); clear(@e_last_start); clear(@e_last_end);
+}
