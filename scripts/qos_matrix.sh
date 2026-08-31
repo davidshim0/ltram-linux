@@ -1,5 +1,5 @@
 #!/bin/bash
-# qos_three.sh -- three conditions, identical settings, one long run each.
+# qos_matrix.sh -- five conditions, identical settings, one long run each.
 #
 # The three curves in fig9/fig9b were not measured the same way: the DRAM
 # control was 1 x 90 s from a different script, idle NOR was 4 x 60 s pooled,
@@ -41,7 +41,7 @@ PREFLIGHT=$(dirname "$0")/preflight.sh
 DBG=/sys/kernel/debug/ltram; PAR=/sys/module/ltram_policy/parameters
 REAL_HOME=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)
 MM=${MM:-$REAL_HOME/matmul}
-PIN=${PIN:-47}; NN=${NN:-2896}; HOLD=${HOLD:-300}; POLL=${POLL:-30}
+PIN=${PIN:-47}; NN=${NN:-2896}; HOLD=${HOLD:-240}; POLL=${POLL:-30}
 OUT=${OUT:-$SCRATCH/qos3}
 mkdir -p "$OUT"
 
@@ -58,6 +58,7 @@ HW0=$(cat $PAR/erase_high_water); LW0=$(cat $PAR/erase_low_water)
 SLEEPER=""
 cleanup(){ pkill -x matmul 2>/dev/null; echo 0 > /sys/kernel/ltram/target_pid 2>/dev/null
            [ -n "$SLEEPER" ] && kill $SLEEPER 2>/dev/null
+           [ -n "${CHURNER:-}" ] && kill $CHURNER 2>/dev/null
            setp promote_batch $PB0; setp wear_days $D0; setp erase_poll_ms $P0; setw $HW0 $LW0; }
 trap cleanup EXIT INT TERM
 
@@ -75,6 +76,24 @@ setp erase_poll_ms $POLL; setp promote_batch 1; setp wear_governor 1; setp wear_
 # scanner can promote, so nothing migrates because of it.
 sleep 100000 & SLEEPER=$!
 
+# The write generator. Once the reader is fully resident there is nothing left
+# to promote, so a "reads plus writes" phase needs a SECOND workload to supply
+# the programs. Pointing target_pid at it means its pages migrate -- that is the
+# write traffic -- while the reader, which is not targeted, is left alone. Its
+# working set is sized to keep promoting for a whole phase rather than finishing
+# early and going quiet halfway through the measurement.
+CHURN_N=${CHURN_N:-6500}          # ~161 MiB, ~41,300 pages: at ~140/s that is
+                                  # ~295 s, so it is still promoting at the end
+                                  # of a 240 s phase rather than going quiet
+CHURNER=""
+start_churner(){
+    [ -n "$CHURNER" ] && return
+    taskset -c $(( PIN - 1 )) $MM --n $CHURN_N --iters 1 --runs 100000 --chase \
+        > "$SCRATCH/churn.log" 2>&1 &
+    CHURNER=$!            # taskset/nice exec, so this IS the matmul pid
+    sleep 3
+}
+
 L=$SCRATCH/qos3.log
 eng_off
 taskset -c $PIN nice -n -20 $MM --n $NN --iters 1 --runs 100000 --chase --chase-hist \
@@ -87,40 +106,62 @@ echo $SLEEPER > /sys/kernel/ltram/target_pid
 phase(){   # $1 = name
     local h0 h1 c0 c1 iv cl0 cl1
     irqsnap > /tmp/q0.$$; c0=$(awk '/^ctxt/{print $2}' /proc/stat)
-    cl0=$(ps_ clean); h0=$(grep -c "^HIST" $L)
+    cl0=$(ps_ clean); h0=$(grep -c "^HIST" $L); da0=$(ps_ data)
     sleep $HOLD
-    h1=$(grep -c "^HIST" $L); cl1=$(ps_ clean)
+    h1=$(grep -c "^HIST" $L); cl1=$(ps_ clean); da1=$(ps_ data)
     c1=$(awk '/^ctxt/{print $2}' /proc/stat); irqsnap > /tmp/q1.$$
     iv=$(awk -v a="$h0" -v b="$h1" '/^CTX/{n++; if(n>a&&n<=b) s+=$4} END{print s+0}' $L)
     echo "$1 $h0 $h1" >> $OUT/marks.txt
-    printf "  %-10s %5d passes  %6d erases (%.1f/s)  target_pid=%s  involuntary %d\n" \
-        "$1" "$(( h1 - h0 ))" "$(( cl1 - cl0 ))" \
-        "$(awk -v a=$cl0 -v b=$cl1 -v t=$HOLD 'BEGIN{printf "%.1f",(b-a)/t}')" \
-        "$(cat /sys/kernel/ltram/target_pid)" "$iv"
+    # data rising means pages were promoted, i.e. programs happened. clean
+    # rising means sectors were blanked, i.e. erases happened. Printing both
+    # per phase means a phase that silently did nothing -- as engine_normal
+    # once did -- is visible rather than mistaken for a clean result.
+    printf "  %-16s %5d passes  writes %+7d (%5.1f/s)  erases %+7d (%5.1f/s)  invol %d\n" \
+        "$1" "$(( h1 - h0 ))" "$(( da1 - da0 ))" \
+        "$(awk -v a=$da0 -v b=$da1 -v t=$HOLD 'BEGIN{printf "%.1f",(b-a)/t}')" \
+        "$(( cl1 - cl0 ))" \
+        "$(awk -v a=$cl0 -v b=$cl1 -v t=$HOLD 'BEGIN{printf "%.1f",(b-a)/t}')" "$iv"
     join -j1 /tmp/q0.$$ /tmp/q1.$$ | awk -v p="$1" '{d=$3-$2; if(d>0) print p,$1,d}' >> $OUT/irq.txt
     rm -f /tmp/q0.$$ /tmp/q1.$$
 }
 
-echo "  phase 1/3: DRAM (never promoted, engine off)"
+echo "  1/5 dram             DRAM, no writes, no erases"
 phase dram
 
-echo "  filling to flash..."
-echo $(pgrep -x matmul | head -1) > /sys/kernel/ltram/target_pid   # promote the reader
+echo "  filling the reader onto flash..."
+echo $BG > /sys/kernel/ltram/target_pid   # the reader; $! is its real pid
 eng_on
 for i in $(seq 1 9000); do
     R=$(grep "^RESID" $L | tail -1 | awk '{print $4}'); R=${R:-0}
     awk -v r="$R" 'BEGIN{exit !(r >= 99.0)}' && break
     kill -0 $BG 2>/dev/null || break; sleep 0.5
 done
-echo $SLEEPER > /sys/kernel/ltram/target_pid                        # back to the sleeper
+echo $SLEEPER > /sys/kernel/ltram/target_pid
 eng_off; sleep 3
-echo "  filled to ${R}%"
+echo "  reader at ${R}% resident"
 
-echo "  phase 2/3: NOR, engine off"
-phase nor_idle
+echo "  2/5 nor_read         NOR, no writes, no erases"
+phase nor_read
+
 eng_on
-echo "  phase 3/3: NOR, engine on at ${POLL} ms spacing"
-phase nor_erasing
+echo "  3/5 nor_erase        NOR, no writes, erases at ${POLL} ms"
+phase nor_erase
+eng_off; sleep 2
+
+# From here target_pid is the churner, so its pages migrate and the programs
+# that migration performs are the write traffic. The reader is not targeted and
+# is already resident, so nothing about it changes.
+start_churner
+echo "$CHURNER" > /sys/kernel/ltram/target_pid
+sleep 2
+echo "  4/5 nor_write        NOR, writes (churner promoting), no erases"
+phase nor_write
+
+eng_on
+echo "  5/5 nor_write_erase  NOR, writes and erases at ${POLL} ms"
+phase nor_write_erase
+eng_off
+echo $SLEEPER > /sys/kernel/ltram/target_pid
 
 kill $BG 2>/dev/null; wait $BG 2>/dev/null
 grep "^SLOW" $L > $OUT/slow.txt; cp $L $OUT/full.log
@@ -145,7 +186,7 @@ for l in open(d+"/full.log"):
                 if c: tot[g][i]+=c
             break
 rows=[("condition","bucket_lo_ns","bucket_hi_ns","count")]
-for g in ("dram","nor_idle","nor_erasing"):
+for g in ("dram","nor_read","nor_erase","nor_write","nor_write_erase"):
     for b,c in sorted(tot[g].items()):
         lo,hi=edges(b); rows.append((g,lo,hi,c))
 with open(d+"/qos.csv","w",newline="") as f: csv.writer(f).writerows(rows)
@@ -157,7 +198,7 @@ def pct(m,q):
     return 0
 def fmt(v): return f"{v/1e6:.1f} ms" if v>=1e6 else (f"{v/1000:.1f} us" if v>=1000 else f"{v} ns")
 print(f"\n  {'condition':<13}{'reads':>14}{'p50':>9}{'p99.9':>10}{'p99.99':>10}{'p99.999':>11}{'max':>11}")
-for g in ("dram","nor_idle","nor_erasing"):
+for g in ("dram","nor_read","nor_erase","nor_write","nor_write_erase"):
     m=tot[g]
     if not m: continue
     print(f"  {g:<13}{sum(m.values()):>14,}{fmt(pct(m,.5)):>9}{fmt(pct(m,.999)):>10}"
