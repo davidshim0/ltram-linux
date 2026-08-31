@@ -35,6 +35,15 @@ engine_max(){ setw 65536 65535; }   # recycle everything, for pool preparation
 engine_off(){ setw 0 0; }
 
 [ -r $DBG/wear ] || { echo "no $DBG/wear"; exit 1; }
+# A stale matmul dies on an unknown option and the script then sleeps through
+# every phase measuring nothing. Check the flags first: it costs milliseconds
+# and it just cost a run.
+for f in chase chase-hist slow-ns resid-every phys; do
+    "$MM" --help 2>&1 | grep -q -- "--$f" || {
+        echo "!! $MM does not support --$f -- it is an old build."
+        echo "   The full binary is built by workloads/matmul; deploy that first."
+        exit 1; }
+done
 lsmod | grep -q nor_eci || insmod "$KO" provide_ops=1 test=0 inline_erase=0 verify_erased=1 || exit 1
 PB0=$(cat $PAR/promote_batch); D0=$(cat $PAR/wear_days); G0=$(cat $PAR/wear_governor)
 HW0=$(cat $PAR/erase_high_water); LW0=$(cat $PAR/erase_low_water)

@@ -16,7 +16,7 @@ SECS=${SECS:-60}
 PIN=${PIN:-47}
 # Resolve the invoking user's home: under sudo, $HOME is root's.
 REAL_HOME=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)
-MM=${MM:-$REAL_HOME/matmul.probe}
+MM=${MM:-$REAL_HOME/matmul}
 N=${N:-2048}
 THRESH=${THRESH:-5000}          # ns; record anything slower
 OUT=${OUT:-/tmp/stallprobe}
