@@ -503,7 +503,10 @@ if r:
                     if x["condition"] == cond and int(x["count"])), key=lambda t: t[0])
         if not b: return None, None, 0
         n = sum(c for _, c in b)
-        xs, ys, rem = [], [], n
+        # Start at the bottom edge of the first occupied bucket with y=1, so
+        # the drop off the body is drawn. Without it the curve begins in
+        # mid-air at 1e-3 and the reader cannot see where the mass sits.
+        xs, ys, rem = [max(1, (b[0][0] + 1) // 2)], [1.0], n
         for hi, c in b:
             xs.append(hi); rem -= c; ys.append(rem / n)
         return xs, ys, n
@@ -519,13 +522,22 @@ if r:
             if seen >= q * n: return hi
         return b[-1][0] if b else 0
 
-    CONDS = [("engine_off", C_DRAM, "no background erasing"),
-             ("engine_on",  C_NOR,  "erasing at the wear budget")]
+    # Whatever conditions the run recorded. The operating point turned out to
+    # matter by more than an order of magnitude, so the set is not fixed at
+    # two: off / module defaults / pinned flat out.
+    LABEL = {"engine_off":      (C_DRAM, "no background erasing"),
+             "engine_normal":   ("#B8860B", "erasing, module defaults"),
+             "engine_on":       ("#B8860B", "erasing, module defaults"),
+             "engine_flat_out": (C_NOR,  "erasing, engine pinned flat out")}
+    order = ["engine_off", "engine_normal", "engine_on", "engine_flat_out"]
+    present = [c for c in order if any(x["condition"] == c for x in r)]
+    present += sorted({x["condition"] for x in r} - set(order))
+    CONDS = [(c,) + LABEL.get(c, (C_MODEL, c.replace("_", " "))) for c in present]
     have = [c for c in CONDS if ccdf(c[0])[2]]
     if have:
         fig, ax = plt.subplots(figsize=(7.6, 4.8))
         floor = 1.0
-        for cond, colour, label in have:
+        for k, (cond, colour, label) in enumerate(have):
             xs, ys, n = ccdf(cond)
             floor = min(floor, 1.0 / n)
             # Step: the count in a bucket is not resolved within it.
@@ -533,7 +545,9 @@ if r:
             mx = pct(cond, 1.0)
             ax.plot([mx], [1.0 / n], "o", color=colour, ms=5, zorder=5)
             ax.annotate(f"max {mx/1000:.0f} µs", (mx, 1.0 / n),
-                        textcoords="offset points", xytext=(-6, 7),
+                        # Buckets are octaves, so two conditions can share a
+                        # top bucket and their labels land on each other.
+                        textcoords="offset points", xytext=(-6, 7 + 12 * k),
                         ha="right", fontsize=8.5, color=colour)
         ax.set_xscale("log"); ax.set_yscale("log")
         for q, lab in ((0.99, "p99"), (0.999, "p99.9"), (0.9999, "p99.99")):
@@ -545,7 +559,7 @@ if r:
                         textcoords="offset points", xytext=(0, 3),
                         ha="right", fontsize=8, color=C_GRID)
         ax.set_ylim(bottom=floor * 0.6, top=1.2)
-        frame(ax, "Read Latency Tail, With and Without Background Erasing",
+        frame(ax, "Per-Read Latency Tail Under Background Erasing",
               "Read Latency (ns)", "Fraction of Reads Slower Than x")
         legend_by_last(ax, fontsize=9, frameon=False, loc="lower left")
         fig.tight_layout(); fig.savefig(f"{OUT}/fig9-latency-tail.png", dpi=200)

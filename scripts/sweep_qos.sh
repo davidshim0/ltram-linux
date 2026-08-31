@@ -101,33 +101,46 @@ for i in $(seq 1 20000); do
 done
 echo 0 > /sys/kernel/ltram/target_pid       # stop promoting: isolate the medium
 sleep 2
-echo "  phase A: ${HOLD}s, engine OFF (residency ${R:-?}%)"
+# Three conditions, not two. fig8 measured +66 ns for background erasing at
+# the module's DEFAULT watermarks; a first run of this script measured a 2x
+# slowdown with the engine pinned flat out. Those cannot both describe "the
+# engine is on", so the operating point is a variable and gets its own phase.
+# The erase rate each phase actually achieved is recorded with it, because
+# that is the number the two figures have to agree on.
+MARKS=/tmp/sweep-qos.marks; : > $MARKS
+phase(){        # $1 = condition name, $2 = human label
+    local e0 e1 h0 h1 rate
+    h0=$(grep -c "^HIST" $L); e0=$(w cycles_used)
+    sleep $HOLD
+    h1=$(grep -c "^HIST" $L); e1=$(w cycles_used)
+    rate=$(awk -v a="${e0:-0}" -v b="${e1:-0}" -v t="$HOLD" 'BEGIN{printf "%.1f", (b-a)/t}')
+    echo "$1 $h0 $h1 $rate" >> $MARKS
+    echo "    $2: $(( ${e1:-0} - ${e0:-0} )) erases in ${HOLD}s = ${rate}/s"
+}
+echo "  residency ${R:-?}%, $(ps_ dirty) sectors dirty"
+engine_off; phase engine_off      "engine OFF          "
+engine_on;  phase engine_normal   "engine at defaults  "
+engine_max; phase engine_flat_out "engine flat out     "
 engine_off
-A0=$(grep -c "^HIST" $L); sleep $HOLD; A1=$(grep -c "^HIST" $L)
-echo "  phase B: ${HOLD}s, engine ON (dirty $(ps_ dirty))"
-engine_max
-EC0=$(w cycles_used)
-B0=$(grep -c "^HIST" $L); sleep $HOLD; B1=$(grep -c "^HIST" $L)
-EC1=$(w cycles_used)
-engine_off
-# Measured, not assumed: the figure should say what the engine actually did
-# rather than claim a budget it might not have hit.
-ERPS=$(awk -v a="${EC0:-0}" -v b="${EC1:-0}" -v t="$HOLD" 'BEGIN{printf "%.1f", (b-a)/t}')
-echo "  phase B erased $(( ${EC1:-0} - ${EC0:-0} )) sectors in ${HOLD}s = ${ERPS}/s"
 kill $BG 2>/dev/null; wait $BG 2>/dev/null
 
 mkdir -p "$(dirname "$OUT")"
 { echo "condition,bucket_lo_ns,bucket_hi_ns,count"
-  awk -v a0="$A0" -v a1="$A1" -v b0="$B0" -v b1="$B1" '
+  awk '
+    NR == FNR { lo[$1] = $2; hi[$1] = $3; next }
     /^HIST/ { n++
-      cond = (n > a0 && n <= a1) ? "engine_off" : ((n > b0 && n <= b1) ? "engine_on" : "")
+      cond = ""
+      for (c in lo) if (n > lo[c] && n <= hi[c]) cond = c
       if (cond == "") next
-      for (b = 0; b < 28; b++) tot[cond "," b] += $(4 + b)
+      # HIST is: $1=HIST $2=pass $3=n $4=max_ns $5..$32=hist[0..27].
+      # Buckets start at $5, not $4 -- reading from $4 folds max_ns in
+      # as "bucket 0" and shifts every real bucket down one octave.
+      for (b = 0; b < 28; b++) tot[cond "," b] += $(5 + b)
     }
     END { for (k in tot) { split(k, p, ",")
             lo = (p[2] == 0) ? 0 : 2 ^ (p[2] - 1)
             printf "%s,%d,%d,%d\n", p[1], lo, 2 ^ p[2] - 1, tot[k] } }
-  ' $L
+  ' $MARKS $L
 } > "$OUT"
 echo
 # Percentiles as the bucket's upper edge, so each reads as "no slower than".
@@ -135,12 +148,12 @@ pq(){ awk -F, -v c="$1" -v q="$2" 'NR>1 && $1==c && $4>0 {v[$3]=$4; n+=$4}
       END{ m=asorti(v, ix, "@ind_num_asc"); for(i=1;i<=m;i++){s+=v[ix[i]]
              if(s >= q*n){print ix[i]; exit}} print (m?ix[m]:0) }' "$OUT"; }
 pn(){ awk -F, -v c="$1" 'NR>1 && $1==c {n+=$4} END{print n+0}' "$OUT"; }
-printf "  %-11s %9s %9s %10s %10s %11s %12s\n" "" p50 p99 p99.9 p99.99 max reads
-for C in engine_off engine_on; do
-    printf "  %-11s %9s %9s %10s %10s %11s %12s\n" "$C" \
+printf "  %-16s %9s %9s %10s %10s %11s %12s\n" "" p50 p99 p99.9 p99.99 max reads
+for C in $(awk '{print $1}' $MARKS); do
+    printf "  %-16s %9s %9s %10s %10s %11s %12s\n" "$C" \
         "$(pq $C 0.5)" "$(pq $C 0.99)" "$(pq $C 0.999)" \
         "$(pq $C 0.9999)" "$(pq $C 1.0)" "$(pn $C)"
 done
 echo "  (ns; one erase is 16,400,000 ns)"
-rm -f $L
+rm -f $L $MARKS
 echo "wrote $OUT"

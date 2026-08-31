@@ -1062,7 +1062,10 @@ else
         /^HIST/ { n++
           c = (n > a0 && n <= a1) ? "engine_off" : ((n > b0 && n <= b1) ? "engine_on" : "")
           if (c == "") next
-          for (b = 0; b < 28; b++) t[c "," b] += $(4 + b) }
+          # HIST is: $1=HIST $2=pass $3=n $4=max_ns $5..$32=hist[0..27].
+          # Buckets start at $5, not $4 -- reading from $4 folds max_ns in
+          # as "bucket 0" and shifts every real bucket down one octave.
+          for (b = 0; b < 28; b++) t[c "," b] += $(5 + b) }
         END { for (k in t) { split(k, p, ",")
                 printf "%s,%d,%d,%d\n", p[1], (p[2]==0?0:2^(p[2]-1)), 2^p[2]-1, t[k] } }
       ' $L
