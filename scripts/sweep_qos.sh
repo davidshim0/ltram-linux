@@ -44,7 +44,7 @@ trap cleanup EXIT INT TERM
 
 NN=${NN:-2896}; NPAGES=$(( NN * NN * 4 / 4096 ))
 HOLD=${HOLD:-90}
-echo "  $(( NN * NN * 4 / 1048576 )) MiB, $NPAGES pages, ${HOLD}s per condition"
+echo "  $(( NN * NN * 4 / 1048576 )) MiB, $NPAGES pages, ${HOLD}s x 4 conditions"
 
 if [ "$(ps_ clean)" -lt $NPAGES ]; then
     echo "  recycling: clean $(ps_ clean) -> $NPAGES"
@@ -73,6 +73,19 @@ $MM --n $NN --iters 1 --runs 100000 --chase --chase-hist --print-ranges --phys \
 BG=$!
 for i in $(seq 1 900); do grep -q "^TSTART" $L 2>/dev/null && break; sleep 0.1; done
 PID=$(pgrep -x matmul | head -1)
+MARKS=/tmp/sweep-qos.marks; : > $MARKS
+phase(){        # $1 = condition name, $2 = human label
+    local e0 e1 h0 h1 rate
+    h0=$(grep -c "^HIST" $L); e0=$(w cycles_used)
+    sleep $HOLD
+    h1=$(grep -c "^HIST" $L); e1=$(w cycles_used)
+    rate=$(awk -v a="${e0:-0}" -v b="${e1:-0}" -v t="$HOLD" 'BEGIN{printf "%.1f", (b-a)/t}')
+    echo "$1 $h0 $h1 $rate" >> $MARKS
+    echo "    $2: $(( ${e1:-0} - ${e0:-0} )) erases in ${HOLD}s = ${rate}/s"
+}
+engine_off
+echo "  phase 0: ${HOLD}s in DRAM -- the measurement's own noise floor"
+phase dram_control "DRAM, nothing promoted"
 [ -n "${PID:-}" ] && echo $PID > /sys/kernel/ltram/target_pid
 echo "  filling..."
 for i in $(seq 1 20000); do
@@ -107,17 +120,15 @@ sleep 2
 # engine is on", so the operating point is a variable and gets its own phase.
 # The erase rate each phase actually achieved is recorded with it, because
 # that is the number the two figures have to agree on.
-MARKS=/tmp/sweep-qos.marks; : > $MARKS
-phase(){        # $1 = condition name, $2 = human label
-    local e0 e1 h0 h1 rate
-    h0=$(grep -c "^HIST" $L); e0=$(w cycles_used)
-    sleep $HOLD
-    h1=$(grep -c "^HIST" $L); e1=$(w cycles_used)
-    rate=$(awk -v a="${e0:-0}" -v b="${e1:-0}" -v t="$HOLD" 'BEGIN{printf "%.1f", (b-a)/t}')
-    echo "$1 $h0 $h1 $rate" >> $MARKS
-    echo "    $2: $(( ${e1:-0} - ${e0:-0} )) erases in ${HOLD}s = ${rate}/s"
-}
 echo "  residency ${R:-?}%, $(ps_ dirty) sectors dirty"
+# engine_off still showed 12 reads at 33 ms with nothing touching the flash --
+# no promotion, no erases. Those cannot be flash operations: the timing
+# brackets one load between two clock_gettime calls, so anything that takes
+# the thread off-CPU lands inside the delta. This phase is the control that
+# says so: same code, same timing, working set entirely in DRAM. Whatever tail
+# it shows is the measurement's own noise floor, and nothing below that floor
+# in the other phases can be attributed to the medium.
+echo "  (dram control was phase 0, before any promotion)"
 engine_off; phase engine_off      "engine OFF          "
 engine_on;  phase engine_normal   "engine at defaults  "
 engine_max; phase engine_flat_out "engine flat out     "
@@ -127,19 +138,36 @@ kill $BG 2>/dev/null; wait $BG 2>/dev/null
 mkdir -p "$(dirname "$OUT")"
 { echo "condition,bucket_lo_ns,bucket_hi_ns,count"
   awk '
-    NR == FNR { lo[$1] = $2; hi[$1] = $3; next }
+    # Bucket geometry comes from matmul, not from a constant here. Buckets are
+    # HB_SUB linear slices inside each octave, except octaves narrower than
+    # HB_SUB which stay whole (their slice width would truncate to zero).
+    # sb, not sub: sub() is an awk built-in and cannot be a parameter.
+    function blo(b,   o, sb, lo) {
+      o = int(b / nsub); sb = b % nsub
+      if (o == 0) return 0
+      lo = 2 ^ (o - 1)
+      return (o < 4) ? lo : lo + sb * int(lo / nsub)
+    }
+    function bhi(b,   o, sb, lo) {
+      o = int(b / nsub); sb = b % nsub
+      if (o == 0) return 0
+      lo = 2 ^ (o - 1)
+      return (o < 4) ? 2 ^ o - 1 : lo + (sb + 1) * int(lo / nsub) - 1
+    }
+    NR == FNR { plo[$1] = $2; phi[$1] = $3; next }
+    /^HISTDEF/ { noct = $2; nsub = $3; nb = noct * nsub; next }
     /^HIST/ { n++
       cond = ""
-      for (c in lo) if (n > lo[c] && n <= hi[c]) cond = c
+      for (c in plo) if (n > plo[c] && n <= phi[c]) cond = c
       if (cond == "") next
-      # HIST is: $1=HIST $2=pass $3=n $4=max_ns $5..$32=hist[0..27].
-      # Buckets start at $5, not $4 -- reading from $4 folds max_ns in
-      # as "bucket 0" and shifts every real bucket down one octave.
-      for (b = 0; b < 28; b++) tot[cond "," b] += $(5 + b)
+      # HIST is: $1=HIST $2=pass $3=n $4=max_ns $5.. = the buckets.
+      # Buckets start at $5, not $4 -- reading from $4 folds max_ns in as
+      # "bucket 0" and shifts every real bucket down one octave.
+      for (b = 0; b < nb; b++) tot[cond "," b] += $(5 + b)
     }
-    END { for (k in tot) { split(k, p, ",")
-            lo = (p[2] == 0) ? 0 : 2 ^ (p[2] - 1)
-            printf "%s,%d,%d,%d\n", p[1], lo, 2 ^ p[2] - 1, tot[k] } }
+    END { if (!nb) { print "no HISTDEF -- matmul too old" > "/dev/stderr"; exit 1 }
+          for (k in tot) if (tot[k] > 0) { split(k, q, ",")
+            printf "%s,%d,%d,%d\n", q[1], blo(q[2]), bhi(q[2]), tot[k] } }
   ' $MARKS $L
 } > "$OUT"
 echo

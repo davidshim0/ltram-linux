@@ -532,11 +532,13 @@ if r:
         if ns < 1_000_000:       return f"{ns/1000:.1f} \u00b5s"
         return f"{ns/1e6:.1f} ms"
 
-    LABEL = {"engine_off":      (C_DRAM, "no background erasing"),
+    LABEL = {"dram_control":    ("#6B7280", "DRAM control (no flash at all)"),
+             "engine_off":      (C_DRAM, "no background erasing"),
              "engine_normal":   ("#B8860B", "erasing, module defaults"),
              "engine_on":       ("#B8860B", "erasing, module defaults"),
              "engine_flat_out": (C_NOR,  "erasing, engine pinned flat out")}
-    order = ["engine_off", "engine_normal", "engine_on", "engine_flat_out"]
+    order = ["dram_control", "engine_off", "engine_normal", "engine_on",
+             "engine_flat_out"]
     present = [c for c in order if any(x["condition"] == c for x in r)]
     present += sorted({x["condition"] for x in r} - set(order))
     have = [(c,) + LABEL.get(c, (C_MODEL, c.replace("_", " "))) for c in present

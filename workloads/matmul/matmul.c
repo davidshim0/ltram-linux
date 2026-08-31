@@ -142,7 +142,16 @@ static int    evict_at = 0;      /* --evict-at PASS */
  * ~50 ns against a ~900 ns flash read: about 5%, which shifts the median a
  * little and leaves the tail -- the part being measured -- untouched.
  */
-#define HB 28                       /* log2 buckets, 1 ns .. ~134 ms */
+/*
+ * Latency histogram geometry. Octave buckets alone were too coarse for the
+ * question they were built for: 71% of the stalls under erasing landed in
+ * "16.8 - 33.6 ms", which is anything from one erase plus slop, to two
+ * erases, to the scheduler. HB_SUB linear sub-buckets inside each octave give
+ * ~9% resolution -- enough to say whether a stall IS an erase.
+ */
+#define HB_OCT 28                   /* octaves: 1 ns .. ~134 ms */
+#define HB_SUB 8                    /* linear sub-buckets per octave */
+#define HB (HB_OCT * HB_SUB)
 static int      do_hist = 0;        /* --chase-hist */
 static uint64_t hist[HB];
 static uint64_t hist_n, hist_max_ns;
@@ -903,6 +912,9 @@ int main(int argc, char **argv)
     /* Absolute epoch of the run loop's origin, so a separate sampler can line
      * its promotion curve up against these timings with no guesswork about how
      * long the fill took. */
+    /* Geometry once, so no parser has to hardcode it. */
+    if (do_hist)
+        printf("HISTDEF %d %d\n", HB_OCT, HB_SUB);
     printf("TSTART %.3f\n", rt.tv_sec + rt.tv_nsec * 1e-9);
     fflush(stdout);
     double t_start = now();   /* wall origin for POINT lines */
@@ -923,9 +935,23 @@ int main(int argc, char **argv)
                     {
                         double d = (now() - a0) * 1e9;   /* ns for this one read */
                         uint64_t ns = d < 1 ? 1 : (uint64_t)d;
-                        int b = 0;
-                        while ((ns >> b) && b < HB - 1) b++;
-                        hist[b]++; hist_n++;
+                        int oct = 0, sub = 0;
+
+                        while ((ns >> oct) && oct < HB_OCT - 1) oct++;
+                        /*
+                         * Sub-divide only where the octave is at least HB_SUB
+                         * wide; below that the sub-bucket width truncates to
+                         * zero and the edges a reader computes come out
+                         * inverted. Octaves under 8 ns hold nothing here
+                         * anyway -- one read is ~1000 ns.
+                         */
+                        if (oct >= 4) {          /* octave spans [lo, 2*lo) */
+                                uint64_t lo = 1ULL << (oct - 1);
+
+                                sub = (int)(((ns - lo) * HB_SUB) >> (oct - 1));
+                                if (sub >= HB_SUB) sub = HB_SUB - 1;
+                        }
+                        hist[oct * HB_SUB + sub]++; hist_n++;
                         if (ns > hist_max_ns) hist_max_ns = ns;
                     }
                 }

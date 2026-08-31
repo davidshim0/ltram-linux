@@ -1059,15 +1059,30 @@ else
 
     { echo "condition,bucket_lo_ns,bucket_hi_ns,count"
       awk -v a0="$PA0" -v a1="$PA1" -v b0="$PB0_" -v b1="$PB1" '
+        # Geometry from matmul (HISTDEF), not a constant here: buckets are
+        # nsub linear slices inside each octave, except octaves narrower than
+        # nsub, which stay whole.
+        # sb, not sub: sub() is an awk built-in and cannot be a parameter.
+    function blo(b,   o, sb, lo) {
+          o = int(b / nsub); sb = b % nsub
+          if (o == 0) return 0
+          lo = 2 ^ (o - 1)
+          return (o < 4) ? lo : lo + sb * int(lo / nsub) }
+        function bhi(b,   o, sb, lo) {
+          o = int(b / nsub); sb = b % nsub
+          if (o == 0) return 0
+          lo = 2 ^ (o - 1)
+          return (o < 4) ? 2 ^ o - 1 : lo + (sb + 1) * int(lo / nsub) - 1 }
+        /^HISTDEF/ { noct = $2; nsub = $3; nb = noct * nsub; next }
         /^HIST/ { n++
           c = (n > a0 && n <= a1) ? "engine_off" : ((n > b0 && n <= b1) ? "engine_on" : "")
           if (c == "") next
-          # HIST is: $1=HIST $2=pass $3=n $4=max_ns $5..$32=hist[0..27].
+          # HIST is: $1=HIST $2=pass $3=n $4=max_ns $5.. = the buckets.
           # Buckets start at $5, not $4 -- reading from $4 folds max_ns in
           # as "bucket 0" and shifts every real bucket down one octave.
-          for (b = 0; b < 28; b++) t[c "," b] += $(5 + b) }
-        END { for (k in t) { split(k, p, ",")
-                printf "%s,%d,%d,%d\n", p[1], (p[2]==0?0:2^(p[2]-1)), 2^p[2]-1, t[k] } }
+          for (b = 0; b < nb; b++) t[c "," b] += $(5 + b) }
+        END { for (k in t) if (t[k] > 0) { split(k, q, ",")
+                printf "%s,%d,%d,%d\n", q[1], blo(q[2]), bhi(q[2]), t[k] } }
       ' $L
     } > $PCSV
     # Percentiles as the bucket's upper edge, so each reads as "no slower
