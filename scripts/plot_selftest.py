@@ -552,7 +552,9 @@ if r:
         # carries the digits so nothing has to be traced off the axis.
         fig, (ax, axt) = plt.subplots(
             2, 1, figsize=(11, 7.2), gridspec_kw=dict(height_ratios=[3, 1], hspace=0.34))
-        X0 = 5e-4                                        # ms, i.e. 0.5 us
+        # 100 ns: the DRAM control's p50 is 159 ns, and at 0.5 us its first
+        # three bars fell off the left edge entirely.
+        X0 = 1e-4                                        # ms, i.e. 100 ns
         top = max(pct(c, 1.0) for c, _, _ in have) / 1e6 * 3
         ax.set_xscale("log"); ax.set_xlim(X0, top)
         nb = len(have); h = 0.8 / nb
@@ -569,8 +571,8 @@ if r:
                     ha="right", va="top", fontsize=8.5, color="#5b6670", rotation=90)
         ax.set_yticks(range(len(QS)))
         ax.set_yticklabels([n for _, n in QS][::-1], fontsize=10)
-        ax.set_xticks([1e-3, 1e-2, 1e-1, 1, 10])
-        ax.set_xticklabels(["1 \u00b5s", "10 \u00b5s", "100 \u00b5s", "1 ms", "10 ms"])
+        ax.set_xticks([1e-4, 1e-3, 1e-2, 1e-1, 1, 10])
+        ax.set_xticklabels(["100 ns", "1 \u00b5s", "10 \u00b5s", "100 \u00b5s", "1 ms", "10 ms"])
         ax.set_ylim(-0.6, len(QS) - 0.4)
         frame(ax, "Read Latency Percentiles, per Access", "Read Latency", "")
         ax.grid(axis="y", visible=False)
