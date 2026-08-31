@@ -16,6 +16,14 @@
 # for both at once. That is the worst thing the policy can do to a workload.
 set -u
 [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+
+# Refuse to measure on a machine that is not in a state where the result would
+# mean anything. Costs milliseconds; has already caught a stale binary, a
+# missing nohz_full, and a leftover run from a previous session.
+PREFLIGHT=$(dirname "$0")/preflight.sh
+if [ -x "$PREFLIGHT" ]; then
+    "$PREFLIGHT" --quiet || { echo "!! preflight failed -- run $PREFLIGHT for detail"; exit 1; }
+fi
 DBG=/sys/kernel/debug/ltram
 PAR=/sys/module/ltram_policy/parameters
 REAL_HOME=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)

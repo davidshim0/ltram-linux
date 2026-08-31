@@ -12,6 +12,14 @@
 # survive with the memory access gone?
 set -u
 [ "$(id -u)" = 0 ] || exec sudo -E "$0" "$@"   # nice -n -20 needs root
+
+# Refuse to measure on a machine that is not in a state where the result would
+# mean anything. Costs milliseconds; has already caught a stale binary, a
+# missing nohz_full, and a leftover run from a previous session.
+PREFLIGHT=$(dirname "$0")/preflight.sh
+if [ -x "$PREFLIGHT" ]; then
+    "$PREFLIGHT" --quiet || { echo "!! preflight failed -- run $PREFLIGHT for detail"; exit 1; }
+fi
 SECS=${SECS:-60}
 PIN=${PIN:-47}
 # Resolve the invoking user's home: under sudo, $HOME is root's.
