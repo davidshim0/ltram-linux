@@ -553,7 +553,15 @@ if r:
     # operationally the same experiment and measured within 0.3% of each other.
     # The data stays in qos.csv; showing both curves implies a comparison that
     # was not actually being made.
-    HIDE = {"engine_flat_out"}
+    # engine_normal is EXCLUDED because it measured nothing: setting the
+    # watermarks does not start the engine when the hysteresis latch is already
+    # off and clean sits between the marks, so that phase recorded ~0 erases.
+    # Plotting it would show a suspiciously clean "erasing" curve that was not
+    # erasing. engine_flat_out is excluded as the unspaced worst case -- it is
+    # real, but it is not an operating point the system runs in, because the
+    # 30 ms reader spacing is only disabled by clearing target_pid, which is a
+    # measurement artefact. Both stay in qos.csv.
+    HIDE = {"engine_normal", "engine_flat_out"}
     have = [(c,) + LABEL.get(c, (C_MODEL, c.replace("_", " "))) for c in present
             if hist(c) and c not in HIDE]
     if have:
@@ -638,18 +646,20 @@ if r:
             xs = [nines(q) for q in qs]
             ys = [pct(cond, q) for q in qs]
             ax2.plot(xs, ys, "-", color=colour, lw=1.9, label=label)
-        # Both populations are now identified, so name them on the figure
-        # rather than leaving two anonymous knees. The lower band is the
-        # scheduler tick: 60,012 arch_timer interrupts counted on the pinned
-        # CPU over 60 s, and the latency data independently gives a period of
-        # 999.9 us with 100% of inter-arrivals integer multiples of it. It
-        # survives with the memory access removed, so it is the machine, not
-        # the medium. The upper line is one erase.
-        ax2.axhspan(8_000_000 / 1000, 33_000_000 / 1000, color=C_GRID,
-                    alpha=.12, lw=0, zorder=0)
-        ax2.annotate("scheduler tick \u2014 1000/s, counted\n(present with no memory access at all)",
-                     (0.015, 26_000), xycoords=("axes fraction", "data"),
-                     fontsize=8.5, color="#5b6670", va="center")
+        # The floor, drawn from the control rather than asserted. With
+        # nohz_full=47 isolcpus=47 the scheduler tick is gone -- 60,012
+        # arch_timer interrupts per 60 s became ~0 -- and the DRAM control now
+        # records NOTHING above 100 us in 145,196,752 reads. So the shaded band
+        # is not noise to be tolerated, it is the resolution limit: anything
+        # above it is the device. The dashed line is one erase.
+        ctl = [c for c, _, _ in have if c == "dram_control"]
+        if ctl:
+            fl = pct(ctl[0], 1.0)
+            ax2.axhspan(0, fl, color=C_GRID, alpha=.10, lw=0, zorder=0)
+            ax2.annotate(f"measurement floor: {fl/1000:.1f} \u00b5s\n"
+                         f"(nothing above it in {sum(c for _, c in hist(ctl[0])):,} control reads)",
+                         (0.015, fl * 2.6), xycoords=("axes fraction", "data"),
+                         fontsize=8.5, color="#5b6670", va="bottom")
         ax2.axhline(16_400_000, color=C_GRID, lw=1, ls="--", zorder=1)
         # Right-aligned: the legend owns the top-left, and the curves reach
         # this line only at the far right, so the label sits over empty axis.
