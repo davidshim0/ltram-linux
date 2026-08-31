@@ -321,44 +321,26 @@ if r:
           if max(ph) == 4 else
           ((1, "DRAM"), (2, "Migrating"), (3, "Evicted"),
            (4, "Migrating\n(erase-gated)"), (5, "NOR")))
-    # A BROKEN AXIS. The gated fill runs 4,512 s against 60 s at either end,
-    # so on one linear axis the two settled phases are 1.3% of the width each
-    # and invisible -- the figure looks like it only measured the migration.
-    # Three panels sharing the y scale, each with its own time range, gives
-    # every phase room without distorting any of them.
-    import matplotlib.gridspec as gridspec
-    present = [(p_, lab) for p_, lab in PH if any(q == p_ for q in ph)]
-    widths = []
-    for p_, _ in present:
-        xs = [x for x, q in zip(t, ph) if q == p_]
-        widths.append(max(1.0, (max(xs) - min(xs)) ** 0.42))   # compress, do not flatten
-    fig = plt.figure(figsize=(10.5, 5.2))
-    gs = gridspec.GridSpec(1, len(present), width_ratios=widths, wspace=0.06)
+    fig, ax = plt.subplots(figsize=(10, 5.2))
     top = max(ns) * 1.16
-    axes = []
-    for k, (p_, lab) in enumerate(present):
-        axp = fig.add_subplot(gs[k], sharey=axes[0] if axes else None)
-        axes.append(axp)
+    for p_, lab in PH:
         xs = [x for x, q in zip(t, ph) if q == p_]
-        ys = [y for y, q in zip(ns, ph) if q == p_]
-        axp.plot(xs, ys, "-", color=C_NOR, lw=1.5, solid_joinstyle="round", zorder=3)
-        axp.set_xlim(min(xs), max(xs))
-        axp.grid(alpha=.25, lw=.5)
-        axp.annotate(f"{lab}\n{sum(ys)/len(ys):.0f} ns",
-                   (0.5, 0.985), xycoords="axes fraction", ha="center", va="top",
-                   fontsize=10, color="#3d474e")
-        axp.set_xlabel(f"{min(xs):.0f}-{max(xs):.0f} s", fontsize=9)
-        if k:
-            axp.tick_params(labelleft=False)
-            axp.spines["left"].set_visible(False)
-        if k < len(present) - 1:
-            axp.spines["right"].set_visible(False)
-    axes[0].set_ylim(0, top)
-    axes[0].set_ylabel("Average Latency per Cache line (ns)")
-    fig.suptitle("Latency when migration must wait for erases",
-                 fontsize=13, weight="semibold", y=0.97)
-    fig.supxlabel("Time (sec), axis broken between phases", fontsize=10, y=0.02)
-    fig.tight_layout(rect=[0, 0.04, 1, 0.95]); fig.savefig(f"{OUT}/fig8-worst-case.png", dpi=200)
+        if not xs: continue
+        if p_ > 1:
+            ax.axvline(min(xs), color=C_GRID, ls=":", lw=1, zorder=1)
+        mean = sum(y for y, q in zip(ns, ph) if q == p_) / len(xs)
+        # The settled phases are ~60 s against a fill of thousands, so their
+        # labels are placed at the divider rather than centred in a sliver.
+        wide = (max(xs) - min(xs)) > 0.12 * (max(t) - min(t))
+        ax.annotate(f"{lab}\n{mean:.0f} ns",
+                    ((min(xs) + max(xs)) / 2 if wide else min(xs), top * 0.985),
+                    ha="center" if wide else "left", va="top",
+                    fontsize=10, color="#3d474e")
+    ax.plot(t, ns, "-", color=C_NOR, lw=1.5, solid_joinstyle="round", zorder=3)
+    ax.set_ylim(0, top); ax.set_xlim(left=0)
+    frame(ax, "Latency when migration must wait for erases",
+          "Time (sec)", "Average Latency per Cache line (ns)")
+    fig.tight_layout(); fig.savefig(f"{OUT}/fig8-worst-case.png", dpi=200)
     made.append("fig8-worst-case")
 
 r = rows("wear-history.tsv", "\t")
