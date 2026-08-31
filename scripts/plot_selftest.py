@@ -538,12 +538,13 @@ if r:
 
     LABEL = {"dram_control":    ("#6B7280", "DRAM control (no flash at all)"),
              "engine_spaced":   ("#2F6B4F", "erasing, 30 ms spacing (real operating point)"),
+             "erasing":         (C_NOR,  "erasing at 34.7/s (measured)"),
              "engine_off":      (C_DRAM, "no background erasing"),
              "engine_normal":   ("#B8860B", "erasing, module defaults"),
              "engine_on":       ("#B8860B", "erasing, module defaults"),
              "engine_flat_out": (C_NOR,  "erasing, engine pinned flat out")}
-    order = ["dram_control", "engine_off", "engine_spaced", "engine_normal",
-             "engine_on", "engine_flat_out"]
+    order = ["dram_control", "engine_off", "erasing", "engine_spaced",
+             "engine_normal", "engine_on", "engine_flat_out"]
     present = [c for c in order if any(x["condition"] == c for x in r)]
     present += sorted({x["condition"] for x in r} - set(order))
     # engine_flat_out is omitted from the figures on purpose. The watermarks
