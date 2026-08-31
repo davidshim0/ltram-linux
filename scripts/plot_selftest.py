@@ -58,6 +58,40 @@ def frame(ax, title, xl, yl, note=None):
     # note is accepted and ignored: the figures carry no prose. What each one
     # shows belongs wherever it is being presented, not baked into the image.
 
+def overshoot(t, ns, ph, mig, ref, window=60.0):
+    """Peak of the migrating phase, and how far migration sits above settled.
+
+    Peak-minus-settled is the wrong estimator for the second question. The
+    peak is the max of thousands of passes, so it carries the extreme value
+    of the phase's own scatter: on the erase-gated run that is sd 25 over
+    2,875 passes, and +54 "over settled" is what noise alone produces. Take
+    the mean of the last `window` seconds instead, and report the scatter
+    with it so a difference smaller than its own error is visible as one.
+    """
+    mi = [i for i, q in enumerate(ph) if q == mig]
+    ri = [i for i, q in enumerate(ph) if q == ref]
+    if not mi or not ri: return None
+    pk = max(mi, key=lambda k: ns[k])
+    settled = sum(ns[i] for i in ri) / len(ri)
+    wi = [i for i in mi if t[i] > t[mi[-1]] - window] or mi
+    m = sum(ns[i] for i in wi) / len(wi)
+    var = sum((ns[i] - m) ** 2 for i in wi) / len(wi)
+    return pk, m - settled, var ** .5
+
+
+def mark_peak(ax, t, ns, ph, mig, ref, colour, dx=-14, dy=8):
+    o = overshoot(t, ns, ph, mig, ref)
+    if not o: return
+    pk, ov, sd = o
+    ax.plot([t[pk]], [ns[pk]], "o", color=colour, ms=6, zorder=4)
+    ax.annotate(f"{ns[pk]:.0f} ns peak while still promoting\n"
+                f"{ov:+.0f} \u00b1 {sd:.0f} ns over settled",
+                (t[pk], ns[pk]), textcoords="offset points", xytext=(dx, dy),
+                ha="right", fontsize=9, color=colour,
+                arrowprops=dict(arrowstyle="-", color=colour, lw=.9,
+                                shrinkA=0, shrinkB=3))
+
+
 made = []
 r = rows("read-vs-erase.csv")
 if r:
@@ -280,15 +314,7 @@ if r:
     # The overshoot is the finding: at the end of migration the medium is
     # already all flash, so the excess over the settled value is what active
     # promotion costs a concurrent reader.
-    pk = max(range(len(ns)), key=lambda k: ns[k])
-    settled = sum(y for y, q in zip(ns, ph) if q == 3) / max(1, sum(1 for q in ph if q == 3))
-    ax.plot([t[pk]], [ns[pk]], "o", color=C_NOR, ms=6, zorder=4)
-    ax.annotate(f"{ns[pk]:.0f} ns while still promoting\n"
-                f"{ns[pk]-settled:+.0f} ns over settled",
-                (t[pk], ns[pk]), textcoords="offset points", xytext=(-14, 10),
-                ha="right", fontsize=9, color=C_NOR,
-                arrowprops=dict(arrowstyle="-", color=C_NOR, lw=.9,
-                                shrinkA=0, shrinkB=3))
+    mark_peak(ax, t, ns, ph, 2, 3, C_NOR)
     ax.set_ylim(0, top)
     ax.set_xlim(left=0)
     frame(ax, "Latency change over migration phases",
@@ -357,25 +383,14 @@ if r:
             nleft += 1
     ax.plot(t, ns, "-", color=C_NOR, lw=1.5, solid_joinstyle="round", zorder=3)
 
-    # The same mark fig7 carries, so the two overshoots read against each
-    # other. Restricted to the migrating phase: the global max here lands in
-    # the settled-engine-on sliver, which is a different quantity.
-    #
-    # Measured against the settled phase that still has the engine running.
-    # The engine is on during migration, so referencing the engine-off value
-    # would charge promotion for the erase interference as well.
+    # The same mark fig7 carries, so the two read against each other.
+    # Restricted to the migrating phase -- the global max here lands in the
+    # settled-engine-on sliver, a different quantity -- and referenced to the
+    # settled phase that still has the engine running, since referencing the
+    # engine-off value would charge promotion for the erase interference too.
     mig = max((p_ for p_, lab in PH if "Migrating" in lab), default=None)
     if mig is not None and seg.get(mig) and seg.get(mig + 1):
-        pk = max((i for i, q in enumerate(ph) if q == mig), key=lambda k: ns[k])
-        on = [y for y, q in zip(ns, ph) if q == mig + 1]
-        settled = sum(on) / len(on)
-        ax.plot([t[pk]], [ns[pk]], "o", color=C_NOR, ms=6, zorder=4)
-        ax.annotate(f"{ns[pk]:.0f} ns while still promoting\n"
-                    f"{ns[pk] - settled:+.0f} ns over settled",
-                    (t[pk], ns[pk]), textcoords="offset points", xytext=(-14, 8),
-                    ha="right", fontsize=9, color=C_NOR,
-                    arrowprops=dict(arrowstyle="-", color=C_NOR, lw=.9,
-                                    shrinkA=0, shrinkB=3))
+        mark_peak(ax, t, ns, ph, mig, mig + 1, C_NOR)
     ax.set_ylim(0, top); ax.set_xlim(left=0)
     frame(ax, "Latency when migration must wait for erases",
           "Time (sec)", "Average Latency per Cache line (ns)")
