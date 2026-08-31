@@ -996,6 +996,98 @@ else
     rm -f $L
 fi
 
+hdr "P. READ LATENCY TAIL -- per access, not per pass"
+# Every other read measurement here is a pass average, and that is the wrong
+# instrument for the question a QoS reader asks. At 192 MiB a pass is 1.5M
+# cache lines; one 16.4 ms erase stall moves the average by 1% and the read
+# that actually waited is gone. J and its figures show the average cost of
+# erasing. This shows the distribution.
+#
+# --chase issues one dependent load per line, so accesses are serialised and
+# each can be timed alone; --chase-hist buckets them by log2 ns. Two
+# clock_gettime calls cost ~50 ns against a ~900 ns flash read, so the median
+# shifts slightly and the tail -- the part being measured -- does not.
+#
+# Same resident data on both sides, promotion stopped, engine off then on.
+# The only difference is background erasing.
+PCSV=$SDIR/qos.csv
+PN=2896; PPAGES=$(( PN * PN * 4 / 4096 )); PHOLD=90
+if ! ensure_clean $PPAGES; then
+    skip "P  could not reach $PPAGES clean sectors (have $(ps_ clean), dirty $(ps_ dirty))"
+else
+    setp promote_batch 1; setp wear_governor 1; setp wear_days 379
+    L=/tmp/st-p.log
+    sudo -n $MM --n $PN --iters 1 --runs 100000 --chase --chase-hist \
+        --print-ranges --phys --resid-every 5 > $L 2>&1 &
+    BG=$!
+    for i in $(seq 1 900); do grep -q "^TSTART" $L 2>/dev/null && break; sleep 0.1; done
+    PID=$(pgrep -x matmul | head -1)
+    [ -n "${PID:-}" ] && echo $PID | sudo -n tee $TP >/dev/null
+    setw $HW0 $LW0                      # engine on during the fill
+    PRES=0
+    for i in $(seq 1 6000); do
+        PRES=$(grep "^RESID" $L | tail -1 | awk '{print $4}'); PRES=${PRES:-0}
+        awk -v r="$PRES" 'BEGIN{exit !(r >= 99.9)}' && break
+        kill -0 $BG 2>/dev/null || break
+        sleep 0.5
+    done
+    # Stop promoting: from here the only thing that can touch a read is the
+    # erase engine, so the two conditions differ in exactly one way.
+    echo 0 | sudo -n tee $TP >/dev/null
+    sleep 2
+    setw 0 0
+    PA0=$(grep -c "^HIST" $L); sleep $PHOLD; PA1=$(grep -c "^HIST" $L)
+    PDIRTY=$(ps_ dirty)
+    setw $HW0 $LW0
+    PB0_=$(grep -c "^HIST" $L); sleep $PHOLD; PB1=$(grep -c "^HIST" $L)
+    setw 0 0
+    kill $BG 2>/dev/null; wait $BG 2>/dev/null
+    setp promote_batch $PB0; setp wear_days $D0
+
+    { echo "condition,bucket_lo_ns,bucket_hi_ns,count"
+      awk -v a0="$PA0" -v a1="$PA1" -v b0="$PB0_" -v b1="$PB1" '
+        /^HIST/ { n++
+          c = (n > a0 && n <= a1) ? "engine_off" : ((n > b0 && n <= b1) ? "engine_on" : "")
+          if (c == "") next
+          for (b = 0; b < 28; b++) t[c "," b] += $(4 + b) }
+        END { for (k in t) { split(k, p, ",")
+                printf "%s,%d,%d,%d\n", p[1], (p[2]==0?0:2^(p[2]-1)), 2^p[2]-1, t[k] } }
+      ' $L
+    } > $PCSV
+    # Percentiles as the bucket's upper edge, so each reads as "no slower
+    # than". Buckets are octaves, so this is coarse by construction -- which
+    # is the right resolution for a tail spanning 1 us to 17 ms.
+    pq(){ awk -F, -v c="$1" -v q="$2" 'NR>1 && $1==c && $4>0 {v[$3]=$4; n+=$4}
+          END{ m=asorti(v, ix, "@ind_num_asc"); for(i=1;i<=m;i++){s+=v[ix[i]]
+                 if(s >= q*n){print ix[i]; exit}} print (m?ix[m]:0) }' $PCSV; }
+    pn(){ awk -F, -v c="$1" 'NR>1 && $1==c {n+=$4} END{print n+0}' $PCSV; }
+    printf "     %-26s %8s %8s %9s %9s %10s\n" "" p50 p99 p99.9 p99.99 max
+    for C in engine_off engine_on; do
+        printf "     %-26s %8s %8s %9s %9s %10s   (n=%s)\n" "$C" \
+            "$(pq $C 0.5)" "$(pq $C 0.99)" "$(pq $C 0.999)" \
+            "$(pq $C 0.9999)" "$(pq $C 1.0)" "$(pn $C)"
+    done
+    echo "     residency ${PRES}%, $PDIRTY sectors dirty for the engine to chew on"
+    echo "     -> $PCSV"
+
+    P50A=$(pq engine_off 0.5); P50B=$(pq engine_on 0.5)
+    [ "$(pn engine_off)" -gt 1000 ] && [ "$(pn engine_on)" -gt 1000 ] \
+        && ok "P1 timed $(pn engine_off) reads with the engine off, $(pn engine_on) with it on" \
+        || no "P1 too few timed reads (off $(pn engine_off), on $(pn engine_on)) -- --chase-hist emitted nothing"
+    # One octave of slack: the buckets ARE octaves, so same-bucket and
+    # neighbouring-bucket both mean "the typical read did not move".
+    awk -v a="$P50A" -v b="$P50B" 'BEGIN{exit !(b <= a*2 && a <= b*2)}' \
+        && ok "P2 the typical read is unmoved by erasing: p50 $P50A -> $P50B ns" \
+        || no "P2 p50 moved from $P50A to $P50B ns -- erasing is shifting the common case"
+    # 16.4 ms is one erase. If p99.9 sits below it, then even the slow reads
+    # are not waiting out a whole erase, which is the QoS claim.
+    P999=$(pq engine_on 0.999)
+    [ "${P999:-0}" -lt 16400000 ] \
+        && ok "P3 under erasing, 999 reads in 1000 finish inside ${P999} ns (one erase is 16.4 ms)" \
+        || no "P3 p99.9 is ${P999} ns under erasing -- reads are waiting out whole erases"
+    rm -f $L
+fi
+
 hdr "K. FILL EFFICIENCY -- how long, and at what cost in allocations"
 # Three questions the suite could not answer: how long an empty pool takes to
 # fill, whether that matches the pacing we think we configured, and whether

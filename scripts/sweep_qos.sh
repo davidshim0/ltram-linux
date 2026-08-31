@@ -94,7 +94,17 @@ mkdir -p "$(dirname "$OUT")"
   ' $L
 } > "$OUT"
 echo
-awk -F, 'NR>1 && $4>0 {c[$1]+=$4; if($2+0>mx[$1]) mx[$1]=$2+0}
-  END{for(k in c) printf "  %-11s %10d accesses, worst bucket >= %d ns\n", k, c[k], mx[k]}' "$OUT"
+# Percentiles as the bucket's upper edge, so each reads as "no slower than".
+pq(){ awk -F, -v c="$1" -v q="$2" 'NR>1 && $1==c && $4>0 {v[$3]=$4; n+=$4}
+      END{ m=asorti(v, ix, "@ind_num_asc"); for(i=1;i<=m;i++){s+=v[ix[i]]
+             if(s >= q*n){print ix[i]; exit}} print (m?ix[m]:0) }' "$OUT"; }
+pn(){ awk -F, -v c="$1" 'NR>1 && $1==c {n+=$4} END{print n+0}' "$OUT"; }
+printf "  %-11s %9s %9s %10s %10s %11s %12s\n" "" p50 p99 p99.9 p99.99 max reads
+for C in engine_off engine_on; do
+    printf "  %-11s %9s %9s %10s %10s %11s %12s\n" "$C" \
+        "$(pq $C 0.5)" "$(pq $C 0.99)" "$(pq $C 0.999)" \
+        "$(pq $C 0.9999)" "$(pq $C 1.0)" "$(pn $C)"
+done
+echo "  (ns; one erase is 16,400,000 ns)"
 rm -f $L
 echo "wrote $OUT"

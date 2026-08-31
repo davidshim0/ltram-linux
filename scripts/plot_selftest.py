@@ -367,5 +367,72 @@ if r and len(r) > 2:
         fig.tight_layout(); fig.savefig(f"{OUT}/fig6-wear-spread.png", dpi=200)
         made.append("fig6-wear-spread")
 
+
+r = rows("qos.csv")
+if r:
+    # Per-READ latency, not per-pass. Plotted as a complementary CDF: the y
+    # value at x is the fraction of reads that took longer than x. A tail is
+    # a shape here, not a single number that an average has already eaten.
+    # Log y, because the interesting part is the one read in 10^5.
+    def ccdf(cond):
+        b = sorted(((int(x["bucket_hi_ns"]), int(x["count"])) for x in r
+                    if x["condition"] == cond and int(x["count"])), key=lambda t: t[0])
+        if not b: return None, None, 0
+        n = sum(c for _, c in b)
+        xs, ys, rem = [], [], n
+        for hi, c in b:
+            xs.append(hi); rem -= c; ys.append(rem / n)
+        return xs, ys, n
+
+    def pct(cond, q):
+        """Latency below which q of reads fall -- reported as the bucket's
+        upper edge, so it reads as 'no slower than'."""
+        b = sorted(((int(x["bucket_hi_ns"]), int(x["count"])) for x in r
+                    if x["condition"] == cond and int(x["count"])), key=lambda t: t[0])
+        n = sum(c for _, c in b); seen = 0
+        for hi, c in b:
+            seen += c
+            if seen >= q * n: return hi
+        return b[-1][0] if b else 0
+
+    CONDS = [("engine_off", C_DRAM, "no background erasing"),
+             ("engine_on",  C_NOR,  "erasing at the wear budget")]
+    have = [c for c in CONDS if ccdf(c[0])[2]]
+    if have:
+        fig, ax = plt.subplots(figsize=(7.6, 4.8))
+        floor = 1.0
+        for cond, colour, label in have:
+            xs, ys, n = ccdf(cond)
+            floor = min(floor, 1.0 / n)
+            # Step: the count in a bucket is not resolved within it.
+            ax.step(xs, ys, where="post", color=colour, lw=1.8, label=label)
+            mx = pct(cond, 1.0)
+            ax.plot([mx], [1.0 / n], "o", color=colour, ms=5, zorder=5)
+            ax.annotate(f"max {mx/1000:.0f} µs", (mx, 1.0 / n),
+                        textcoords="offset points", xytext=(-6, 7),
+                        ha="right", fontsize=8.5, color=colour)
+        ax.set_xscale("log"); ax.set_yscale("log")
+        for q, lab in ((0.99, "p99"), (0.999, "p99.9"), (0.9999, "p99.99")):
+            if 1 - q < floor: continue
+            ax.axhline(1 - q, color=C_GRID, lw=.7, ls=":", zorder=0)
+            # x in axes fraction so the label sits on the axis regardless of
+            # where the data happens to start.
+            ax.annotate(lab, (0.995, 1 - q), xycoords=("axes fraction", "data"),
+                        textcoords="offset points", xytext=(0, 3),
+                        ha="right", fontsize=8, color=C_GRID)
+        ax.set_ylim(bottom=floor * 0.6, top=1.2)
+        frame(ax, "Read Latency Tail, With and Without Background Erasing",
+              "Read Latency (ns)", "Fraction of Reads Slower Than x")
+        legend_by_last(ax, fontsize=9, frameon=False, loc="lower left")
+        fig.tight_layout(); fig.savefig(f"{OUT}/fig9-latency-tail.png", dpi=200)
+        made.append("fig9-latency-tail")
+
+        print("\n  per-read latency (bucket upper edge, ns)")
+        print(f"    {'':26} {'p50':>8} {'p99':>8} {'p99.9':>9} {'p99.99':>9} {'max':>10}")
+        for cond, _, label in have:
+            n = ccdf(cond)[2]
+            qs = [pct(cond, q) for q in (0.5, 0.99, 0.999, 0.9999, 1.0)]
+            print(f"    {label:26} " + " ".join(f"{v:>8}" for v in qs[:2])
+                  + f" {qs[2]:>9} {qs[3]:>9} {qs[4]:>10}   (n={n})")
 print("plotted:", ", ".join(made) if made else "nothing found")
 for m in made: print(f"  {OUT}/{m}.png")
