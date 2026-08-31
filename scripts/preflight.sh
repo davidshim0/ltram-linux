@@ -43,7 +43,13 @@ IS=$(cat /sys/devices/system/cpu/isolated  2>/dev/null)
 [ "$IS" = "$PIN" ] && ok "isolated=$PIN"   || need "isolated is [${IS:-empty}], want $PIN"
 
 # ---- 2. nothing left over from a previous run -------------------------------
-STALE=$(pgrep -c -f '[m]atmul|[s]weep_|[s]elftest\.sh|[p]robe_stalls' 2>/dev/null || echo 0)
+# pgrep -c PRINTS 0 and EXITS 1 when nothing matches, so "|| echo 0" appends a
+# second zero and the variable becomes "0\n0", which every numeric test then
+# rejects. Same trap grep -c set for this project once already. Capture the
+# output and ignore the status.
+STALE=$(pgrep -c -f '[m]atmul|[s]weep_|[s]elftest\.sh|[p]robe_stalls' 2>/dev/null)
+STALE=${STALE:-0}
+case "$STALE" in ''|*[!0-9]*) STALE=0;; esac
 if [ "$STALE" -eq 0 ]; then ok "no stale measurement processes"
 elif [ $FIX = 1 ]; then
     pkill -9 -f '[m]atmul|[s]weep_|[s]elftest\.sh|[p]robe_stalls' 2>/dev/null
