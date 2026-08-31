@@ -86,11 +86,30 @@ BG=$!
 for i in $(seq 1 900); do grep -q "^TSTART" $L 2>/dev/null && break; sleep 0.1; done
 PID=$(pgrep -x matmul | head -1)
 MARKS=/tmp/sweep-qos.marks; : > $MARKS
+IRQS=${IRQS:-/var/lib/ltram/selftest/qos-irq.txt}; mkdir -p "$(dirname "$IRQS")"; : > $IRQS
+# Per-CPU interrupt counts for one CPU, as "name count". The header line names
+# the CPUs, so find the column for ours rather than assuming a position.
+irqsnap(){
+    awk -v cpu="CPU$1" '
+      NR==1 { for (i = 1; i <= NF; i++) if ($i == cpu) col = i + 1; next }
+      col && NF >= col { name = $1; sub(/:$/, "", name); print name, $col }
+    ' /proc/interrupts
+}
 phase(){        # $1 = condition name, $2 = human label
     local e0 e1 h0 h1 rate iv
-    h0=$(grep -c "^HIST" $L); e0=$(w cycles_used)
+    h0=$(grep -c "^HIST" $L); e0=$(ps_ clean)
+    # Interrupt counters for the pinned CPU, both edges. Rate-matching said the
+    # ~20 us population is the HZ=1000 tick; this is the direct test. If the
+    # LOC delta equals the count of 14-30 us events, it is the timer, measured
+    # rather than inferred -- and anything left over is something else.
+    irqsnap $PIN > /tmp/irq.$1.0
     sleep $HOLD
-    h1=$(grep -c "^HIST" $L); e1=$(w cycles_used)
+    h1=$(grep -c "^HIST" $L); e1=$(ps_ clean)
+    irqsnap $PIN > /tmp/irq.$1.1
+    # Erases, via the clean-count delta: with promotion stopped, every erase
+    # raises clean by one. cycles_used counts ALLOCATIONS (the wear file says so
+    # outright, "basis: allocations"), so it does not move when nothing is being
+    # promoted -- which is why it read 0 erases/s for every phase last time.
     rate=$(awk -v a="${e0:-0}" -v b="${e1:-0}" -v t="$HOLD" 'BEGIN{printf "%.1f", (b-a)/t}')
     # Involuntary context switches over the same passes. A stall of
     # milliseconds is either the medium or the scheduler, and these separate
@@ -100,8 +119,13 @@ phase(){        # $1 = condition name, $2 = human label
     iv=$(awk -v a="$h0" -v b="$h1" '/^CTX/ { n++; if (n > a && n <= b) s += $4 }
                                     END { print s + 0 }' $L)
     echo "$1 $h0 $h1 $rate $iv" >> $MARKS
-    echo "    $2: $(( ${e1:-0} - ${e0:-0} )) erases in ${HOLD}s = ${rate}/s,"\
+    echo "    $2: ~$(( ${e1:-0} - ${e0:-0} )) erases in ${HOLD}s = ${rate}/s,"\
          "$(( h1 - h0 )) passes, $iv involuntary ctx switches"
+    join -j1 /tmp/irq.$1.0 /tmp/irq.$1.1 2>/dev/null \
+      | awk -v t="$HOLD" '{d=$3-$2; if(d>0) printf "       irq %-12s %8d  %7.0f/s\n", $1, d, d/t}' \
+      | sort -k3 -nr | head -6
+    join -j1 /tmp/irq.$1.0 /tmp/irq.$1.1 2>/dev/null \
+      | awk -v c="$1" '{d=$3-$2; if(d>0) print c, $1, d}' >> $IRQS
 }
 engine_off
 echo "  phase 0: ${HOLD}s in DRAM -- the measurement's own noise floor"

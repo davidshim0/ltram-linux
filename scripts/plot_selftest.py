@@ -608,6 +608,43 @@ if r:
         fig.savefig(f"{OUT}/fig9-latency-tail.png", dpi=200, bbox_inches="tight")
         made.append("fig9-latency-tail")
 
+        # fig9b: the quantile function. x is percentile on a "number of nines"
+        # scale (-log10(1-p)), y is latency, log. A CDF hides knees because it
+        # spends all its width on the body; this spends width on the tail,
+        # which is where the structure is. A knee here is a population --
+        # a class of event with its own characteristic cost -- so the shape
+        # says how many distinct things are going on, not just how bad it gets.
+        fig2, ax2 = plt.subplots(figsize=(9.6, 5.6))
+        NINES = [(0.5, "50%"), (0.9, "90%"), (0.99, "99%"), (0.999, "99.9%"),
+                 (0.9999, "99.99%"), (0.99999, "99.999%"), (0.999999, "99.9999%")]
+        def nines(q): return -__import__("math").log10(1.0 - q)
+        for cond, colour, label in have:
+            n = sum(c for _, c in hist(cond))
+            # Resolve only as far as the sample count supports: the last
+            # meaningful quantile is 1 - 1/n, past which we are plotting one
+            # observation and calling it a percentile.
+            qmax = 1.0 - 1.0 / n
+            qs = [0.5 + (1 - 0.5) * (1 - 10 ** (-t / 40.0)) for t in range(0, 241)]
+            qs = [q for q in qs if q <= qmax]
+            xs = [nines(q) for q in qs]
+            ys = [pct(cond, q) for q in qs]
+            ax2.plot(xs, ys, "-", color=colour, lw=1.9, label=label)
+        ax2.axhline(16_400_000, color=C_GRID, lw=1, ls="--", zorder=1)
+        ax2.annotate("one erase, 16.4 ms", (0.01, 16_400_000),
+                     xycoords=("axes fraction", "data"), xytext=(0, 4),
+                     textcoords="offset points", fontsize=8.5, color="#5b6670")
+        ax2.set_yscale("log")
+        ax2.set_xticks([nines(q) for q, _ in NINES])
+        ax2.set_xticklabels([lab for _, lab in NINES])
+        ax2.set_yticks([1e2, 1e3, 1e4, 1e5, 1e6, 1e7])
+        ax2.set_yticklabels(["100 ns", "1 \u00b5s", "10 \u00b5s", "100 \u00b5s", "1 ms", "10 ms"])
+        ax2.set_xlim(0, nines(0.9999995))
+        frame(ax2, "Where the Knees Are", "Percentile", "Read Latency")
+        ax2.legend(fontsize=9, frameon=False, loc="upper left")
+        fig2.tight_layout()
+        fig2.savefig(f"{OUT}/fig9b-quantiles.png", dpi=200)
+        made.append("fig9b-quantiles")
+
         print("\n  per-read latency")
         print(f"    {'':34}" + "".join(f"{n:>11}" for _, n in QS))
         for cond, _, label in have:
