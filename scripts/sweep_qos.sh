@@ -46,7 +46,7 @@ NN=${NN:-2896}; NPAGES=$(( NN * NN * 4 / 4096 ))
 HOLD=${HOLD:-90}
 TARGET=${TARGET:-99.5}      # stop filling here
 FLOOR=${FLOOR:-99.0}        # ... or here, if it plateaus first
-echo "  $(( NN * NN * 4 / 1048576 )) MiB, $NPAGES pages, ${HOLD}s x 4 conditions"
+echo "  $(( NN * NN * 4 / 1048576 )) MiB, $NPAGES pages, ${HOLD}s x 5 conditions"
 
 if [ "$(ps_ clean)" -lt $NPAGES ]; then
     echo "  recycling: clean $(ps_ clean) -> $NPAGES"
@@ -186,6 +186,28 @@ echo "  (dram control was phase 0, before any promotion)"
 engine_off; phase engine_off      "engine OFF          "
 engine_on;  phase engine_normal   "engine at defaults  "
 engine_max; phase engine_flat_out "engine flat out     "
+
+# The condition that actually matters, and that none of the above measures.
+# lt_erase_work_fn picks its requeue delay from target_pid, NOT from the
+# watermarks:
+#
+#     if (!lt_erase_engine_on)        delay_ms = erase_idle_ms;
+#     else if (READ_ONCE(target_pid)) delay_ms = erase_poll_ms;   /* 30 ms */
+#     else                            delay_ms = 0;
+#
+# Clearing target_pid to stop promotion -- which every phase above does, to
+# isolate the medium -- also switches off the 30 ms spacing that exists to
+# protect a targeted reader. So all three phases above erase back-to-back and
+# measure an operating point the system never actually runs in.
+#
+# Point target_pid at a sleeper instead. It has no promotable anonymous pages,
+# so nothing migrates and the reader stays isolated, but the engine takes the
+# spaced branch. This is the configuration a real workload would see.
+sleep 100000 & SLEEPER=$!
+echo $SLEEPER > /sys/kernel/ltram/target_pid
+engine_on;  phase engine_spaced   "engine spaced, 30 ms"
+echo 0 > /sys/kernel/ltram/target_pid
+kill $SLEEPER 2>/dev/null
 engine_off
 kill $BG 2>/dev/null; wait $BG 2>/dev/null
 

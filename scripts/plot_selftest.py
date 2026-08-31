@@ -537,16 +537,25 @@ if r:
         return f"{ns/1e6:.1f} ms"
 
     LABEL = {"dram_control":    ("#6B7280", "DRAM control (no flash at all)"),
+             "engine_spaced":   ("#2F6B4F", "erasing, 30 ms spacing (real operating point)"),
              "engine_off":      (C_DRAM, "no background erasing"),
              "engine_normal":   ("#B8860B", "erasing, module defaults"),
              "engine_on":       ("#B8860B", "erasing, module defaults"),
              "engine_flat_out": (C_NOR,  "erasing, engine pinned flat out")}
-    order = ["dram_control", "engine_off", "engine_normal", "engine_on",
-             "engine_flat_out"]
+    order = ["dram_control", "engine_off", "engine_spaced", "engine_normal",
+             "engine_on", "engine_flat_out"]
     present = [c for c in order if any(x["condition"] == c for x in r)]
     present += sorted({x["condition"] for x in r} - set(order))
+    # engine_flat_out is omitted from the figures on purpose. The watermarks
+    # only drive the hysteresis latch; pacing comes from erase_poll_ms, and in
+    # these runs clean never reached even the 8192 high-water, so the latch
+    # never turned off in either condition -- flat out and module defaults were
+    # operationally the same experiment and measured within 0.3% of each other.
+    # The data stays in qos.csv; showing both curves implies a comparison that
+    # was not actually being made.
+    HIDE = {"engine_flat_out"}
     have = [(c,) + LABEL.get(c, (C_MODEL, c.replace("_", " "))) for c in present
-            if hist(c)]
+            if hist(c) and c not in HIDE]
     if have:
         QS = [(0.50, "p50"), (0.99, "p99"), (0.999, "p99.9"),
               (0.9999, "p99.99"), (0.99999, "p99.999"), (1.0, "max")]
@@ -630,9 +639,12 @@ if r:
             ys = [pct(cond, q) for q in qs]
             ax2.plot(xs, ys, "-", color=colour, lw=1.9, label=label)
         ax2.axhline(16_400_000, color=C_GRID, lw=1, ls="--", zorder=1)
-        ax2.annotate("one erase, 16.4 ms", (0.01, 16_400_000),
-                     xycoords=("axes fraction", "data"), xytext=(0, 4),
-                     textcoords="offset points", fontsize=8.5, color="#5b6670")
+        # Right-aligned: the legend owns the top-left, and the curves reach
+        # this line only at the far right, so the label sits over empty axis.
+        ax2.annotate("one erase, 16.4 ms", (0.99, 16_400_000),
+                     xycoords=("axes fraction", "data"), xytext=(0, 5),
+                     textcoords="offset points", ha="right",
+                     fontsize=8.5, color="#5b6670")
         ax2.set_yscale("log")
         ax2.set_xticks([nines(q) for q, _ in NINES])
         ax2.set_xticklabels([lab for _, lab in NINES])
