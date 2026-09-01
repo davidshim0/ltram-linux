@@ -1,0 +1,15 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd
+"redis (95/5 zipfian, 10000 ops/s)",5,455513,94.40,0.24,3,smaps_referenced,0.26,0.03
+"redis (95/5 zipfian, 10000 ops/s)",10,455513,90.07,0.21,3,smaps_referenced,0.48,0.04
+"redis (95/5 zipfian, 10000 ops/s)",20,455513,82.85,0.21,3,smaps_referenced,0.78,0.04
+"redis (95/5 zipfian, 10000 ops/s)",30,455513,76.77,0.21,3,smaps_referenced,0.98,0.04
+"redis (95/5 zipfian, 10000 ops/s)",45,455513,69.07,0.21,3,smaps_referenced,1.12,0.04
+"redis (95/5 zipfian, 10000 ops/s)",60,455513,62.54,0.16,3,smaps_referenced,1.19,0.01
+"redis (95/5 zipfian, 10000 ops/s)",90,455513,52.03,0.16,3,smaps_referenced,1.22,0.00
+"redis (95/5 zipfian, 10000 ops/s)",120,455513,43.88,0.15,3,smaps_referenced,1.17,0.00
+"redis (95/5 zipfian, 10000 ops/s)",180,455513,32.07,0.13,3,smaps_referenced,0.96,0.00
+"redis (95/5 zipfian, 10000 ops/s)",240,455513,24.16,0.13,3,smaps_referenced,0.74,0.00
+"redis (95/5 zipfian, 10000 ops/s)",300,455513,18.67,0.13,3,smaps_referenced,0.56,0.00
+"redis (95/5 zipfian, 10000 ops/s)",360,455513,14.77,0.13,3,smaps_referenced,0.42,0.00
+"redis (95/5 zipfian, 10000 ops/s)",480,455513,9.94,0.13,3,smaps_referenced,0.25,0.00
+"redis (95/5 zipfian, 10000 ops/s)",600,455513,7.34,0.13,3,smaps_referenced,0.15,0.00

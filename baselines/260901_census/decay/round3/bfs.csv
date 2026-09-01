@@ -1,0 +1,15 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd
+bfs (kron22),5,135590,98.99,0.71,2,smaps_referenced,0.77,0.01
+bfs (kron22),10,135590,99.75,0.70,2,smaps_referenced,0.00,0.00
+bfs (kron22),20,135590,98.19,0.57,2,smaps_referenced,1.56,0.14
+bfs (kron22),30,135590,99.75,0.56,2,smaps_referenced,0.00,0.13
+bfs (kron22),45,135590,99.75,0.42,2,smaps_referenced,0.00,0.01
+bfs (kron22),60,135590,99.15,0.42,2,smaps_referenced,0.60,0.00
+bfs (kron22),90,135590,99.75,0.41,2,smaps_referenced,0.00,0.00
+bfs (kron22),120,135590,99.75,0.40,2,smaps_referenced,0.00,0.00
+bfs (kron22),180,135590,97.63,0.41,2,smaps_referenced,0.98,0.00
+bfs (kron22),240,135590,98.20,0.17,2,smaps_referenced,1.55,0.00
+bfs (kron22),300,135590,99.75,0.17,2,smaps_referenced,0.00,0.00
+bfs (kron22),360,135590,99.75,0.17,2,smaps_referenced,0.00,0.00
+bfs (kron22),480,135590,99.75,0.17,1,smaps_referenced,0.00,0.00
+bfs (kron22),600,135590,99.75,0.16,1,smaps_referenced,0.00,0.00

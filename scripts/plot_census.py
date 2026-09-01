@@ -47,11 +47,14 @@ def thin(ts, keep=9):
     on the flat tail.
     """
     if len(ts) <= keep: return list(range(len(ts)))
+    # Targets stay in LOG space, because that is the space the comparison
+    # below works in. Exponentiating them here and then comparing against
+    # log(ts[j]) mixes the two: "closest to 5 s" resolves to "log closest to
+    # 5", which is 148 s, and a 14-point ladder thins to two points.
     lo, hi = math.log(ts[0]), math.log(ts[-1])
-    want = [math.exp(lo + (hi - lo) * i / (keep - 1)) for i in range(keep)]
-    idx = sorted({min(range(len(ts)), key=lambda j: abs(math.log(ts[j]) - w))
-                  for w in want})
-    return idx
+    want = [lo + (hi - lo) * i / (keep - 1) for i in range(keep)]
+    return sorted({min(range(len(ts)), key=lambda j: abs(math.log(ts[j]) - w))
+                   for w in want})
 
 # ---------------------------------------------------------------- load
 work, raw = {}, {}
@@ -195,21 +198,24 @@ ordered = sorted(names, key=lambda n: -next((p[1] for p in work[n]
                                              if p[0] == first), -1))
 
 def grouped(coldf, fname, note):
+    # A 14-point ladder x 5 workloads is 70 bars and renders 30 inches wide.
+    # Thin to the points that show the shape; the CSVs keep every one.
+    keep = [allT[i] for i in thin(allT, keep=8)]
     nb = len(ordered); bw = 0.70 / nb
-    fig, ax = plt.subplots(figsize=(max(9.5, 1.9 * len(allT) + 3), 5.2))
+    fig, ax = plt.subplots(figsize=(min(15.0, max(9.5, 1.9 * len(keep) + 3)), 5.2))
     for k, name in enumerate(ordered):
         col = TAB_CB[k % len(TAB_CB)]
         d = {p[0]: p[1] for p in work[name]}
-        xs = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(allT) if T in d]
-        ys = [d[T] for T in allT if T in d]
+        xs = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(keep) if T in d]
+        ys = [d[T] for T in keep if T in d]
         ax.bar(xs, ys, width=bw, color=col,
                label=name.split(" (")[0], zorder=3)
         for x, y in zip(xs, ys):
             ax.text(x, y + 1.2, num(y), ha="center", va="bottom",
                     fontsize=8, color="#3d474e")
         dc = {p[0]: p[2] for p in work[name] if p[2] >= 0}
-        xc = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(allT) if T in dc]
-        yc = [dc[T] for T in allT if T in dc]
+        xc = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(keep) if T in dc]
+        yc = [dc[T] for T in keep if T in dc]
         if xc:
             # No edge. matplotlib strokes it centred on the boundary, so an
             # outlined bar is visibly wider than the one it sits inside.
@@ -222,13 +228,16 @@ def grouped(coldf, fname, note):
     # smaps fallback aggregates, so exactly one T carries a cold reading and
     # the rest have none -- which without a mark looks like "cold is 0 here".
     hasc = {T: any(p[0] == T and p[2] >= 0 for n in ordered for p in work[n])
-            for T in allT}
-    ax.set_xticks(range(len(allT)))
-    ax.set_xticklabels([f"{T/60:g}" + ("" if hasc[T] else "\u2020")
-                        for T in allT])
+            for T in keep}
+    # One unit for the whole axis. A ladder that starts at 5 s renders as
+    # 0.0833333 minutes, which is not a time anyone reads.
+    secs = keep[-1] < 60 or any(T % 60 for T in keep)
+    ax.set_xticks(range(len(keep)))
+    ax.set_xticklabels([(f"{T:g}" if secs else f"{T/60:g}")
+                        + ("" if hasc[T] else "\u2020") for T in keep])
+    ax.set_xlabel("Time (s)" if secs else "Time (min)")
     ax.set_ylim(0, 108); ax.set_yticks([0, 25, 50, 75, 100])
     ax.set_yticklabels(["0", "25%", "50%", "75%", "100%"])
-    ax.set_xlabel("Time (min)")
     ax.set_ylabel("Percentage of Memory")
     ax.set_title("Share of Read-Mostly Data and Cold Data per Workload",
                  fontsize=13, weight="semibold", pad=34)
