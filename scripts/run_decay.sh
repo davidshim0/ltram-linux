@@ -45,11 +45,11 @@ go(){                         # go <label> <file> <pid>
 }
 
 if have pagerank; then say "pagerank"
-  OMP_NUM_THREADS=$THREADS "$W/gapbs/pr" -f "$GRAPH" -n 100000 -i 20 >/dev/null 2>&1 & P=$!
+  OMP_NUM_THREADS=$THREADS "$W/gapbs/pr" -f "$GRAPH" -n 5000000 -i 20 >/dev/null 2>&1 & P=$!
   sleep 45; go "pagerank (kron22)" pagerank $P; kill $P 2>/dev/null; sleep 3
 fi
 if have bfs; then say "bfs"
-  OMP_NUM_THREADS=$THREADS "$W/gapbs/bfs" -f "$GRAPH" -n 100000 >/dev/null 2>&1 & P=$!
+  OMP_NUM_THREADS=$THREADS "$W/gapbs/bfs" -f "$GRAPH" -n 5000000 >/dev/null 2>&1 & P=$!
   sleep 45; go "bfs (kron22)" bfs $P; kill $P 2>/dev/null; sleep 3
 fi
 if have llama; then say "llama.cpp"

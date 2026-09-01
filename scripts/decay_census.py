@@ -61,6 +61,7 @@ LAD = [int(x) for x in a.ladder.split(",")]
 HAVE_ROOT = os.geteuid() == 0
 acc_wc = {T: [] for T in LAD}
 acc_cd = {T: [] for T in LAD}
+acc_gone = {T: [] for T in LAD}   # of the t0 population, how much has vanished
 npages = []
 
 
@@ -89,23 +90,25 @@ def smaps_ref():
     return r, f
 
 
-def dirty_frac():
-    tot = d = 0
+def scan_pass(regs):
+    """present and soft-dirty masks over a FIXED region list, concatenated."""
+    pres, dirty = [], []
     with open(f"/proc/{pid}/pagemap", "rb") as fh:
-        for lo, hi in regions():
+        for lo, hi in regs:
+            npg = (hi - lo) // PAGE
             try:
                 fh.seek((lo // PAGE) * 8)
-                raw = fh.read(((hi - lo) // PAGE) * 8)
+                raw = fh.read(npg * 8)
             except Exception:
-                continue
-            if len(raw) < 8:
-                continue
+                raw = b""
             e = np.frombuffer(raw[:len(raw) // 8 * 8], dtype=np.uint64)
-            pm = (e & np.uint64(1 << 63)) != 0
-            sd = (e & np.uint64(1 << 55)) != 0
-            tot += int(pm.sum())
-            d += int((pm & sd).sum())
-    return tot, d
+            if len(e) < npg:                       # region shrank or vanished
+                e = np.concatenate([e, np.zeros(npg - len(e), dtype=np.uint64)])
+            pres.append((e & np.uint64(1 << 63)) != 0)
+            dirty.append((e & np.uint64(1 << 55)) != 0)
+    if not pres:
+        return np.zeros(0, dtype=bool), np.zeros(0, dtype=bool)
+    return np.concatenate(pres), np.concatenate(dirty)
 
 
 def emit():
@@ -113,7 +116,8 @@ def emit():
     out = sys.stdout if a.out == "-" else open(a.out, "w")
     w = csv.writer(out, lineterminator="\n")
     w.writerow(["workload", "T_sec", "pages", "write_cold_pct", "cold_pct",
-                "windows_averaged", "cold_method", "write_cold_sd", "cold_sd"])
+                "windows_averaged", "cold_method", "write_cold_sd", "cold_sd",
+                "freed_pct"])
     N = int(np.mean(npages)) if npages else 0
     for T in LAD:
         if not acc_wc[T]:
@@ -122,7 +126,8 @@ def emit():
                     f"{np.mean(acc_wc[T]):.2f}", f"{np.mean(acc_cd[T]):.2f}",
                     len(acc_wc[T]),
                     "page_idle" if HAVE_ROOT else "smaps_referenced",
-                    f"{np.std(acc_wc[T]):.2f}", f"{np.std(acc_cd[T]):.2f}"])
+                    f"{np.std(acc_wc[T]):.2f}", f"{np.std(acc_cd[T]):.2f}",
+                    f"{np.mean(acc_gone[T]):.2f}" if acc_gone[T] else ""])
     if out is not sys.stdout:
         out.close()
 
@@ -136,6 +141,27 @@ for p in range(a.passes):
         open(f"/proc/{pid}/clear_refs", "w").write("4")   # soft-dirty
     except (FileNotFoundError, ProcessLookupError):
         break
+    # Fix the population at t0 and mark pages written ONCE, permanently.
+    #
+    # The obvious formulation -- 1 - dirty_now / resident_now -- is not
+    # monotone in T, and write-cold must be: a page not written in 8 minutes
+    # was not written in 6. pagerank frees its 32 MiB score array between
+    # trials, so a ladder point landing mid-free drops ~8,203 pages from BOTH
+    # the numerator and the denominator and the ratio JUMPS UP. Measured:
+    # 94.21% at T=6 s against 96.32% at T=12 s.
+    #
+    # So: the denominator is the pages resident at t0, and a page counts as
+    # written once it is seen dirty OR once it disappears. A freed page is
+    # not available to place on flash, and treating it as written is both
+    # conservative and monotone by construction.
+    regs0 = regions()
+    pres0, _ = scan_pass(regs0)
+    N0 = int(pres0.sum())
+    if not N0:
+        break
+    written = np.zeros(len(pres0), dtype=bool)
+    rss0, _ = smaps_ref()
+    ref_hi = 0
     t0 = time.time()
     dead = False
     for T in LAD:
@@ -147,17 +173,28 @@ for p in range(a.passes):
             dead = True
             break
         try:
-            rss, ref = smaps_ref()
-            tot, dty = dirty_frac()
+            _, ref = smaps_ref()
+            pres, dty = scan_pass(regs0)
         except (FileNotFoundError, ProcessLookupError):
             dead = True
             break
-        if not rss or not tot:
+        if not rss0:
             dead = True
             break
-        acc_cd[T].append(100.0 * (1.0 - ref / rss))
-        acc_wc[T].append(100.0 * (1.0 - dty / tot))
-        npages.append(tot)
+        # sticky: dirtied now, or gone from the t0 population
+        gone = pres0 & ~pres
+        written |= (pres0 & (dty | ~pres))
+        acc_wc[T].append(100.0 * (1.0 - int(written.sum()) / N0))
+        # smaps gives a COUNT, not a set, so the sticky trick above is not
+        # available for the accessed bit -- Referenced: counts only pages
+        # resident right now, and a freed page takes its referenced state with
+        # it. Running maximum instead: the true accessed-since-t0 set only
+        # grows, so the measured count can only ever undercount it, and the
+        # max-so-far is both closer to the truth and monotone.
+        ref_hi = max(ref_hi, ref)
+        acc_cd[T].append(min(100.0, max(0.0, 100.0 * (1.0 - ref_hi / rss0))))
+        acc_gone[T].append(100.0 * int(gone.sum()) / N0)
+        npages.append(N0)
     emit()
     print(f"# pass {p+1}/{a.passes} done", file=sys.stderr, flush=True)
     if dead:
