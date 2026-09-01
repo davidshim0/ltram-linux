@@ -135,60 +135,84 @@ print("wrote", p)
 # ---------------------------------------------------------------- grouped
 # Same numbers, transposed: T on the x-axis, one bar per workload inside each
 # T group. The panel-per-workload view answers "how much can we move in THIS
-# workload"; this one answers "at this T, how do the workloads compare" --
-# which is the question when picking an operating point for the policy.
-# Colours vary in lightness as well as hue, so the groups stay separable in
-# greyscale and under red-green colour blindness.
-SERIES = ["#1F5F7A", "#C9852F", "#9E2F33", "#6B5B95", "#4E7A5E",
-          "#5F9ED1", "#7A4E1D"]
+# workload"; this one answers "at this T, how do the workloads compare".
+#
+# Tableau's colour-blind-safe ten. Cold is the SAME hue as its workload,
+# shifted in lightness, so the pair reads as one measurement in two states
+# rather than as two unrelated series.
+# Ordered so no series sits next in rank to one that could pass for its own
+# cold shade. Tableau's colour-blind ten is really three hues -- blue, orange,
+# grey -- so a light blue used as a SERIES reads as a lightened dark blue.
+# redis, the largest of the two caches, takes the dark orange for that reason.
+TAB_CB = ["#006BA4", "#FF800E", "#595959", "#C85200", "#5F9ED1",
+          "#ABABAB", "#A2C8EC", "#FFBC79"]
+
+def shade(hexc, f):
+    """f > 0 lightens toward white, f < 0 darkens toward black."""
+    r, g, b = (int(hexc[k:k+2], 16) for k in (1, 3, 5))
+    if f >= 0: r, g, b = (int(c + (255 - c) * f) for c in (r, g, b))
+    else:      r, g, b = (int(c * (1 + f)) for c in (r, g, b))
+    return "#%02X%02X%02X" % (r, g, b)
+
+def num(v):
+    """No decimal unless it would read as zero."""
+    return f"{v:.1f}" if v < 1 else f"{v:.0f}"
 
 allT = sorted({p[0] for name in names for p in work[name]})
-figg, axg = plt.subplots(figsize=(max(8.5, 1.5 * len(allT) + 3), 5.0))
-nb = len(names); bw = 0.82 / nb
-for k, name in enumerate(names):
-    d = {p[0]: p[1] for p in work[name]}
-    xs = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(allT) if T in d]
-    ys = [d[T] for T in allT if T in d]
-    axg.bar(xs, ys, width=bw * 0.9, color=SERIES[k % len(SERIES)],
-            label=name, zorder=3)
-    # The cold fraction as a dark base inside the same bar, wherever it was
-    # measured. Unprivileged runs have it only at T = S, so this appears on
-    # one group and not the rest -- which is the honest picture, and better
-    # than dropping the comparison from the figure that most needs it.
-    dc = {p[0]: p[2] for p in work[name] if p[2] >= 0}
-    xc = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(allT) if T in dc]
-    yc = [dc[T] for T in allT if T in dc]
-    if xc:
-        axg.bar(xc, yc, width=bw * 0.9, color="#22282c", alpha=.82, zorder=4,
-                label=None)
-        for x, y in zip(xc, yc):
-            axg.text(x, y + 1.0, f"{y:.1f}", ha="center", va="bottom",
-                     fontsize=6.8, color="#22282c",
-                     rotation=0 if nb <= 3 else 90)
-    for x, y in zip(xs, ys):
-        axg.text(x, y + 1.2, f"{y:.0f}", ha="center", va="bottom",
-                 fontsize=7.5, color="#5b6670", rotation=0 if nb <= 3 else 90)
-axg.set_xticks(range(len(allT)))
-axg.set_xticklabels([tlabel(T) for T in allT])
-axg.set_ylim(0, 108); axg.set_yticks([0, 25, 50, 75, 100])
-axg.set_yticklabels(["0", "25%", "50%", "75%", "100%"])
-axg.set_xlabel("T, age threshold")
-axg.set_ylabel("share of resident pages")
-axg.set_title("Write-Cold Against Cold, by Threshold", fontsize=13,
-              weight="semibold", pad=34)
-axg.grid(axis="y", alpha=.25, lw=.5); axg.set_axisbelow(True)
-for sp in ("top", "right"): axg.spines[sp].set_visible(False)
-lg = axg.legend(fontsize=9, frameon=False, ncol=min(3, nb), loc="lower left",
-                bbox_to_anchor=(0, 1.005))
-axg.add_artist(lg)
-axg.legend(handles=[plt.Rectangle((0, 0), 1, 1, color="#22282c", alpha=.82)],
-           labels=["dark base: cold, not accessed in T"],
-           fontsize=8.5, frameon=False, loc="upper right",
-           bbox_to_anchor=(1.0, 1.005))
-figg.tight_layout()
-pg = os.path.join(a.out, "fig10b-write-cold-by-T.png")
-figg.savefig(pg, dpi=200)
-print("wrote", pg)
+# Descending by write-cold at the smallest T, so the reader meets the
+# workloads in rank order and the ordering survives the data changing.
+first = allT[0]
+ordered = sorted(names, key=lambda n: -next((p[1] for p in work[n]
+                                             if p[0] == first), -1))
+
+def grouped(coldf, fname, note):
+    nb = len(ordered); bw = 0.82 / nb
+    fig, ax = plt.subplots(figsize=(max(9.5, 1.9 * len(allT) + 3), 5.2))
+    for k, name in enumerate(ordered):
+        col = TAB_CB[k % len(TAB_CB)]
+        d = {p[0]: p[1] for p in work[name]}
+        xs = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(allT) if T in d]
+        ys = [d[T] for T in allT if T in d]
+        ax.bar(xs, ys, width=bw * 0.9, color=col, label=name, zorder=3)
+        for x, y in zip(xs, ys):
+            ax.text(x, y + 1.2, num(y), ha="center", va="bottom",
+                    fontsize=8, color="#3d474e")
+        dc = {p[0]: p[2] for p in work[name] if p[2] >= 0}
+        xc = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(allT) if T in dc]
+        yc = [dc[T] for T in allT if T in dc]
+        if xc:
+            # Outlined in the parent colour: with only three hues available,
+            # the shade alone does not always say which bar it belongs to.
+            ax.bar(xc, yc, width=bw * 0.9, color=shade(col, coldf),
+                   edgecolor=col, linewidth=1.0, zorder=4)
+            for x, y in zip(xc, yc):
+                # Sits inside the write-cold bar, so white rather than dark.
+                ax.text(x, y + 1.0, num(y), ha="center", va="bottom",
+                        fontsize=7.5, color="white", zorder=5)
+    ax.set_xticks(range(len(allT)))
+    ax.set_xticklabels([f"{T/60:g}" for T in allT])
+    ax.set_ylim(0, 108); ax.set_yticks([0, 25, 50, 75, 100])
+    ax.set_yticklabels(["0", "25%", "50%", "75%", "100%"])
+    ax.set_xlabel("Time (min)")
+    ax.set_ylabel("Percentage of Cold Pages")
+    ax.set_title("Write-Cold Against Cold, by Threshold", fontsize=13,
+                 weight="semibold", pad=34)
+    ax.grid(axis="y", alpha=.25, lw=.5); ax.set_axisbelow(True)
+    for sp in ("top", "right"): ax.spines[sp].set_visible(False)
+    lg = ax.legend(fontsize=9, frameon=False, ncol=min(3, nb), loc="lower left",
+                   bbox_to_anchor=(0, 1.005))
+    ax.add_artist(lg)
+    ax.legend(handles=[plt.Rectangle((0, 0), 1, 1,
+                                     color=shade(TAB_CB[0], coldf))],
+              labels=[note], fontsize=8.5, frameon=False, loc="upper right",
+              bbox_to_anchor=(1.0, 1.005))
+    fig.tight_layout()
+    pth = os.path.join(a.out, fname)
+    fig.savefig(pth, dpi=200)
+    print("wrote", pth)
+
+grouped(+0.58, "fig10b-write-cold-by-T.png",  "lighter shade: cold, not accessed in T")
+grouped(-0.45, "fig10c-write-cold-by-T.png",  "darker shade: cold, not accessed in T")
 
 for name in names:
     # Report at the largest T that actually HAS a cold measurement -- an
