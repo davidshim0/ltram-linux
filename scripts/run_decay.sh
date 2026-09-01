@@ -22,8 +22,20 @@ WANT="${*:-pagerank bfs llama redis memcached}"
 have(){ [[ " $WANT " == *" $1 "* ]]; }
 say(){ printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
-stale=$(pgrep -f "gapbs/(pr|bfs)|llama-cli|kv_load.py|redis-server|memcached/memcached" | grep -cv "^$$\$")
-[ "$stale" = 0 ] || { echo "!! $stale workload process(es) running; kill them first"; exit 1; }
+# A shell whose command line happens to contain the pattern is not a running
+# workload. `pgrep -f` matches full command lines, so the launcher that carries
+# this script's own text matches it -- that self-match has cost this project
+# four separate incidents, including an 8-hour deadlock. Filter by comm.
+stale=$(pgrep -f "gapbs/(pr|bfs|cc|sssp|tc|bc)|llama-cli|kv_load.py|redis-server|memcached/memcached" | while read -r p; do
+  c=$(cat "/proc/$p/comm" 2>/dev/null) || continue
+  case "$c" in bash|sh|dash|pgrep|grep) ;; *) echo "$p" ;; esac
+done | wc -l)
+if [ "$stale" -gt 0 ]; then
+  echo "!! $stale workload process(es) already running -- they will compete for every"
+  echo "   core and change what this run measures. Kill them first:"
+  pgrep -af "gapbs/(pr|bfs|cc|sssp|tc|bc)|llama-cli|kv_load.py|redis-server|memcached/memcached" | grep -vE ' (bash|sh|dash) ' | cut -c1-100 | sed 's/^/     /'
+  exit 1
+fi
 
 go(){                         # go <label> <file> <pid>
   local label=$1 f=$2 pid=$3
