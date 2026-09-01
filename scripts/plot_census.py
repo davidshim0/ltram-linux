@@ -200,9 +200,9 @@ def grouped(coldf, fname, note):
     ax.set_ylim(0, 108); ax.set_yticks([0, 25, 50, 75, 100])
     ax.set_yticklabels(["0", "25%", "50%", "75%", "100%"])
     ax.set_xlabel("Time (min)")
-    ax.set_ylabel("Percentage of Cold Pages")
-    ax.set_title("Write-Cold Against Cold, by Threshold", fontsize=13,
-                 weight="semibold", pad=34)
+    ax.set_ylabel("Percentage of Memory Usage")
+    ax.set_title("Share of Read-Mostly Data and Cold Data per Workload",
+                 fontsize=13, weight="semibold", pad=34)
     ax.grid(axis="y", alpha=.25, lw=.5); ax.set_axisbelow(True)
     for sp in ("top", "right"): ax.spines[sp].set_visible(False)
     # One row, in bar order, short names: the legend should be read the same
@@ -214,8 +214,8 @@ def grouped(coldf, fname, note):
     ax.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=TAB_CB[0]),
                        plt.Rectangle((0, 0), 1, 1,
                                      color=shade(TAB_CB[0], coldf))],
-              labels=["upper: read, never written in T",
-                      "lower: never accessed in T"],
+              labels=["Top: Read-mostly data (Dirty = 0)",
+                      "Bottom: Cold data (Accessed = 0)"],
               fontsize=8.5, frameon=False, loc="upper right", ncol=1,
               bbox_to_anchor=(1.0, 1.10), handlelength=1.3,
               handletextpad=0.5, labelspacing=0.35)
