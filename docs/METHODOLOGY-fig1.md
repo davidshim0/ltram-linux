@@ -170,6 +170,34 @@ That comment is stale on two counts — the mechanism changed, and the old
 threshold was N=4096 rather than N=8192 because x has to fit alongside the row.
 The code is right; the comment is not.
 
+**(a2) Is the compute floor a FAIR subtraction? Tested, and yes to ~3%.**
+
+The floor does not need to be pure arithmetic. It needs to be identical to the
+full run minus W's traffic — a weaker requirement, and the one that matters.
+The concern is that the two inner loops are not the same instruction stream:
+compute-only has an extra AND and addresses `W[k]` cyclically, while the real
+loop streams `row[j]`, so a compiler could vectorise them differently.
+
+Test: at sizes where W is fully cached, `dram_warm` should equal `comp` if the
+two loops cost the same per FMA. From sweep.csv:
+
+    W fits           dram_warm / comp
+    L1D, 31 KiB      0.967
+    LLC not L1D      1.07 - 1.12      (64 KiB to 7 MiB)
+    neither          1.77 - 1.93      (>= 31 MiB)
+
+At 31 KiB, where both loops are L1D-resident, the ratio is 0.967. The two cost
+the same per FMA to within 3%, and the sign says the real loop is slightly
+FASTER — consistent with compute-only paying for the mask.
+
+Direction of the residual bias: `comp` overstates pure compute by ~3%, so both
+access-latency curves are understated by ~3% of the compute term. That is ~5%
+of the DRAM access term at the smallest size, ~0.5% of the NOR access term at
+16 MiB, and less above. It does not affect any conclusion.
+
+The rest of that column is a free measurement: ~10% is this loop's L1 -> LLC
+cost, and ~1.9x is LLC -> DRAM.
+
 **(b) Above 256 MiB, W does not fit in NOR.** The pool is 65,536 pages
 (256 MiB). At 511 MiB and 1 GiB, residency saturates at ~65,500 pages, so half
 or three quarters of W is in DRAM. Those two points are **not** "NOR at 511 MiB";
