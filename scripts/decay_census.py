@@ -193,6 +193,7 @@ for p in range(a.passes):
         # max-so-far is both closer to the truth and monotone.
         ref_hi = max(ref_hi, ref)
         acc_cd[T].append(min(100.0, max(0.0, 100.0 * (1.0 - ref_hi / rss0))))
+        emit()          # per ladder point: a long pass that dies keeps what it had
         acc_gone[T].append(100.0 * int(gone.sum()) / N0)
         npages.append(N0)
     emit()

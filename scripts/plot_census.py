@@ -100,70 +100,7 @@ for _n, _pts in work.items():
                   f"Monotone by definition.", file=sys.stderr)
 
 names = sorted(work)
-n = len(names)
-ncol = 1 if n == 1 else (2 if n <= 4 else 3)
-nrow = math.ceil(n / ncol)
-fig, axes = plt.subplots(nrow, ncol, figsize=(6.4 * ncol, 4.0 * nrow),
-                         squeeze=False)
 
-for k, name in enumerate(names):
-    ax = axes[k // ncol][k % ncol]
-    pts = work[name]
-    pts = [pts[j] for j in thin([p[0] for p in pts])]
-    ts   = [p[0] for p in pts]
-    wc   = [p[1] for p in pts]
-    cold = [p[2] for p in pts]
-    # cold_pct is -1 when the run had no root and could not read page_idle.
-    x = range(len(ts))
-    # Unprivileged runs can only measure cold at T = S, so a panel may have
-    # the cold segment on some bars and not others. Draw the full write-cold
-    # bar first and overdraw cold where it exists, rather than skipping the
-    # comparison entirely because one bar is missing it.
-    ax.bar(x, wc, width=.72, color=C_EXTRA, zorder=3,
-           label="write-cold: read, but not written in T  (what LtRAM moves)")
-    xc = [i for i in x if cold[i] >= 0]
-    if xc:
-        ax.bar(xc, [cold[i] for i in xc], width=.72, color=C_COLD, zorder=4,
-               label="cold: not accessed in T  (what cold-page tiering moves)")
-    have_cold = len(xc) == len(ts)
-
-    # One callout, on the T the argument is actually made at. A number the
-    # reader can quote beats a bar they have to measure against the axis.
-    tcall = a.at if a.at is not None else (ts[xc[-1]] if xc else ts[-1])
-    i = min(range(len(ts)), key=lambda j: abs(ts[j] - tcall))
-    if have_cold:
-        # Nudge off the frame when the callout sits on the last bar.
-        ha = "right" if i >= len(ts) - 1 else ("left" if i == 0 else "center")
-        dx = {"right": 10, "left": -10, "center": 0}[ha]
-        ax.annotate(f"{cold[i]:.0f}% \u2192 {wc[i]:.0f}%",
-                    (i, wc[i]), xytext=(dx, 7), textcoords="offset points",
-                    ha=ha, fontsize=10, weight="semibold", color="#3d474e")
-
-    if any(p[4] == "smaps_referenced" for p in pts):
-        ax.text(0.99, 0.03, "cold via smaps Referenced (proxy)", ha="right",
-                transform=ax.transAxes, fontsize=8, color="#7A838A")
-    mib = pts[0][3] * os.sysconf("SC_PAGE_SIZE") / 2**20
-    ax.set_title(f"{name}   ({mib:,.0f} MiB resident)", fontsize=12,
-                 weight="semibold", pad=10)
-    ax.set_xticks(list(x)); ax.set_xticklabels([tlabel(t) for t in ts], fontsize=9)
-    ax.set_ylim(0, 105); ax.set_yticks([0, 25, 50, 75, 100])
-    ax.set_yticklabels(["0", "25%", "50%", "75%", "100%"])
-    ax.set_xlabel("T, age threshold"); ax.set_ylabel("share of resident pages")
-    ax.grid(axis="y", alpha=.25, lw=.5); ax.set_axisbelow(True)
-    for s in ("top", "right"): ax.spines[s].set_visible(False)
-
-for k in range(n, nrow * ncol):
-    axes[k // ncol][k % ncol].axis("off")
-
-h, l = axes[0][0].get_legend_handles_labels()
-fig.legend(h[::-1], l[::-1], loc="lower center", ncol=1, frameon=False,
-           fontsize=10, bbox_to_anchor=(0.5, 0.0))
-fig.suptitle("Write-Cold Against Cold", fontsize=14, weight="semibold", y=0.995)
-fig.tight_layout(rect=[0, 0.055 + 0.02 * (2 - min(2, nrow)), 1, 0.975])
-os.makedirs(a.out, exist_ok=True)
-p = os.path.join(a.out, "fig10-write-cold.png")
-fig.savefig(p, dpi=200)
-print("wrote", p)
 # ---------------------------------------------------------------- grouped
 # Same numbers, transposed: T on the x-axis, one bar per workload inside each
 # T group. The panel-per-workload view answers "how much can we move in THIS
@@ -197,10 +134,11 @@ first = allT[0]
 ordered = sorted(names, key=lambda n: -next((p[1] for p in work[n]
                                              if p[0] == first), -1))
 
-def grouped(coldf, fname, note):
-    # A 14-point ladder x 5 workloads is 70 bars and renders 30 inches wide.
-    # Thin to the points that show the shape; the CSVs keep every one.
-    keep = [allT[i] for i in thin(allT, keep=8)]
+def grouped(keep, fname, unit="s", coldf=-0.45):
+    """keep: the T values to draw. unit: 's' or 'min' for the tick labels."""
+    keep = [T for T in keep if T in set(allT)]
+    if not keep:
+        return
     nb = len(ordered); bw = 0.70 / nb
     fig, ax = plt.subplots(figsize=(min(15.0, max(9.5, 1.9 * len(keep) + 3)), 5.2))
     for k, name in enumerate(ordered):
@@ -245,7 +183,7 @@ def grouped(coldf, fname, note):
             for T in keep}
     # One unit for the whole axis. A ladder that starts at 5 s renders as
     # 0.0833333 minutes, which is not a time anyone reads.
-    secs = keep[-1] < 60 or any(T % 60 for T in keep)
+    secs = (unit == "s")
     ax.set_xticks(range(len(keep)))
     ax.set_xticklabels([(f"{T:g}" if secs else f"{T/60:g}")
                         + ("" if hasc[T] else "\u2020") for T in keep])
@@ -286,8 +224,13 @@ def grouped(coldf, fname, note):
     fig.savefig(pth, dpi=200)
     print("wrote", pth)
 
-grouped(+0.58, "fig10b-write-cold-by-T.png",  "lighter shade: cold, not accessed in T")
-grouped(-0.45, "fig10c-write-cold-by-T.png",  "darker shade: cold, not accessed in T")
+# fig10: the whole ladder, log-spaced down to 8 groups, ticks in seconds.
+# A 14-point ladder x 5 workloads is 70 bars and renders 30 inches wide.
+grouped([allT[i] for i in thin(allT, keep=8)], "fig10-write-cold-by-T.png", "s")
+
+# fig10b: the same data on a minute scale. These T are measured, not
+# interpolated -- 60, 120, 180, 300 and 600 s are all points on the ladder.
+grouped([60, 120, 180, 300, 600], "fig10b-write-cold-by-T.png", "min")
 
 for name in names:
     # Report at the largest T that actually HAS a cold measurement -- an
