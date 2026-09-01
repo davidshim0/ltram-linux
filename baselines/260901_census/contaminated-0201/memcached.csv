@@ -1,0 +1,6 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method
+memcached (95/5 zipfian),120,255430,7.66,0.02,5,smaps_referenced
+memcached (95/5 zipfian),240,255430,0.40,-1.00,4,none
+memcached (95/5 zipfian),360,255430,0.40,-1.00,3,none
+memcached (95/5 zipfian),480,255430,0.40,-1.00,2,none
+memcached (95/5 zipfian),600,255430,0.40,-1.00,1,none

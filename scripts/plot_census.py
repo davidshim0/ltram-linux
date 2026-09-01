@@ -132,6 +132,44 @@ os.makedirs(a.out, exist_ok=True)
 p = os.path.join(a.out, "fig10-write-cold.png")
 fig.savefig(p, dpi=200)
 print("wrote", p)
+# ---------------------------------------------------------------- grouped
+# Same numbers, transposed: T on the x-axis, one bar per workload inside each
+# T group. The panel-per-workload view answers "how much can we move in THIS
+# workload"; this one answers "at this T, how do the workloads compare" --
+# which is the question when picking an operating point for the policy.
+# Colours vary in lightness as well as hue, so the groups stay separable in
+# greyscale and under red-green colour blindness.
+SERIES = ["#1F5F7A", "#C9852F", "#9E2F33", "#6B5B95", "#4E7A5E",
+          "#5F9ED1", "#7A4E1D"]
+
+allT = sorted({p[0] for name in names for p in work[name]})
+figg, axg = plt.subplots(figsize=(max(8.5, 1.5 * len(allT) + 3), 5.0))
+nb = len(names); bw = 0.82 / nb
+for k, name in enumerate(names):
+    d = {p[0]: p[1] for p in work[name]}
+    xs = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(allT) if T in d]
+    ys = [d[T] for T in allT if T in d]
+    axg.bar(xs, ys, width=bw * 0.9, color=SERIES[k % len(SERIES)],
+            label=name, zorder=3)
+    for x, y in zip(xs, ys):
+        axg.text(x, y + 1.2, f"{y:.0f}", ha="center", va="bottom",
+                 fontsize=7.5, color="#5b6670", rotation=0 if nb <= 3 else 90)
+axg.set_xticks(range(len(allT)))
+axg.set_xticklabels([tlabel(T) for T in allT])
+axg.set_ylim(0, 108); axg.set_yticks([0, 25, 50, 75, 100])
+axg.set_yticklabels(["0", "25%", "50%", "75%", "100%"])
+axg.set_xlabel("T, age threshold")
+axg.set_ylabel("share of resident pages not written in T")
+axg.set_title("Write-Cold by Threshold", fontsize=13, weight="semibold", pad=34)
+axg.grid(axis="y", alpha=.25, lw=.5); axg.set_axisbelow(True)
+for sp in ("top", "right"): axg.spines[sp].set_visible(False)
+axg.legend(fontsize=9, frameon=False, ncol=min(3, nb), loc="lower left",
+           bbox_to_anchor=(0, 1.005))
+figg.tight_layout()
+pg = os.path.join(a.out, "fig10b-write-cold-by-T.png")
+figg.savefig(pg, dpi=200)
+print("wrote", pg)
+
 for name in names:
     # Report at the largest T that actually HAS a cold measurement -- an
     # unprivileged run has it only at T = S, and printing -1.0% there reads
