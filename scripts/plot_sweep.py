@@ -128,7 +128,7 @@ def frame(ax, title, ylab, note=None, mark_at="bottom"):
     ax.set_xscale("log", base=2)
     ax.set_xticks(sizes); ax.xaxis.set_major_formatter(FuncFormatter(human))
     ax.tick_params(axis="x", labelrotation=45, labelsize=8)
-    ax.set_xlabel("weight matrix size"); ax.set_ylabel(ylab)
+    ax.set_xlabel("Weight Size"); ax.set_ylabel(ylab)
     ax.set_title(title, fontsize=13, weight="semibold", pad=12)
     ax.grid(alpha=0.25, lw=0.5)
     ax.axvline(LLC, color="#0B6A6F", lw=0.9, ls="--", alpha=0.7)
@@ -162,7 +162,7 @@ ax.plot(sizes, wd, marker=M_COLD, ls="-", color=C_DRAM, lw=2, ms=6, label="DRAM 
 ax.plot(sizes, comp, marker=M_COMP, ls="-", color=C_COMP, lw=1.6, ms=6,
         label="Compute")
 ax.set_ylim(bottom=0)
-frame(ax, "Execution time", "seconds per pass",
+frame(ax, "Execution time", "Execution Time (sec)",
       "Components, not totals: a pass on either medium is Compute plus that medium's access "
       "latency.\nCompute is identical work in both cases. Linear axis, so everything below "
       "64 MB sits on the baseline. See fig1b for those.", mark_at="top")
@@ -178,7 +178,7 @@ ax.plot(sizes, wd, marker=M_COLD, ls="-", color=C_DRAM, lw=2, ms=6, label="DRAM 
 ax.plot(sizes, comp, marker=M_COMP, ls="-", color=C_COMP, lw=1.6, ms=6,
         label="Compute")
 ax.set_yscale("log")
-frame(ax, "Execution time (log scale)", "seconds per pass",
+frame(ax, "Execution time (log scale)", "Execution Time (sec)",
       "The same three curves. On a log axis the constant vertical gap between the two access "
       "latencies\nis the medium ratio, and it holds from 32 KB to 64 MB.")
 legend_by_last(ax, fontsize=9.5, loc="upper left", frameon=False)
@@ -197,7 +197,8 @@ for cm, dm, lab, mk in [("nor_cold", "dram_cold",
     ax.plot(sizes, [x / y if y else float("nan") for x, y in zip(n, r)],
             marker=mk, ls="-", color=C_NOR, lw=2, ms=6.5, label=lab)
 ax.set_ylim(bottom=0)
-frame(ax, "End-to-end performance ratio (NOR / DRAM)", "times slower than DRAM")
+frame(ax, "End-to-end performance ratio (NOR / DRAM)",
+      "Normalised Execution Time (NOR / DRAM)")
 legend_by_first(ax, fontsize=9.5, loc="center left", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig2-slowdown.png", dpi=160)
 
@@ -218,7 +219,7 @@ for mode, lab, c, mk in [("nor_cold",  "NOR, cold cache",  C_NOR,  M_COLD),
                     for x, k in zip(t, comp)],
             marker=mk, ls="-", color=c, lw=1.6, ms=6.5, label=lab, alpha=0.95)
 ax.set_ylim(0, 100)
-frame(ax, "Memory access latency as a share of total run time", "% of the pass spent reaching the weights",
+frame(ax, "Memory access latency as a share of total run time", "% of Execution Time",
       "Measured as (total minus compute) over total, with the compute floor held L1-resident "
       "at every size.\nOn DRAM it is roughly half the pass, which is why a medium ~9x slower "
       "per access costs only ~4.6x end to end.")

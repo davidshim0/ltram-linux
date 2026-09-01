@@ -339,7 +339,7 @@ if r:
     ax.set_ylim(0, top)
     ax.set_xlim(left=0)
     frame(ax, "Latency change over migration phases",
-          "Time (sec)", "Average Latency per Cache line (ns)")
+          "Run Time (sec)", "Average Read Latency (ns)")
     fig.tight_layout(); fig.savefig(f"{OUT}/fig7-transition-timeline.png", dpi=160)
     made.append("fig7-transition-timeline")
 
@@ -414,7 +414,7 @@ if r:
         mark_peak(ax, t, ns, ph, mig, mig + 1, C_NOR)
     ax.set_ylim(0, top); ax.set_xlim(left=0)
     frame(ax, "Latency when migration must wait for erases",
-          "Time (sec)", "Average Latency per Cache line (ns)")
+          "Run Time (sec)", "Average Read Latency (ns)")
     # Everything below is derived from the runs, so a re-measurement moves the
     # note with it. 49,152 pages is the 192 MiB working set both runs promote.
     WS = 49152
