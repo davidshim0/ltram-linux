@@ -182,10 +182,9 @@ def grouped(coldf, fname, note):
         xc = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(allT) if T in dc]
         yc = [dc[T] for T in allT if T in dc]
         if xc:
-            # Outlined in the parent colour: with only three hues available,
-            # the shade alone does not always say which bar it belongs to.
-            ax.bar(xc, yc, width=bw, color=shade(col, coldf),
-                   edgecolor=col, linewidth=1.0, zorder=4)
+            # No edge. matplotlib strokes it centred on the boundary, so an
+            # outlined bar is visibly wider than the one it sits inside.
+            ax.bar(xc, yc, width=bw, color=shade(col, coldf), zorder=4)
             for x, y in zip(xc, yc):
                 # Sits inside the write-cold bar, so white rather than dark.
                 ax.text(x, y + 1.0, num(y), ha="center", va="bottom",
@@ -207,8 +206,8 @@ def grouped(coldf, fname, note):
                    handlelength=1.5, handletextpad=0.5)
     ax.add_artist(lg)
     ax.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=TAB_CB[0]),
-                       plt.Rectangle((0, 0), 1, 1, color=shade(TAB_CB[0], coldf),
-                                     ec=TAB_CB[0], lw=1.0)],
+                       plt.Rectangle((0, 0), 1, 1,
+                                     color=shade(TAB_CB[0], coldf))],
               labels=["upper: read, never written in T",
                       "lower: never accessed in T"],
               fontsize=8.5, frameon=False, loc="upper right", ncol=1,
