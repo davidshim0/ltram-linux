@@ -164,29 +164,39 @@ last_a = np.zeros(0, dtype=np.int32)
 seen = np.zeros(0, dtype=bool)
 
 def relayout(regs, w):
-    """Rebuild the slot mapping, carrying each surviving page's history by VA."""
+    """Rebuild the slot mapping, carrying each surviving page's history by VA.
+
+    Iterates the old pages once and bisects for the containing region. The
+    obvious nesting -- for each region, scan every carried page -- is
+    O(regions x pages), which for a 1.9 GB redis with ~100 mappings is tens of
+    millions of operations on every layout change.
+    """
     global layout, off, total, last_w, last_a, seen
     old_va = {}
     if layout:
         for (lo, hi) in layout:
             b = off[(lo, hi)]
-            for k in range((hi - lo) // PAGE):
-                if seen[b + k]:
-                    old_va[lo + k * PAGE] = (last_w[b + k], last_a[b + k])
+            npg = (hi - lo) // PAGE
+            live = np.nonzero(seen[b:b + npg])[0]
+            for k in live:
+                k = int(k)
+                old_va[lo + k * PAGE] = (int(last_w[b + k]), int(last_a[b + k]))
     off = {}; total = 0
+    starts = []
     for (lo, hi) in regs:
-        off[(lo, hi)] = total; total += (hi - lo) // PAGE
+        off[(lo, hi)] = total; total += (hi - lo) // PAGE; starts.append(lo)
     last_w = np.full(total, NEVER, dtype=np.int32)
     last_a = np.full(total, NEVER, dtype=np.int32)
     seen = np.zeros(total, dtype=bool)
-    if old_va:
-        for (lo, hi) in regs:
-            b = off[(lo, hi)]
-            for va, (vw, va_) in old_va.items():
-                if lo <= va < hi:
-                    last_w[b + (va - lo) // PAGE] = vw
-                    last_a[b + (va - lo) // PAGE] = va_
-                    seen[b + (va - lo) // PAGE] = True
+    if old_va and regs:
+        import bisect
+        for va, (vw, va_) in old_va.items():
+            j = bisect.bisect_right(starts, va) - 1
+            if j < 0: continue
+            lo, hi = regs[j]
+            if va >= hi: continue
+            k = off[(lo, hi)] + (va - lo) // PAGE
+            last_w[k] = vw; last_a[k] = va_; seen[k] = True
     layout = regs
 
 def scan(regs):
