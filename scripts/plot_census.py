@@ -210,23 +210,37 @@ def grouped(coldf, fname, note):
         ys = [d[T] for T in keep if T in d]
         ax.bar(xs, ys, width=bw, color=col,
                label=name.split(" (")[0], zorder=3)
-        for x, y in zip(xs, ys):
-            ax.text(x, y + 1.2, num(y), ha="center", va="bottom",
-                    fontsize=8, color="#3d474e")
         dc = {p[0]: p[2] for p in work[name] if p[2] >= 0}
         xc = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(keep) if T in dc]
         yc = [dc[T] for T in keep if T in dc]
         if xc:
-            # No edge. matplotlib strokes it centred on the boundary, so an
-            # outlined bar is visibly wider than the one it sits inside.
             ax.bar(xc, yc, width=bw, color=shade(col, coldf), zorder=4)
-            for x, y in zip(xc, yc):
-                # Sits inside the write-cold bar, so white rather than dark.
-                ax.text(x, y + 1.0, num(y), ha="center", va="bottom",
+
+        # One label per bar when two would collide. Below about five points of
+        # separation the write-cold and cold labels sit on top of each other,
+        # which is where memcached ends up past T=300 s -- 1.4% and 0.01%, two
+        # unreadable numbers stacked in the same place. Then: if the cold
+        # segment is invisible, the bar IS its write-cold value, so keep that
+        # one; otherwise the two are effectively the same number and the cold
+        # reading is the more informative of them.
+        GAP = 5.0
+        for i, T in enumerate(keep):
+            if T not in d: continue
+            x = i + (k - (nb - 1) / 2) * bw
+            wc = d[T]; cd = dc.get(T)
+            if cd is None or wc - cd >= GAP:
+                ax.text(x, wc + 1.2, num(wc), ha="center", va="bottom",
+                        fontsize=8, color="#3d474e")
+                if cd is not None:
+                    ax.text(x, cd + 1.0, num(cd), ha="center", va="bottom",
+                            fontsize=7.5, color="white", zorder=5)
+            elif cd < 0.5:
+                ax.text(x, wc + 1.2, num(wc), ha="center", va="bottom",
+                        fontsize=8, color="#3d474e")
+            else:
+                ax.text(x, cd + 1.0, num(cd), ha="center", va="bottom",
                         fontsize=7.5, color="white", zorder=5)
-    # An unmeasured cold value must not render as a measured zero. The
-    # smaps fallback aggregates, so exactly one T carries a cold reading and
-    # the rest have none -- which without a mark looks like "cold is 0 here".
+
     hasc = {T: any(p[0] == T and p[2] >= 0 for n in ordered for p in work[n])
             for T in keep}
     # One unit for the whole axis. A ladder that starts at 5 s renders as
