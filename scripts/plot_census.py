@@ -54,15 +54,27 @@ def thin(ts, keep=9):
     return idx
 
 # ---------------------------------------------------------------- load
-work = {}
+work, raw = {}, {}
 for p in a.csv:
     with open(p) as f:
         for r in csv.DictReader(f):
             if not r.get("T_sec"): continue
-            work.setdefault(r["workload"], []).append(
-                (float(r["T_sec"]), float(r["write_cold_pct"]),
-                 float(r["cold_pct"]), int(r["pages"]),
-                 r.get("cold_method", "page_idle")))
+            raw.setdefault((r["workload"], float(r["T_sec"])), []).append(
+                (float(r["write_cold_pct"]), float(r["cold_pct"]),
+                 int(r["pages"]), r.get("cold_method", "page_idle"),
+                 int(r.get("windows_averaged", 1) or 1),
+                 float(r.get("write_cold_sd", 0) or 0)))
+# Several rounds of the same workload are independent samples of the same
+# statistic. Pool them by pass count rather than treating a repeated (workload,
+# T) as two points, which would draw two bars for one measurement.
+for (name, T), rows in raw.items():
+    n = sum(r[4] for r in rows)
+    wc = sum(r[0] * r[4] for r in rows) / n
+    cds = [r for r in rows if r[1] >= 0]
+    cd = (sum(r[1] * r[4] for r in cds) / sum(r[4] for r in cds)) if cds else -1.0
+    var = sum(r[4] * (r[5] ** 2 + r[0] ** 2) for r in rows) / n - wc ** 2
+    work.setdefault(name, []).append(
+        (T, wc, cd, max(r[2] for r in rows), rows[0][3], n, max(var, 0) ** 0.5))
 if not work:
     sys.exit("no rows")
 for k in work: work[k].sort()
@@ -76,10 +88,13 @@ for k in work: work[k].sort()
 for _n, _pts in work.items():
     _p = sorted(_pts)
     for _a, _b in zip(_p, _p[1:]):
+        _sd = max(_a[6] if len(_a) > 6 else 0, _b[6] if len(_b) > 6 else 0)
         if _b[1] > _a[1] + 1e-9:
+            _tag = "within the measured spread" if _b[1] - _a[1] <= _sd \
+                   else "LARGER than the spread -- investigate"
             print(f"!! {_n}: write-cold RISES {_a[1]:.2f}% -> {_b[1]:.2f}% "
-                  f"from T={_a[0]:g}s to T={_b[0]:g}s. Monotone by definition; "
-                  f"this is the boundary-averaging artefact.", file=sys.stderr)
+                  f"from T={_a[0]:g}s to T={_b[0]:g}s (sd {_sd:.2f}, {_tag}). "
+                  f"Monotone by definition.", file=sys.stderr)
 
 names = sorted(work)
 n = len(names)
