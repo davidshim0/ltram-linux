@@ -35,7 +35,7 @@ WHAT IS REPORTED
                Without root the accessed column is skipped and the write-cold
                curve, which is the half the argument rests on, still works.
 """
-import argparse, os, shlex, struct, sys, time, subprocess, signal
+import argparse, atexit, os, shlex, struct, sys, time, subprocess, signal
 import numpy as np
 
 PAGE = os.sysconf("SC_PAGE_SIZE")
@@ -67,6 +67,13 @@ if a.cmd:
     proc = subprocess.Popen(shlex.split(a.cmd), preexec_fn=os.setsid,
                             stdout=open(clog, "w"), stderr=subprocess.STDOUT)
     pid = proc.pid
+
+    def reap(*_):
+        try: os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception: pass
+    atexit.register(reap)
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, lambda *_: sys.exit(143))
     print(f"# launched pid {pid}: {a.cmd}", file=sys.stderr)
     time.sleep(a.warmup)
 elif a.pid: pid = a.pid

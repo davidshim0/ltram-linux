@@ -40,6 +40,14 @@ W
 fi
 [ -s "$GRAPH" ] || { echo "!! missing $GRAPH -- run workloads/build_motivation.sh"; exit 1; }
 
+stale=$(pgrep -f "gapbs/(pr|bfs|cc|sssp|tc|bc)|llama-cli|kv_load.py|redis-server|memcached/memcached" | grep -v "^$$\$" | wc -l)
+if [ "$stale" -gt 0 ]; then
+  echo "!! $stale workload process(es) already running -- they will compete for every"
+  echo "   core and change what this run measures. Kill them first:"
+  pgrep -af "gapbs/(pr|bfs|cc|sssp|tc|bc)|llama-cli|kv_load.py|redis-server|memcached/memcached" | cut -c1-100 | sed 's/^/     /'
+  exit 1
+fi
+
 say(){ printf '\n\033[1m== %s\033[0m\n' "$*"; }
 census(){ "$R/scripts/rw_census.py" --interval "$S" --run "$RUN" "$@"; }
 have(){ [[ " $WANT " == *" $1 "* ]]; }

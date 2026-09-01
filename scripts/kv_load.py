@@ -25,7 +25,13 @@ ap.add_argument("--value", type=int, default=1400)
 ap.add_argument("--read-ratio", type=float, default=0.95)
 ap.add_argument("--threads", type=int, default=8)
 ap.add_argument("--zipf", type=float, default=0.99)
+ap.add_argument("--ops-per-sec", type=float, default=0,
+                help="total offered rate across threads; 0 = unthrottled. "
+                     "Unthrottled rewrites the whole keyspace in minutes, "
+                     "which is not how a cache behaves.")
 ap.add_argument("--load-only", action="store_true")
+ap.add_argument("--no-load", action="store_true",
+                help="skip the load phase; drive traffic at an already-populated server")
 a = ap.parse_args()
 
 if not a.port: a.port = 6379 if a.proto == "redis" else 11211
@@ -75,15 +81,39 @@ def load(lo, hi):
         if setk(s, f, k) is None: return
     s.close()
 
+class Zipf:
+    """YCSB's ZipfianGenerator: zeta(n, theta) precomputed, then inverted."""
+    def __init__(self, n, theta):
+        self.n, self.th = n, theta
+        self.zetan = sum(1.0 / (i ** theta) for i in range(1, n + 1))
+        self.zeta2 = 1.0 + 0.5 ** theta
+        self.alpha = 1.0 / (1.0 - theta)
+        self.eta = ((1.0 - (2.0 / n) ** (1.0 - theta))
+                    / (1.0 - self.zeta2 / self.zetan))
+    def next(self, rnd):
+        u = rnd.random(); uz = u * self.zetan
+        if uz < 1.0: return 0
+        if uz < self.zeta2: return 1
+        return min(self.n - 1,
+                   int(self.n * ((self.eta * u - self.eta + 1.0) ** self.alpha)))
+
+ZIPF = Zipf(a.keys, a.zipf)
+
 def mix(seed):
     rnd = random.Random(seed)
     s, f = conn()
-    # Zipf by rejection on a power law over the rank, so the hot set is small
-    # and stable -- which is the case where cold-page tiering does worst and
-    # write-cold does best.
-    n, th = a.keys, a.zipf
+    n = a.keys
+    # Per-thread pacing: a shared token bucket would serialise the threads on
+    # one lock at exactly the rates we care about.
+    gap = (a.threads / a.ops_per_sec) if a.ops_per_sec else 0.0
+    nxt = time.time()
     while not stop.is_set():
-        k = min(n - 1, int(n * (rnd.random() ** (1.0 / (1.0 - th) if th < 1 else 8))))
+        if gap:
+            nxt += gap
+            d = nxt - time.time()
+            if d > 0: time.sleep(d)
+            elif d < -1.0: nxt = time.time()      # fell behind; do not burst
+        k = ZIPF.next(rnd)
         try:
             if rnd.random() < a.read_ratio: getk(s, f, k)
             else: setk(s, f, k)
@@ -92,11 +122,13 @@ def mix(seed):
 
 t0 = time.time()
 per = (a.keys + a.threads - 1) // a.threads
-ts = [threading.Thread(target=load, args=(i * per, min(a.keys, (i + 1) * per)))
-      for i in range(a.threads)]
-[t.start() for t in ts]; [t.join() for t in ts]
-print(f"# loaded {a.keys:,} keys x {a.value} B in {time.time()-t0:.0f}s",
-      file=sys.stderr, flush=True)
+if a.no_load: ts = []
+else:
+ ts = [threading.Thread(target=load, args=(i * per, min(a.keys, (i + 1) * per)))
+       for i in range(a.threads)]
+ [t.start() for t in ts]; [t.join() for t in ts]
+ print(f"# loaded {a.keys:,} keys x {a.value} B in {time.time()-t0:.0f}s",
+       file=sys.stderr, flush=True)
 if a.load_only: sys.exit(0)
 
 ts = [threading.Thread(target=mix, args=(i,), daemon=True) for i in range(a.threads)]
