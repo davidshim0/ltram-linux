@@ -160,7 +160,7 @@ for k, name in enumerate(names):
     yc = [dc[T] for T in allT if T in dc]
     if xc:
         axg.bar(xc, yc, width=bw * 0.9, color="#22282c", alpha=.82, zorder=4,
-                label="cold: not accessed in T" if k == 0 else None)
+                label=None)
         for x, y in zip(xc, yc):
             axg.text(x, y + 1.0, f"{y:.1f}", ha="center", va="bottom",
                      fontsize=6.8, color="#22282c",
@@ -178,8 +178,13 @@ axg.set_title("Write-Cold Against Cold, by Threshold", fontsize=13,
               weight="semibold", pad=34)
 axg.grid(axis="y", alpha=.25, lw=.5); axg.set_axisbelow(True)
 for sp in ("top", "right"): axg.spines[sp].set_visible(False)
-axg.legend(fontsize=9, frameon=False, ncol=min(3, nb), loc="lower left",
-           bbox_to_anchor=(0, 1.005))
+lg = axg.legend(fontsize=9, frameon=False, ncol=min(3, nb), loc="lower left",
+                bbox_to_anchor=(0, 1.005))
+axg.add_artist(lg)
+axg.legend(handles=[plt.Rectangle((0, 0), 1, 1, color="#22282c", alpha=.82)],
+           labels=["dark base: cold, not accessed in T"],
+           fontsize=8.5, frameon=False, loc="upper right",
+           bbox_to_anchor=(1.0, 1.005))
 figg.tight_layout()
 pg = os.path.join(a.out, "fig10b-write-cold-by-T.png")
 figg.savefig(pg, dpi=200)
