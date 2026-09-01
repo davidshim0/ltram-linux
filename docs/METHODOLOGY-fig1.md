@@ -70,7 +70,7 @@ seconds there:
 
 | mode | W lives in | LLC scrub per pass | used by fig1/1b |
 |---|---|---|---|
-| `comp` | n/a — compute floor | yes (32 MiB) | yes |
+| `comp` | L1D — compute floor | yes (32 MiB) | yes |
 | `dram_cold` | DRAM | yes (32 MiB) | yes |
 | `dram_warm` | DRAM | no | no |
 | `nor_cold` | NOR | yes (32 MiB) | yes |
@@ -138,13 +138,37 @@ arithmetic across modes can be confirmed rather than assumed.
 
 ## 6. Caveats — the things to actually check with your PI
 
-**(a) The compute floor is exact only up to N = 8192.** `--compute-only` pins
-every row to row 0 so the inner loop is L1-resident. That holds while one row
-fits in 32 KiB L1D, i.e. N <= 8192. At N = 11585 and 16384 the row is 46 KiB
-and 64 KiB, so `comp` carries real memory traffic and is an **upper bound** on
-compute. Since both access-latency curves are (total - comp), both are
-**understated at the two largest sizes**. This is the weakest point in the
-figure and it is where the NOR/DRAM ratio drops (see §7).
+**(a) The compute floor is valid at every size — but only since 2026-08-29,
+and the comment in sweep.sh still describes the old broken version.**
+
+`--compute-only` wraps BOTH operands into a fixed 8 KiB prefix:
+
+    for j in 0..N-1:
+        k = j & (COMP_FLOATS - 1)     /* COMP_FLOATS = 2048 floats */
+        acc += W[k] * x[k]
+
+2048 floats each is 16 KiB total, so the floor is L1D-resident at any N. Same
+trip count, same FMA count, same instruction stream; the only thing removed is
+the memory traffic, plus one AND per iteration whose cost is constant in N and
+therefore cannot create a size-dependent artefact.
+
+The earlier version pinned every row to W's row 0. That was not enough: a row
+is N*4 bytes and x is another N*4, so above **N = 4096** the pair exceeds
+32 KiB L1D and the "compute floor" started carrying exactly the traffic it
+exists to exclude. Everything derived from it above 64 MB was a bound rather
+than a value, and fig1/fig3 were shaded there to say so.
+
+**This dataset is from after the fix.** `sweep.csv` was re-measured in
+746f4424b, "figures: the compute floor is valid at every size now, shading
+removed", the same day COMP_FLOATS was introduced (0e82af6de). So the
+subtraction is sound at every point in the table, and the shading is gone
+because the reason for it is gone.
+
+Note for verification: `scripts/sweep.sh` line ~70 still comments "every row
+pinned to row 0 ... EXACT only while one row fits in L1D (32 KiB, so N<=8192)".
+That comment is stale on two counts — the mechanism changed, and the old
+threshold was N=4096 rather than N=8192 because x has to fit alongside the row.
+The code is right; the comment is not.
 
 **(b) Above 256 MiB, W does not fit in NOR.** The pool is 65,536 pages
 (256 MiB). At 511 MiB and 1 GiB, residency saturates at ~65,500 pages, so half
@@ -202,14 +226,23 @@ access — so the *total* NOR/DRAM ratio is (0.0148+0.112)/(0.0148+0.0114) =
 different questions: 9.8x is the memory system, 4.8x is what the application
 experiences. **They must not be conflated in the paper.**
 
-**4. The ratio falling to 8.5x at 128-256 MiB and 4.7x / 2.9x above it is an
-artefact, not a result.** Above 256 MiB it is caveat (b) — W no longer fits, so
-increasing fractions of it are served from DRAM. At 128-256 MiB the drop from
-9.8 to 8.5 is smaller and its cause is not established; candidate explanations
-are the compute floor starting to carry traffic (caveat (a) begins at N=11585,
-which is 511 MiB, so this does *not* explain the 128 MiB point) and pool
-pressure during migration. **Unexplained. Worth one experiment before the
-figure is used.**
+**4. The ratio falling to 4.7x / 2.9x above 256 MiB is explained. The drop
+from 9.8x to 8.5x between 64 and 256 MiB is not.**
+
+Above 256 MiB it is caveat (b): W exceeds the 65,536-page pool, so half and
+then three quarters of it is served from DRAM. Those points are a mixture and
+the falling ratio is arithmetic, not physics.
+
+The 64 -> 256 MiB drop is different and I cannot account for it. The compute
+floor is **not** a candidate — it is L1D-resident at every size in this dataset
+(caveat (a)) — which removes the explanation that would otherwise have been
+reached for first. Residency is essentially complete at these sizes
+(16384/16384, 32773/32768, 65526/65536), so partial migration is not it either.
+What remains untested is pool pressure during migration: at 128 and 256 MiB the
+run is filling most of the pool while being measured, and the plateau window
+may still overlap erase activity. **Unexplained, and one experiment would
+settle it: re-run 128 MiB with the pool pre-drained and a longer plateau.**
+A reviewer looking at fig2 will see the same bend.
 
 **5. The read-mostly premise is validated by the residency column, not by the
 timings.** `resident_pages` shows the policy migrated essentially all of W with
