@@ -278,7 +278,7 @@ if r:
                     ha="right", va="bottom", rotation=90,
                     xytext=(-3, 6), textcoords="offset points")
     frame(ax, "Time to fill NOR against write interval",
-          "Write Interval (ms)", "Time to fill NOR (min)")
+          "Write Interval (ms)", "Time (min)")
     fig.tight_layout(); fig.savefig(f"{OUT}/fig5-time-to-fill.png", dpi=200)
     made.append("fig5-time-to-fill")
 
