@@ -33,3 +33,16 @@ workloads/basic_tests/cow_to_dram
 # match and it would be staged as a broken submodule pointer.
 .step-worktrees
 .claude/sekekama/
+
+# Motivation-census workloads: cloned and built by workloads/build_motivation.sh,
+# plus 2.3 GB of model weights and a 522 MB generated graph. All reproducible,
+# none of it belongs in git.
+workloads/gapbs/
+workloads/hiredis/
+workloads/libevent/
+workloads/llama.cpp/
+workloads/memcached/
+workloads/models/
+workloads/redis-src/
+workloads/YCSB-C/install/
+workloads/.build-logs/
