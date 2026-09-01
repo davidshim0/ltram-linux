@@ -105,6 +105,25 @@ def legend_by_last(ax, **kw):
     order = sorted(range(len(h)), key=lambda i: -lasty(h[i]))
     ax.legend([h[i] for i in order], [l[i] for i in order], **kw)
 
+def legend_by_first(ax, **kw):
+    """Legend entries in the order the lines START, top to bottom.
+
+    legend_by_last sorts by the right-hand end, which is right when that is
+    where the curves are apart. In fig2 it is where they MEET -- cold and warm
+    coincide above the LLC, which is the whole point of the figure -- so
+    ordering by that end orders by noise. These curves separate on the left,
+    so that is the end the legend should agree with.
+    """
+    h, l = ax.get_legend_handles_labels()
+    def firsty(handle):
+        try:
+            ys = [v for v in handle.get_ydata() if v == v]
+            return ys[0] if ys else float("-inf")
+        except Exception:
+            return float("-inf")
+    order = sorted(range(len(h)), key=lambda i: -firsty(h[i]))
+    ax.legend([h[i] for i in order], [l[i] for i in order], **kw)
+
 def frame(ax, title, ylab, note=None, mark_at="bottom"):
     ax.set_xscale("log", base=2)
     ax.set_xticks(sizes); ax.xaxis.set_major_formatter(FuncFormatter(human))
@@ -179,7 +198,7 @@ for cm, dm, lab, mk in [("nor_cold", "dram_cold",
             marker=mk, ls="-", color=C_NOR, lw=2, ms=6.5, label=lab)
 ax.set_ylim(bottom=0)
 frame(ax, "End-to-end performance ratio (NOR / DRAM)", "times slower than DRAM")
-legend_by_last(ax, fontsize=9.5, loc="center left", frameon=False)
+legend_by_first(ax, fontsize=9.5, loc="center left", frameon=False)
 fig.tight_layout(); fig.savefig(f"{a.dir}/fig2-slowdown.png", dpi=160)
 
 # --------------------------------------------------------------- 3. share ---
