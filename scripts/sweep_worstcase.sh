@@ -38,7 +38,9 @@ setw(){ echo "$1" > $PAR/erase_high_water; echo "$2" > $PAR/erase_low_water; }
 # Named engine states. "setw $HW0 $LW0" reads like "engine on" but means
 # "whatever was there", and an aborted run leaves 0/0 -- so using it as "on"
 # turns the engine OFF. That stranded a fill at 99.45% with clean=0.
-engine_on(){  setw 8192 2048; }     # ltram_policy defaults: normal operating point
+# The watermarks are on CLEAN, not dirty: clean >= high turns the engine OFF,
+# clean < low turns it ON, and between them it holds its last state.
+engine_on(){  setw 8192 1024; }     # erase when clean falls under 1024, stop at 8192
 engine_max(){ setw 65536 65535; }   # recycle everything, for pool preparation
 engine_off(){ setw 0 0; }
 
@@ -47,9 +49,11 @@ lsmod | grep -q nor_eci || insmod "$KO" provide_ops=1 test=0 inline_erase=0 veri
     || { echo "!! cannot load the backend"; exit 1; }
 
 PB0=$(cat $PAR/promote_batch); D0=$(cat $PAR/wear_days); G0=$(cat $PAR/wear_governor)
+EP0=$(cat $PAR/erase_poll_ms)
 HW0=$(cat $PAR/erase_high_water); LW0=$(cat $PAR/erase_low_water)
 cleanup(){ pkill -x matmul 2>/dev/null; echo 0 > /sys/kernel/ltram/target_pid 2>/dev/null
-           setp promote_batch $PB0; setp wear_days $D0; setp wear_governor $G0; setw $HW0 $LW0; }
+           setp promote_batch $PB0; setp wear_days $D0; setp wear_governor $G0
+           setp erase_poll_ms $EP0; setw $HW0 $LW0; }
 trap cleanup EXIT INT TERM
 
 NN=${NN:-7094}; NPAGES=$(( NN * NN * 4 / 4096 )); NLINES=$(( NN * NN * 4 / 128 ))
@@ -70,7 +74,13 @@ fi
 
 # The engine stays ON at its normal watermarks. Phase 2 needs no erases
 # because the pool is clean; phase 4 needs nothing else.
-engine_on
+# OFF for phases 1-3. Phase 2 is the writes-only condition: migration programs
+# flash and nothing erases, so the read latency in it is the cost of writes
+# alone. Leaving the engine at its defaults did not change the physics -- there
+# is nothing dirty to erase during phase 2, since migration produces `data`
+# pages -- but clean falls to ~0 by the end of phase 2, which trips the engine
+# ON to poll for work it will not find. Off means off.
+engine_off
 setp promote_batch 1; setp wear_governor 1; setp wear_days 379   # ~4 ms
 
 L=/tmp/sweep-worstcase.log
@@ -110,6 +120,13 @@ for i in $(seq 1 240); do
     sleep 0.5
 done
 echo "    evicted: residency $(grep '^RESID' $L | tail -1 | awk '{print $4}')%, dirty $(ps_ dirty)"
+
+# Phase 4 is the writes-AND-erases condition. Turn the engine on only now, with
+# the pool already dirty, so the contrast against phase 2 is exactly one thing.
+# clean is ~0 here, so it latches on immediately -- no sticky-state problem.
+setp erase_poll_ms 30
+engine_on
+echo "    engine on: clean $(ps_ clean), dirty $(ps_ dirty), poll $(cat $PAR/erase_poll_ms) ms"
 
 T4=$(date +%s.%N); echo "  phase 4: second migration, every promotion gated on an erase"
 waitres 99
