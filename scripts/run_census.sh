@@ -90,26 +90,41 @@ fi
 # skew and read ratio, so the two censuses differ by the server and nothing
 # else. (YCSB-C is built but unused for this -- its redis binding inserts two
 # keys in 45 s here, on its own shipped spec.)
-KEYS=${KEYS:-700000}; VSZ=${VSZ:-1400}          # ~1.0 GiB resident either way
+# Trace-shaped: millions of small objects at a moderate per-instance rate,
+# which is the published memcached/Twitter shape. Our earlier 700k x 1400 B
+# was the outlier. Note the offered rate cannot open a gap between cold and
+# write-cold in these engines -- a read dirties the page, so it moves both
+# together. These runs exist to quantify that, not to support the claim.
+KEYS=${KEYS:-7000000}; VSZ=${VSZ:-140}; RATE=${RATE:-10000}
+SETTLE=${SETTLE:-150}
 
-if have redis; then say "redis, 95/5 zipfian, ~1 GiB"
-  SP=$(serve redis "$W/redis-src/src/redis-cli ping" \
-       "$W/redis-src/src/redis-server" --save '' --appendonly no --protected-mode no)
-  "$R/scripts/kv_load.py" --proto redis --keys "$KEYS" --value "$VSZ" \
-      --read-ratio 0.95 --threads 8 & LP=$!
-  sleep 45                                     # let the load phase populate
-  census --label "redis (95/5 zipfian)" --pid "$SP" --out "$OUT/redis.csv"
+kv(){                        # kv <name> <proto> <port> <server cmd...>
+  local name=$1 proto=$2 port=$3; shift 3
+  SP=$(serve "$name" "true" "$@")
+  sleep 3
+  echo "  loading $KEYS keys x $VSZ B ..."
+  "$R/scripts/kv_load.py" --proto "$proto" --port "$port" --keys "$KEYS" \
+      --value "$VSZ" --threads 8 --load-only || { kill $SP; return; }
+  # A bulk load leaves memcached's LRU maintainer crawling every slab: it
+  # dirtied 98.6% of pages in the 15 s after a load and 0.1% once settled.
+  # Starting the census before that settles measures the crawl, not the load.
+  echo "  settling ${SETTLE}s (post-load maintenance)"; sleep "$SETTLE"
+  "$R/scripts/kv_load.py" --proto "$proto" --port "$port" --keys "$KEYS" \
+      --value "$VSZ" --no-load --read-ratio 0.95 --ops-per-sec "$RATE" \
+      --threads 8 >/dev/null 2>&1 & LP=$!
+  sleep 15
+  awk '/^VmRSS/{printf "  %s resident: %d MiB\n", "'"$name"'", $2/1024}' /proc/$SP/status
+  census --label "$name (95/5 zipfian, $RATE ops/s)" --pid "$SP" --out "$OUT/$name.csv"
   kill $LP $SP 2>/dev/null; wait $SP 2>/dev/null
+}
+
+if have redis; then say "redis, 95/5 zipfian at $RATE ops/s"
+  kv redis redis 6379 "$W/redis-src/src/redis-server" --save '' --appendonly no \
+     --protected-mode no --maxmemory 0
 fi
 
-if have memcached; then say "memcached, 95/5 zipfian, ~1 GiB"
-  SP=$(serve memcached "true" "$W/memcached/memcached" -m 2048 -t 8 -u nobody)
-  sleep 2
-  "$R/scripts/kv_load.py" --proto memcached --keys "$KEYS" --value "$VSZ" \
-      --read-ratio 0.95 --threads 8 & LP=$!
-  sleep 45
-  census --label "memcached (95/5 zipfian)" --pid "$SP" --out "$OUT/memcached.csv"
-  kill $LP $SP 2>/dev/null
+if have memcached; then say "memcached, 95/5 zipfian at $RATE ops/s"
+  kv memcached memcached 11211 "$W/memcached/memcached" -m 4096 -t 8 -u nobody
 fi
 
 say "plotting"
