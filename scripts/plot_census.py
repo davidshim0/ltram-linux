@@ -130,15 +130,17 @@ def num(v):
 allT = sorted({p[0] for name in names for p in work[name]})
 # Descending by write-cold at the smallest T, so the reader meets the
 # workloads in rank order and the ordering survives the data changing.
-first = allT[0]
-ordered = sorted(names, key=lambda n: -next((p[1] for p in work[n]
-                                             if p[0] == first), -1))
 
 def grouped(keep, fname, unit="s", coldf=-0.45):
     """keep: the T values to draw. unit: 's' or 'min' for the tick labels."""
     keep = [T for T in keep if T in set(allT)]
     if not keep:
         return
+    # Descending write-cold at the LEFTMOST group of this figure, so the tallest
+    # bar is always on the left of the first group.
+    lead = keep[0]
+    ordered = sorted(names, key=lambda n: -next((p[1] for p in work[n]
+                                                 if p[0] == lead), -1))
     nb = len(ordered); bw = 0.70 / nb
     fig, ax = plt.subplots(figsize=(min(15.0, max(9.5, 1.9 * len(keep) + 3)), 5.2))
     for k, name in enumerate(ordered):
