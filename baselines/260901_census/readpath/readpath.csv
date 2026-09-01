@@ -1,0 +1,9 @@
+engine,condition,pages_written,pages_resident,pct_written
+memcached,A1. idle, no client traffic,41,74133,0.06
+memcached,B. GETs, 1000 hot keys only,1196,74133,1.61
+memcached,C. GETs, all 200000 keys,70688,74141,95.34
+memcached,A2. idle again,43,74141,0.06
+redis,A1. idle, no client traffic,19,76269,0.02
+redis,B. GETs, 1000 hot keys only,1050,76298,1.38
+redis,C. GETs, all 200000 keys,72600,76302,95.15
+redis,A2. idle again,19,76302,0.02
