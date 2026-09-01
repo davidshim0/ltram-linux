@@ -189,8 +189,14 @@ def grouped(coldf, fname, note):
                 # Sits inside the write-cold bar, so white rather than dark.
                 ax.text(x, y + 1.0, num(y), ha="center", va="bottom",
                         fontsize=7.5, color="white", zorder=5)
+    # An unmeasured cold value must not render as a measured zero. The
+    # smaps fallback aggregates, so exactly one T carries a cold reading and
+    # the rest have none -- which without a mark looks like "cold is 0 here".
+    hasc = {T: any(p[0] == T and p[2] >= 0 for n in ordered for p in work[n])
+            for T in allT}
     ax.set_xticks(range(len(allT)))
-    ax.set_xticklabels([f"{T/60:g}" for T in allT])
+    ax.set_xticklabels([f"{T/60:g}" + ("" if hasc[T] else "\u2020")
+                        for T in allT])
     ax.set_ylim(0, 108); ax.set_yticks([0, 25, 50, 75, 100])
     ax.set_yticklabels(["0", "25%", "50%", "75%", "100%"])
     ax.set_xlabel("Time (min)")
@@ -213,7 +219,17 @@ def grouped(coldf, fname, note):
               fontsize=8.5, frameon=False, loc="upper right", ncol=1,
               bbox_to_anchor=(1.0, 1.10), handlelength=1.3,
               handletextpad=0.5, labelspacing=0.35)
-    fig.tight_layout()
+    if not all(hasc.values()):
+        fig.tight_layout(rect=[0, 0.075, 1, 1])
+        fig.text(0.008, 0.012,
+                 "\u2020 cold not measured at this T \u2014 absent, not zero. "
+                 "Reading the accessed bit per page needs /sys/kernel/mm/page_idle "
+                 "(root); the unprivileged\n   fallback, clear_refs=3 with smaps "
+                 "Referenced:, aggregates per mapping and so answers exactly one "
+                 "T per run, here T = S = 2 min.",
+                 fontsize=7.8, color="#7A838A", va="bottom", linespacing=1.5)
+    else:
+        fig.tight_layout()
     pth = os.path.join(a.out, fname)
     fig.savefig(pth, dpi=200)
     print("wrote", pth)
