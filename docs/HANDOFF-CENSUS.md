@@ -35,16 +35,59 @@ premise of the project holds. Pilot data says it is: pagerank is 0.3% cold and
 
 ---
 
-## 2. Why root is the whole point
+## 2. What root buys, and what it does not
 
-Both columns ask the same question — has this page been {written, accessed} in
-the last T seconds? Answering it for many T from one run needs **per-page age**:
-for each page, how long since it was last touched. Then cold(T) is "fraction
-whose age exceeds T", and one pass over the age array answers every T at once.
+Read this carefully — an earlier draft of this document overstated the case and
+was corrected.
 
-Maintaining that age needs, every S seconds: clear the bit on every page, wait,
-then read the bit **per page** — reset the age of pages that were touched,
-increment the rest.
+**Cold as a function of T is measurable WITHOUT root.** Both bits are sticky:
+once set they stay set until something clears them. So clear once at t0 and
+read repeatedly without clearing again, and the count at time t is "pages
+touched anywhere in [t0, t]". A count is all this statistic needs:
+
+    cold(T)       = 1 - Referenced(t0+T) / Rss        <- smaps, unprivileged
+    write-cold(T) = 1 - soft_dirty(t0+T) / resident   <- pagemap, unprivileged
+
+`scripts/decay_census.py` does exactly this and needs no privilege. Do not
+arrive believing the measurement is impossible unprivileged. It is not.
+
+**What per-page state actually changes is which INSTANT each point comes from.**
+
+* *Ladder (counts only).* The T=5 s point is measured at t0+5, the T=600 s
+  point at t0+600. Different T come from different moments, and one pass yields
+  exactly one sample of each T.
+* *Per-page ages (`page_idle`).* At any single instant every page's age is
+  known, so the whole curve over all T is read off from one moment — and a
+  fresh sample of every T arrives at every window boundary.
+
+Three consequences, and only these three:
+
+1. **Sample efficiency.** A 1800 s run gives the ladder 3 samples of T=600 s.
+   Per-page ages at a 5 s window give ~240 samples of T=600 s in the same wall
+   time. Roughly 80x, and the gap widens with T.
+2. **Internal consistency.** Points taken from one instant are monotone in T by
+   construction. The artefact in section 4 (bfs write-cold rising with T)
+   cannot occur.
+3. **One estimator for both columns.** Today write-cold is a sliding-window
+   steady-state average and ladder-cold is decay-from-t0. Under stationarity
+   they agree in expectation, but they are not the same statistic, and putting
+   them in one bar is a small dishonesty. `page_idle` makes both the sliding-
+   window statistic — which is also the one Google's `kstaled` computes.
+
+**Root does NOT fix attribution.** An earlier draft claimed it did. It does not.
+`page_idle` is per *physical* page and clears the young bit across every mapping
+via rmap, so another process touching a shared page confounds it exactly as it
+confounds `smaps Referenced:`. An idle `sleep` measures ~12% cold rather than
+~100% under either mechanism, because its 1.9 MiB is nearly all shared libc that
+other processes keep touching. If attribution matters for a claim, restrict to
+private mappings (`--anon-only`, section 3.2) rather than expecting privilege to
+solve it.
+
+**So why bother with root at all?** Because of 1-3 above, and because matching
+`kstaled`'s estimator makes the comparison against published far-memory numbers
+an apples-to-apples one. It is a better measurement, not the only possible one.
+
+The interfaces, for reference:
 
 | bit | per-page read? | interface | privilege |
 |---|---|---|---|
@@ -52,24 +95,9 @@ increment the rest.
 | accessed | **yes** | `/sys/kernel/mm/page_idle/bitmap` | **root** |
 | accessed | no, only a *count* | `smaps` `Referenced:` | none |
 
-`page_idle` is `0600 root:root`, and it is indexed by PFN — and `pagemap`
-zeroes the PFN field for unprivileged readers, so even the index is unavailable.
-`smaps` gives a byte count of referenced pages per mapping: **how many, not
-which**. Per-page ages cannot be built from counts.
-
-So on the previous host:
-
-* **write-cold** was measured properly, per page, at every T. This is
-  structurally the same method Google's `kstaled` uses, just on the dirty bit.
-* **cold** fell back to `clear_refs=3` + `smaps Referenced:`, which answers
-  exactly **one** T per run (T = S), and cannot attribute — a shared library
-  page another process touches counts as referenced here.
-
-**With root, that asymmetry disappears.** `page_idle` gives the accessed bit per
-page, so cold uses the identical estimator as write-cold, at every T, from one
-run. The daggers come off the figure and the two columns become comparable.
-
----
+`page_idle` is `0600 root:root` and indexed by PFN, and `pagemap` zeroes the PFN
+field for unprivileged readers, so even the index is unavailable. That is the
+whole of what privilege changes.
 
 ## 3. Do this
 
