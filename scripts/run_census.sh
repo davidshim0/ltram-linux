@@ -27,7 +27,17 @@ GRAPH="$W/gapbs/benchmark/graphs/kron22.sg"
 ALL="pagerank bfs llama redis memcached"
 WANT="${*:-$ALL}"
 
-[ "$(id -u)" = 0 ] || { echo "!! not root: the cold column needs page_idle. Re-run with sudo."; exit 1; }
+if [ "$(id -u)" != 0 ]; then
+  cat <<'W'
+!! Not root. The run will still work, with one leg missing:
+     write-cold  measured per page via soft-dirty, every T          -- unaffected
+     cold        falls back to smaps Referenced: aggregate only,
+                 so it is reported at T = S and no other T, and it
+                 cannot tell this process's accesses from another's
+                 on shared pages.
+   For cold at every T, run this on a host where you have root.
+W
+fi
 [ -s "$GRAPH" ] || { echo "!! missing $GRAPH -- run workloads/build_motivation.sh"; exit 1; }
 
 say(){ printf '\n\033[1m== %s\033[0m\n' "$*"; }

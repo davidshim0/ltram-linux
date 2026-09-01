@@ -73,7 +73,29 @@ elif a.pid: pid = a.pid
 else: sys.exit("need --pid or --cmd")
 label = a.label or (a.cmd.split()[0].split("/")[-1] if a.cmd else f"pid{pid}")
 
-HAVE_IDLE = os.geteuid() == 0 and os.path.exists("/sys/kernel/mm/page_idle/bitmap")
+HAVE_IDLE = os.geteuid() == 0 and os.access("/sys/kernel/mm/page_idle/bitmap", os.R_OK)
+# Without root, page_idle is unreadable (0600 root:root) and its PFN index is
+# unavailable anyway. clear_refs=3 clears the young bit and smaps reports
+# Referenced: back, which is an unprivileged access measure -- but only in
+# aggregate, so it answers exactly one T per run: T = S. It also cannot
+# attribute: a shared library page another process touches counts as
+# referenced here, which measured 12.2% cold on an idle `sleep` whose 1.9 MiB
+# is nearly all shared libc. Workloads whose footprint is private anon or a
+# large private mapping are barely affected; it is still a proxy, and the CSV
+# says which method produced the column.
+COLD_METHOD = "page_idle" if HAVE_IDLE else "smaps_referenced"
+
+def smaps_cold():
+    """Fraction of resident kB with the young bit clear. One T only: T = S."""
+    r = f = 0
+    try:
+        with open(f"/proc/{pid}/smaps") as fh:
+            for line in fh:
+                if line.startswith("Rss:"): r += int(line.split()[1])
+                elif line.startswith("Referenced:"): f += int(line.split()[1])
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    return 100.0 * (1.0 - f / r) if r else None
 
 def vmas():
     out = []
@@ -205,16 +227,20 @@ except FileNotFoundError:
 
 NW = a.run // a.interval
 if NW < 2: sys.exit(f"--run {a.run} gives only {NW} window(s) at S={a.interval}; need >= 2")
-sum_wc = {}; sum_cold = {}; nobs = {}; resident = []
+sum_wc = {}; sum_cold = {}; nobs = {}; ncold = {}; resident = []
 
 print(f"# {label}: {N0:,} pages = {N0*PAGE/2**20:.0f} MiB resident at t=0, "
       f"S={a.interval}s, {NW} windows, "
-      f"idle tracking {'on' if HAVE_IDLE else 'OFF (needs root)'}", file=sys.stderr)
+      f"cold via {COLD_METHOD}"
+      + ("" if HAVE_IDLE else " -- proxy, valid only at T=S; run as root for every T"),
+      file=sys.stderr)
 
 for w in range(NW):
     try:
         regs = regions_now()
         if regs != layout: relayout(regs, w)
+        with open(f"/proc/{pid}/clear_refs", "w") as f:
+            if not HAVE_IDLE: f.write("3")     # clear young, for the proxy
         with open(f"/proc/{pid}/clear_refs", "w") as f: f.write("4")
         if HAVE_IDLE:
             _, _, pf = scan(layout)
@@ -246,14 +272,21 @@ for w in range(NW):
     # Denominator is what is resident NOW, not what was resident at t=0.
     Nw = len(present)
     resident.append(Nw)
+    sc = None if HAVE_IDLE else smaps_cold()
     lw = last_w[present]; la = last_a[present]
     for k in range(1, w + 2):
         T = k * a.interval
         wc = int(np.count_nonzero(lw <= w - k))
-        cd = int(np.count_nonzero(la <= w - k)) if HAVE_IDLE else 0
         sum_wc[T] = sum_wc.get(T, 0.0) + 100.0 * wc / Nw
-        sum_cold[T] = sum_cold.get(T, 0.0) + 100.0 * cd / Nw
         nobs[T] = nobs.get(T, 0) + 1
+        if HAVE_IDLE:
+            cd = int(np.count_nonzero(la <= w - k))
+            sum_cold[T] = sum_cold.get(T, 0.0) + 100.0 * cd / Nw
+            ncold[T] = ncold.get(T, 0) + 1
+        elif k == 1 and sc is not None:
+            # The proxy is only valid for the window just measured.
+            sum_cold[T] = sum_cold.get(T, 0.0) + sc
+            ncold[T] = ncold.get(T, 0) + 1
     print(f"# window {w+1}/{NW} done, {Nw:,} resident", file=sys.stderr)
 
 N = int(sum(resident) / len(resident)) if resident else N0
@@ -264,13 +297,14 @@ out = sys.stdout if a.out == "-" else open(a.out, "w")
 import csv as _csv
 w_ = _csv.writer(out, lineterminator="\n")
 w_.writerow(["workload", "T_sec", "pages", "write_cold_pct", "cold_pct",
-             "windows_averaged"])
+             "windows_averaged", "cold_method"])
 for T in sorted(sum_wc):
     n = nobs[T]
     wc = sum_wc[T] / n
     # -1, not nan: it round-trips through CSV and the plotter tests for it.
-    cd = (sum_cold[T] / n) if HAVE_IDLE else -1.0
-    w_.writerow([label, T, N, f"{wc:.2f}", f"{cd:.2f}", n])
+    cd = (sum_cold[T] / ncold[T]) if ncold.get(T) else -1.0
+    w_.writerow([label, T, N, f"{wc:.2f}", f"{cd:.2f}", n,
+                 COLD_METHOD if ncold.get(T) else "none"])
 if proc:
     try: os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
     except Exception: pass

@@ -61,7 +61,8 @@ for p in a.csv:
             if not r.get("T_sec"): continue
             work.setdefault(r["workload"], []).append(
                 (float(r["T_sec"]), float(r["write_cold_pct"]),
-                 float(r["cold_pct"]), int(r["pages"])))
+                 float(r["cold_pct"]), int(r["pages"]),
+                 r.get("cold_method", "page_idle")))
 if not work:
     sys.exit("no rows")
 for k in work: work[k].sort()
@@ -81,22 +82,22 @@ for k, name in enumerate(names):
     wc   = [p[1] for p in pts]
     cold = [p[2] for p in pts]
     # cold_pct is -1 when the run had no root and could not read page_idle.
-    have_cold = all(c >= 0 for c in cold)
     x = range(len(ts))
-
-    if have_cold:
-        ax.bar(x, cold, width=.72, color=C_COLD, zorder=3,
+    # Unprivileged runs can only measure cold at T = S, so a panel may have
+    # the cold segment on some bars and not others. Draw the full write-cold
+    # bar first and overdraw cold where it exists, rather than skipping the
+    # comparison entirely because one bar is missing it.
+    ax.bar(x, wc, width=.72, color=C_EXTRA, zorder=3,
+           label="write-cold: read, but not written in T  (what LtRAM moves)")
+    xc = [i for i in x if cold[i] >= 0]
+    if xc:
+        ax.bar(xc, [cold[i] for i in xc], width=.72, color=C_COLD, zorder=4,
                label="cold: not accessed in T  (what cold-page tiering moves)")
-        ax.bar(x, [w - c for w, c in zip(wc, cold)], width=.72, bottom=cold,
-               color=C_EXTRA, zorder=3,
-               label="write-cold only: read, but not written in T  (what LtRAM adds)")
-    else:
-        ax.bar(x, wc, width=.72, color=C_EXTRA, zorder=3,
-               label="write-cold: not written in T")
+    have_cold = len(xc) == len(ts)
 
     # One callout, on the T the argument is actually made at. A number the
     # reader can quote beats a bar they have to measure against the axis.
-    tcall = a.at if a.at is not None else ts[-1]
+    tcall = a.at if a.at is not None else (ts[xc[-1]] if xc else ts[-1])
     i = min(range(len(ts)), key=lambda j: abs(ts[j] - tcall))
     if have_cold:
         # Nudge off the frame when the callout sits on the last bar.
@@ -106,6 +107,9 @@ for k, name in enumerate(names):
                     (i, wc[i]), xytext=(dx, 7), textcoords="offset points",
                     ha=ha, fontsize=10, weight="semibold", color="#3d474e")
 
+    if any(p[4] == "smaps_referenced" for p in pts):
+        ax.text(0.99, 0.03, "cold via smaps Referenced (proxy)", ha="right",
+                transform=ax.transAxes, fontsize=8, color="#7A838A")
     mib = pts[0][3] * os.sysconf("SC_PAGE_SIZE") / 2**20
     ax.set_title(f"{name}   ({mib:,.0f} MiB resident)", fontsize=12,
                  weight="semibold", pad=10)
@@ -129,6 +133,15 @@ p = os.path.join(a.out, "fig10-write-cold.png")
 fig.savefig(p, dpi=200)
 print("wrote", p)
 for name in names:
+    # Report at the largest T that actually HAS a cold measurement -- an
+    # unprivileged run has it only at T = S, and printing -1.0% there reads
+    # as a result rather than as an absence.
     pts = work[name]
-    print(f"  {name}: T={tlabel(pts[-1][0])}  cold {pts[-1][2]:.1f}%  "
-          f"write-cold {pts[-1][1]:.1f}%")
+    c = [p for p in pts if p[2] >= 0]
+    if c:
+        p_ = c[-1]
+        print(f"  {name}: T={tlabel(p_[0])}  cold {p_[2]:.2f}%  "
+              f"write-cold {p_[1]:.2f}%  ({p_[4]})")
+    else:
+        print(f"  {name}: T={tlabel(pts[-1][0])}  cold not measured  "
+              f"write-cold {pts[-1][1]:.2f}%")
