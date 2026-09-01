@@ -166,14 +166,15 @@ ordered = sorted(names, key=lambda n: -next((p[1] for p in work[n]
                                              if p[0] == first), -1))
 
 def grouped(coldf, fname, note):
-    nb = len(ordered); bw = 0.82 / nb
+    nb = len(ordered); bw = 0.70 / nb
     fig, ax = plt.subplots(figsize=(max(9.5, 1.9 * len(allT) + 3), 5.2))
     for k, name in enumerate(ordered):
         col = TAB_CB[k % len(TAB_CB)]
         d = {p[0]: p[1] for p in work[name]}
         xs = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(allT) if T in d]
         ys = [d[T] for T in allT if T in d]
-        ax.bar(xs, ys, width=bw * 0.9, color=col, label=name, zorder=3)
+        ax.bar(xs, ys, width=bw, color=col,
+               label=name.split(" (")[0], zorder=3)
         for x, y in zip(xs, ys):
             ax.text(x, y + 1.2, num(y), ha="center", va="bottom",
                     fontsize=8, color="#3d474e")
@@ -183,7 +184,7 @@ def grouped(coldf, fname, note):
         if xc:
             # Outlined in the parent colour: with only three hues available,
             # the shade alone does not always say which bar it belongs to.
-            ax.bar(xc, yc, width=bw * 0.9, color=shade(col, coldf),
+            ax.bar(xc, yc, width=bw, color=shade(col, coldf),
                    edgecolor=col, linewidth=1.0, zorder=4)
             for x, y in zip(xc, yc):
                 # Sits inside the write-cold bar, so white rather than dark.
@@ -199,13 +200,20 @@ def grouped(coldf, fname, note):
                  weight="semibold", pad=34)
     ax.grid(axis="y", alpha=.25, lw=.5); ax.set_axisbelow(True)
     for sp in ("top", "right"): ax.spines[sp].set_visible(False)
-    lg = ax.legend(fontsize=9, frameon=False, ncol=min(3, nb), loc="lower left",
-                   bbox_to_anchor=(0, 1.005))
+    # One row, in bar order, short names: the legend should be read the same
+    # way the bars are, and the parameters belong in the caption not the key.
+    lg = ax.legend(fontsize=9.5, frameon=False, ncol=nb, loc="lower left",
+                   bbox_to_anchor=(0, 1.005), columnspacing=1.6,
+                   handlelength=1.5, handletextpad=0.5)
     ax.add_artist(lg)
-    ax.legend(handles=[plt.Rectangle((0, 0), 1, 1,
-                                     color=shade(TAB_CB[0], coldf))],
-              labels=[note], fontsize=8.5, frameon=False, loc="upper right",
-              bbox_to_anchor=(1.0, 1.005))
+    ax.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=TAB_CB[0]),
+                       plt.Rectangle((0, 0), 1, 1, color=shade(TAB_CB[0], coldf),
+                                     ec=TAB_CB[0], lw=1.0)],
+              labels=["upper: read, never written in T",
+                      "lower: never accessed in T"],
+              fontsize=8.5, frameon=False, loc="upper right", ncol=1,
+              bbox_to_anchor=(1.0, 1.10), handlelength=1.3,
+              handletextpad=0.5, labelspacing=0.35)
     fig.tight_layout()
     pth = os.path.join(a.out, fname)
     fig.savefig(pth, dpi=200)
