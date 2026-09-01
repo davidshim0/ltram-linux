@@ -151,6 +151,20 @@ for k, name in enumerate(names):
     ys = [d[T] for T in allT if T in d]
     axg.bar(xs, ys, width=bw * 0.9, color=SERIES[k % len(SERIES)],
             label=name, zorder=3)
+    # The cold fraction as a dark base inside the same bar, wherever it was
+    # measured. Unprivileged runs have it only at T = S, so this appears on
+    # one group and not the rest -- which is the honest picture, and better
+    # than dropping the comparison from the figure that most needs it.
+    dc = {p[0]: p[2] for p in work[name] if p[2] >= 0}
+    xc = [i + (k - (nb - 1) / 2) * bw for i, T in enumerate(allT) if T in dc]
+    yc = [dc[T] for T in allT if T in dc]
+    if xc:
+        axg.bar(xc, yc, width=bw * 0.9, color="#22282c", alpha=.82, zorder=4,
+                label="cold: not accessed in T" if k == 0 else None)
+        for x, y in zip(xc, yc):
+            axg.text(x, y + 1.0, f"{y:.1f}", ha="center", va="bottom",
+                     fontsize=6.8, color="#22282c",
+                     rotation=0 if nb <= 3 else 90)
     for x, y in zip(xs, ys):
         axg.text(x, y + 1.2, f"{y:.0f}", ha="center", va="bottom",
                  fontsize=7.5, color="#5b6670", rotation=0 if nb <= 3 else 90)
@@ -159,8 +173,9 @@ axg.set_xticklabels([tlabel(T) for T in allT])
 axg.set_ylim(0, 108); axg.set_yticks([0, 25, 50, 75, 100])
 axg.set_yticklabels(["0", "25%", "50%", "75%", "100%"])
 axg.set_xlabel("T, age threshold")
-axg.set_ylabel("share of resident pages not written in T")
-axg.set_title("Write-Cold by Threshold", fontsize=13, weight="semibold", pad=34)
+axg.set_ylabel("share of resident pages")
+axg.set_title("Write-Cold Against Cold, by Threshold", fontsize=13,
+              weight="semibold", pad=34)
 axg.grid(axis="y", alpha=.25, lw=.5); axg.set_axisbelow(True)
 for sp in ("top", "right"): axg.spines[sp].set_visible(False)
 axg.legend(fontsize=9, frameon=False, ncol=min(3, nb), loc="lower left",
