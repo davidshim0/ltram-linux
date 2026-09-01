@@ -200,7 +200,7 @@ def grouped(coldf, fname, note):
     ax.set_ylim(0, 108); ax.set_yticks([0, 25, 50, 75, 100])
     ax.set_yticklabels(["0", "25%", "50%", "75%", "100%"])
     ax.set_xlabel("Time (min)")
-    ax.set_ylabel("Percentage of Memory Usage")
+    ax.set_ylabel("Percentage of Memory")
     ax.set_title("Share of Read-Mostly Data and Cold Data per Workload",
                  fontsize=13, weight="semibold", pad=34)
     ax.grid(axis="y", alpha=.25, lw=.5); ax.set_axisbelow(True)
