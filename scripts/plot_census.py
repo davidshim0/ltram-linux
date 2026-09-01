@@ -67,6 +67,20 @@ if not work:
     sys.exit("no rows")
 for k in work: work[k].sort()
 
+# Write-cold is monotonically non-increasing in T by definition: a page not
+# written in 8 minutes was not written in 6 either. A rise means the
+# estimator is comparing unlike samples -- the windowed census averages
+# T = k*S over (windows - k + 1) boundaries, so every T is a mean over a
+# different set, and the mean of monotone curves over different index sets
+# need not be monotone. Small, but it should never pass silently.
+for _n, _pts in work.items():
+    _p = sorted(_pts)
+    for _a, _b in zip(_p, _p[1:]):
+        if _b[1] > _a[1] + 1e-9:
+            print(f"!! {_n}: write-cold RISES {_a[1]:.2f}% -> {_b[1]:.2f}% "
+                  f"from T={_a[0]:g}s to T={_b[0]:g}s. Monotone by definition; "
+                  f"this is the boundary-averaging artefact.", file=sys.stderr)
+
 names = sorted(work)
 n = len(names)
 ncol = 1 if n == 1 else (2 if n <= 4 else 3)
