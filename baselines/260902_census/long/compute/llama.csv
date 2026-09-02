@@ -8,4 +8,5 @@ llama.cpp (tinyllama 1.1B),900,311607,94.22,40.00,1,smaps_referenced,0.00,0.00,0
 llama.cpp (tinyllama 1.1B),1200,311607,94.18,39.82,1,smaps_referenced,0.00,0.00,0.00
 llama.cpp (tinyllama 1.1B),1800,311607,94.17,38.89,1,smaps_referenced,0.00,0.00,0.00
 llama.cpp (tinyllama 1.1B),2400,311607,93.97,38.49,1,smaps_referenced,0.00,0.00,0.00
-llama.cpp (tinyllama 1.1B),3000,311607,93.97,38.19,1,smaps_referenced,0.00,0.00,
+llama.cpp (tinyllama 1.1B),3000,311607,93.97,38.19,1,smaps_referenced,0.00,0.00,0.00
+llama.cpp (tinyllama 1.1B),3600,311607,93.97,37.90,1,smaps_referenced,0.00,0.00,0.00

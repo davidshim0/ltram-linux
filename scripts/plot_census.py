@@ -232,7 +232,11 @@ grouped([allT[i] for i in thin(allT, keep=8)], "fig10-write-cold-by-T.png", "s")
 
 # fig10b: the same data on a minute scale. These T are measured, not
 # interpolated -- 60, 120, 180, 300 and 600 s are all points on the ladder.
-grouped([60, 120, 180, 300, 600], "fig10b-write-cold-by-T.png", "min")
+# fig10b: minute scale. Prefers the 1..60 min ladder when it is present,
+# and falls back to the 1..10 min points the 600 s ladder provides.
+LONG = [60, 300, 600, 1200, 1800, 2400, 3000, 3600]
+grouped(LONG if len(set(LONG) & set(allT)) >= 6 else [60, 120, 180, 300, 600],
+        "fig10b-write-cold-by-T.png", "min")
 
 for name in names:
     # Report at the largest T that actually HAS a cold measurement -- an
