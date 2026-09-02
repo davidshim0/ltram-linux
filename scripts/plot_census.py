@@ -136,11 +136,16 @@ def grouped(keep, fname, unit="s", coldf=-0.45):
     keep = [T for T in keep if T in set(allT)]
     if not keep:
         return
-    # Descending write-cold at the LEFTMOST group of this figure, so the tallest
-    # bar is always on the left of the first group.
+    # Fixed order, so the same workload keeps the same position and colour in
+    # every figure. Ranking by height instead reshuffles them whenever the
+    # leftmost T changes -- llama leads at 5 s and is third at 60 s -- which
+    # makes two figures of the same data hard to read against each other.
+    ORDER = ["bfs", "pagerank", "llama.cpp", "redis", "memcached"]
+    rank = {w: i for i, w in enumerate(ORDER)}
     lead = keep[0]
-    ordered = sorted(names, key=lambda n: -next((p[1] for p in work[n]
-                                                 if p[0] == lead), -1))
+    ordered = sorted(names, key=lambda n: (
+        rank.get(n.split(" (")[0], len(ORDER)),
+        -next((p[1] for p in work[n] if p[0] == lead), -1)))
     nb = len(ordered); bw = 0.70 / nb
     fig, ax = plt.subplots(figsize=(min(15.0, max(9.5, 1.9 * len(keep) + 3)), 5.2))
     for k, name in enumerate(ordered):
@@ -226,9 +231,13 @@ def grouped(keep, fname, unit="s", coldf=-0.45):
     fig.savefig(pth, dpi=200)
     print("wrote", pth)
 
-# fig10: the whole ladder, log-spaced down to 8 groups, ticks in seconds.
-# A 14-point ladder x 5 workloads is 70 bars and renders 30 inches wide.
-grouped([allT[i] for i in thin(allT, keep=8)], "fig10-write-cold-by-T.png", "s")
+# fig10: the operating points worth arguing about, in minutes. Falls back to a
+# log-spaced thinning of whatever ladder is present if these were not measured.
+MAIN = [60, 300, 600, 1200, 1800]                      # 1, 5, 10, 20, 30 min
+if len(set(MAIN) & set(allT)) >= 4:
+    grouped(MAIN, "fig10-write-cold-by-T.png", "min")
+else:
+    grouped([allT[i] for i in thin(allT, keep=8)], "fig10-write-cold-by-T.png", "s")
 
 # fig10b: the same data on a minute scale. These T are measured, not
 # interpolated -- 60, 120, 180, 300 and 600 s are all points on the ladder.
