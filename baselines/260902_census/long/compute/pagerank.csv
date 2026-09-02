@@ -1,0 +1,12 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd,freed_pct
+pagerank (kron22),60,142728,94.23,0.16,1,smaps_referenced,0.00,0.00,5.72
+pagerank (kron22),120,142728,94.23,0.16,1,smaps_referenced,0.00,0.00,4.17
+pagerank (kron22),180,142728,94.23,0.16,1,smaps_referenced,0.00,0.00,4.14
+pagerank (kron22),300,142728,94.23,0.16,1,smaps_referenced,0.00,0.00,4.48
+pagerank (kron22),600,142728,94.23,0.16,1,smaps_referenced,0.00,0.00,0.00
+pagerank (kron22),900,142728,94.23,0.16,1,smaps_referenced,0.00,0.00,4.13
+pagerank (kron22),1200,142728,94.23,0.16,1,smaps_referenced,0.00,0.00,5.72
+pagerank (kron22),1800,142728,94.23,0.16,1,smaps_referenced,0.00,0.00,5.72
+pagerank (kron22),2400,142728,94.23,0.16,1,smaps_referenced,0.00,0.00,0.00
+pagerank (kron22),3000,142728,94.23,0.16,1,smaps_referenced,0.00,0.00,0.00
+pagerank (kron22),3600,142728,94.23,0.16,1,smaps_referenced,0.00,0.00,4.62

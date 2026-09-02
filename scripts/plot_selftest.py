@@ -343,10 +343,20 @@ if r:
     fig.tight_layout(); fig.savefig(f"{OUT}/fig7-transition-timeline.png", dpi=160)
     made.append("fig7-transition-timeline")
 
-# gated.csv is the worst case done properly: migration into an already-dirty
-# pool, run to completion. worstcase.csv reached the same state the long way
-# and its refill was truncated, so prefer gated when both exist.
-r = rows("gated.csv") or rows("worstcase.csv")
+# worstcase.csv is now the better of the two and is preferred.
+#
+# gated.csv (2026-08-30) is three phases -- DRAM, erase-gated migration, NOR --
+# and it ran to completion, so it was preferred while worstcase.csv was
+# truncated at 52%. worstcase.csv was re-measured on 2026-09-02 to 99.13% AND
+# with the erase engine gated per phase: off for 1-3, on at 8192/1024 for 4.
+# That gives both conditions in ONE controlled run -- phase 2 migrates into a
+# clean pool with nothing erasing (writes only), phase 4 into a dirty pool with
+# the engine running (writes and erases) -- which three phases cannot express.
+#
+# The two agree where they overlap: erase-gated migration at 10.8 pages/s
+# (gated) against 9.8 (worstcase p4), and settled flash at 1038.9 ns against
+# 1033.7 ns, 0.5% apart from independent runs.
+r = rows("worstcase.csv") or rows("gated.csv")
 if r:
     t = [float(x["elapsed_s"]) for x in r]
     ns = [float(x["ns_per_line"]) for x in r]

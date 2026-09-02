@@ -1,15 +1,15 @@
-workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd
-bfs (kron22),5,135694,99.75,0.67,2,smaps_referenced,0.00,0.00
-bfs (kron22),10,135694,98.20,0.67,2,smaps_referenced,1.55,0.01
-bfs (kron22),20,135694,99.15,0.68,2,smaps_referenced,0.61,0.01
-bfs (kron22),30,135694,99.75,0.38,2,smaps_referenced,0.00,0.03
-bfs (kron22),45,135694,99.17,0.17,2,smaps_referenced,0.58,0.00
-bfs (kron22),60,135694,99.75,0.16,2,smaps_referenced,0.00,0.00
-bfs (kron22),90,135694,99.75,0.16,2,smaps_referenced,0.00,0.00
-bfs (kron22),120,135694,99.75,0.16,2,smaps_referenced,0.00,0.00
-bfs (kron22),180,135694,99.15,0.12,2,smaps_referenced,0.61,0.04
-bfs (kron22),240,135694,98.20,0.12,2,smaps_referenced,1.55,0.04
-bfs (kron22),300,135694,99.75,0.12,2,smaps_referenced,0.00,0.04
-bfs (kron22),360,135694,98.20,0.12,2,smaps_referenced,1.55,0.04
-bfs (kron22),480,135694,99.75,0.16,1,smaps_referenced,0.00,0.00
-bfs (kron22),600,135694,96.65,0.16,1,smaps_referenced,0.00,0.00
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd,freed_pct
+bfs (kron22),5,138129,97.41,2.33,3,smaps_referenced,1.09,1.34,1.20
+bfs (kron22),10,138129,97.41,1.11,3,smaps_referenced,1.09,0.91,1.78
+bfs (kron22),20,138129,97.41,0.32,3,smaps_referenced,1.09,0.27,2.35
+bfs (kron22),30,138129,97.41,0.10,3,smaps_referenced,1.09,0.14,2.35
+bfs (kron22),45,138129,97.41,0.00,3,smaps_referenced,1.09,0.00,2.35
+bfs (kron22),60,138129,97.41,0.00,3,smaps_referenced,1.09,0.00,1.32
+bfs (kron22),90,138129,97.41,0.00,3,smaps_referenced,1.09,0.00,2.14
+bfs (kron22),120,138129,97.41,0.00,3,smaps_referenced,1.09,0.00,2.35
+bfs (kron22),180,138129,97.41,0.00,3,smaps_referenced,1.09,0.00,2.16
+bfs (kron22),240,138129,97.41,0.00,3,smaps_referenced,1.09,0.00,2.35
+bfs (kron22),300,138129,97.41,0.00,3,smaps_referenced,1.09,0.00,2.19
+bfs (kron22),360,138129,97.41,0.00,3,smaps_referenced,1.09,0.00,2.16
+bfs (kron22),480,138129,97.41,0.00,3,smaps_referenced,1.09,0.00,2.14
+bfs (kron22),600,138129,97.41,0.00,3,smaps_referenced,1.09,0.00,1.32

@@ -1,15 +1,15 @@
-workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd
-pagerank (kron22),5,139930,96.18,0.68,3,smaps_referenced,1.39,0.00
-pagerank (kron22),10,139930,98.04,0.62,3,smaps_referenced,2.69,0.08
-pagerank (kron22),20,139930,94.23,0.54,3,smaps_referenced,0.00,0.10
-pagerank (kron22),30,139930,97.17,0.54,3,smaps_referenced,2.33,0.10
-pagerank (kron22),45,139930,97.17,0.54,3,smaps_referenced,2.33,0.11
-pagerank (kron22),60,139930,97.06,0.41,3,smaps_referenced,2.33,0.01
-pagerank (kron22),90,139930,98.04,0.41,3,smaps_referenced,2.69,0.01
-pagerank (kron22),120,139930,96.13,0.41,3,smaps_referenced,2.69,0.01
-pagerank (kron22),180,139930,95.16,0.18,3,smaps_referenced,1.31,0.00
-pagerank (kron22),240,139930,96.13,0.14,3,smaps_referenced,2.69,0.05
-pagerank (kron22),300,139930,96.13,0.14,3,smaps_referenced,2.69,0.05
-pagerank (kron22),360,139930,95.16,0.14,3,smaps_referenced,1.31,0.05
-pagerank (kron22),480,139930,96.13,0.14,3,smaps_referenced,2.69,0.05
-pagerank (kron22),600,139930,94.23,0.14,3,smaps_referenced,0.00,0.05
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd,freed_pct
+pagerank (kron22),5,142755,94.23,0.66,3,smaps_referenced,0.00,0.00,3.22
+pagerank (kron22),10,142755,94.23,0.66,3,smaps_referenced,0.00,0.00,5.72
+pagerank (kron22),20,142755,94.23,0.17,3,smaps_referenced,0.00,0.00,1.34
+pagerank (kron22),30,142755,94.23,0.14,3,smaps_referenced,0.00,0.04,5.15
+pagerank (kron22),45,142755,94.23,0.14,3,smaps_referenced,0.00,0.04,3.30
+pagerank (kron22),60,142755,94.23,0.14,3,smaps_referenced,0.00,0.04,0.00
+pagerank (kron22),90,142755,94.23,0.14,3,smaps_referenced,0.00,0.04,3.26
+pagerank (kron22),120,142755,94.23,0.14,3,smaps_referenced,0.00,0.04,0.00
+pagerank (kron22),180,142755,94.23,0.14,3,smaps_referenced,0.00,0.04,1.91
+pagerank (kron22),240,142755,94.23,0.14,3,smaps_referenced,0.00,0.04,3.81
+pagerank (kron22),300,142755,94.23,0.14,3,smaps_referenced,0.00,0.04,3.81
+pagerank (kron22),360,142755,94.23,0.14,3,smaps_referenced,0.00,0.04,1.40
+pagerank (kron22),480,142755,94.23,0.14,3,smaps_referenced,0.00,0.04,5.19
+pagerank (kron22),600,142755,94.23,0.14,3,smaps_referenced,0.00,0.04,1.91

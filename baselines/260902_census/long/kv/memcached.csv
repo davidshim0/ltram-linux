@@ -1,0 +1,12 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd,freed_pct
+"memcached (95/5 zipfian, 10000 ops/s)",60,427735,56.01,0.01,2,smaps_referenced,3.22,0.00,0.00
+"memcached (95/5 zipfian, 10000 ops/s)",120,427735,35.76,0.01,2,smaps_referenced,3.58,0.00,0.00
+"memcached (95/5 zipfian, 10000 ops/s)",180,427735,10.54,0.01,2,smaps_referenced,10.06,0.00,0.00
+"memcached (95/5 zipfian, 10000 ops/s)",300,427735,0.28,0.01,2,smaps_referenced,0.00,0.00,0.00
+"memcached (95/5 zipfian, 10000 ops/s)",600,427735,0.21,0.01,2,smaps_referenced,0.00,0.00,0.00
+"memcached (95/5 zipfian, 10000 ops/s)",900,427735,0.21,0.01,2,smaps_referenced,0.00,0.00,0.00
+"memcached (95/5 zipfian, 10000 ops/s)",1200,427735,0.21,0.01,2,smaps_referenced,0.00,0.00,0.00
+"memcached (95/5 zipfian, 10000 ops/s)",1800,427735,0.21,0.01,2,smaps_referenced,0.00,0.00,0.00
+"memcached (95/5 zipfian, 10000 ops/s)",2400,427735,0.21,0.01,2,smaps_referenced,0.00,0.00,0.00
+"memcached (95/5 zipfian, 10000 ops/s)",3000,427735,0.21,0.01,2,smaps_referenced,0.00,0.00,0.00
+"memcached (95/5 zipfian, 10000 ops/s)",3600,427735,0.21,0.01,2,smaps_referenced,0.00,0.00,0.00
