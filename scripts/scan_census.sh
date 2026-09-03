@@ -89,22 +89,28 @@ setp wear_governor 0            # governor off -> scan_interval_ms IS the interv
 setp promote_batch $(( RSS * 2 ))
 echo $BG > /sys/kernel/ltram/target_pid
 
-# Prime: consume whatever clean sectors exist, so the measured passes promote
-# nothing. Engine off, so none come back. Costs one short burst of real
-# promotions -- reported, not hidden -- and everything after it is inert.
+# The scan thread refuses to walk when there is nowhere to put a page:
+#
+#     if (!READ_ONCE(lt_clean_count)) { msleep(scan_stall_ms); continue; }
+#
+# so draining the pool does not make the scanner passive, it stops it. The
+# first attempt at that measured 0 passes.
+#
+# But the check is at the TOP of the thread loop, not inside the walk. A pass
+# that starts with a few clean sectors walks all of scan_ptes_per_pass,
+# promotes until clean runs out, and fails the rest. So hold clean small and
+# refilled: watermarks 64/1 turn the engine on at clean < 1 and off at 64, and
+# 64 sectors refill in ~3 s against a minimum T of 5 s.
+#
+# Cost, stated rather than hidden: about 64 pages promoted per pass, so ~2-3%
+# of a 141k-page working set across the whole ladder. The script reports the
+# running total per T so it can be checked rather than assumed.
 setw(){ echo "$1" > $PAR/erase_high_water; echo "$2" > $PAR/erase_low_water; }
 E0=$(cat $PAR/erase_high_water); E1=$(cat $PAR/erase_low_water)
-setw 0 0
-CL=$(ps_ clean)
-echo "  priming: $CL clean sectors to consume before measuring"
-setp scan_interval_ms 1000
-for i in $(seq 1 120); do
-    c=$(ps_ clean)
-    [ "${c:-0}" -le 4 ] && break
-    [ $(( i % 20 )) -eq 0 ] && echo "    clean $c"
-    sleep 1
-done
-echo "  primed: clean $(ps_ clean), $(gs moved_to_ltram) promoted in total"
+setw 64 1
+echo "  clean held at 64 (engine on below 1); expect ~64 promotions per pass"
+sleep 10
+echo "  clean now $(ps_ clean), $(gs moved_to_ltram) promoted so far"
 
 for T in ${LADDER//,/ }; do
     kill -0 $BG 2>/dev/null || { echo "  !! workload exited"; break; }
