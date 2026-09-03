@@ -1,0 +1,6 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd,freed_pct
+llama.cpp (tinyllama 1.1B),60,194971,100.00,6.30,2,smaps_referenced,0.00,0.08,0.00
+llama.cpp (tinyllama 1.1B),120,194971,100.00,6.09,2,smaps_referenced,0.00,0.06,0.00
+llama.cpp (tinyllama 1.1B),180,194971,100.00,6.03,2,smaps_referenced,0.00,0.10,0.00
+llama.cpp (tinyllama 1.1B),300,194971,100.00,5.97,2,smaps_referenced,0.00,0.16,0.00
+llama.cpp (tinyllama 1.1B),600,194971,100.00,5.44,2,smaps_referenced,0.00,0.25,0.00

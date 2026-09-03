@@ -1,0 +1,6 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd,freed_pct
+pagerank (kron22),60,142634,100.00,0.57,2,smaps_referenced,0.00,0.00,0.00
+pagerank (kron22),120,142634,100.00,0.57,2,smaps_referenced,0.00,0.00,0.00
+pagerank (kron22),180,142634,100.00,0.57,2,smaps_referenced,0.00,0.00,0.00
+pagerank (kron22),300,142634,100.00,0.57,2,smaps_referenced,0.00,0.00,0.00
+pagerank (kron22),600,142634,100.00,0.57,2,smaps_referenced,0.00,0.00,0.00

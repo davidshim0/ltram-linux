@@ -1,0 +1,6 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd,freed_pct
+bfs (kron22),60,139006,98.44,0.37,2,smaps_referenced,1.56,0.23,1.56
+bfs (kron22),120,139006,97.52,0.00,2,smaps_referenced,0.63,0.00,1.90
+bfs (kron22),180,139006,97.52,0.00,2,smaps_referenced,0.63,0.00,0.00
+bfs (kron22),300,139006,97.51,0.00,2,smaps_referenced,0.62,0.00,2.49
+bfs (kron22),600,139006,96.92,0.00,2,smaps_referenced,0.04,0.00,2.49
