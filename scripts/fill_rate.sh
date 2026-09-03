@@ -20,6 +20,12 @@ MM=$REAL_HOME/matmul; KO=$REAL_HOME/nor_eci/nor_eci_fulltest_ltram.ko
 OUT=${OUT:-/var/lib/ltram/selftest/fill-rate.csv}
 PROG=${PROG:-/var/lib/ltram/selftest/fill-progress.csv}
 TARGET=${TARGET:-16384}          # pages to migrate per interval; 16384 = 64 MiB
+# Headroom, so the allocator is never starved. Provisioning exactly TARGET
+# clean sectors for a TARGET-page fill means the last migrations find nothing
+# free, and with the engine off nothing refills. Measured: the rate held at a
+# flat 38.5/s for 15,420 of 16,384 pages and then collapsed to 0.24/s for the
+# remaining 964. That cliff was the instrument, not the device.
+HEAD=${HEAD:-8192}
 NN=${NN:-5793}                   # reader: 128 MiB, so candidates never run short
 
 w(){  awk -v k="$1" '$1==k{print $2; exit}' $DBG/wear; }
@@ -57,7 +63,7 @@ mkdir -p "$(dirname "$OUT")"
 echo "interval_ms,wear_days,pages,elapsed_s,rate_per_s,first_half_per_s,second_half_per_s" > "$OUT"
 echo "interval_ms,pages_done,elapsed_s" > "$PROG"
 
-recycle $TARGET || { echo "!! cannot get $TARGET clean sectors"; exit 1; }
+recycle $(( TARGET + HEAD )) || { echo "!! cannot get $((TARGET+HEAD)) clean sectors"; exit 1; }
 setw 0 0                          # engine OFF: this measures migration, not recycling
 setp promote_batch 1; setp wear_governor 1
 
@@ -71,7 +77,7 @@ echo "  reader pid $PID, $(( NN * NN * 4 / 1048576 )) MiB; filling $TARGET pages
 
 for target in 24 20 9 4 1; do
     kill -0 $BG 2>/dev/null || { echo "!! reader died"; break; }
-    recycle $TARGET || { echo "  !! not enough clean for ${target}ms, stopping"; break; }
+    recycle $(( TARGET + HEAD )) || { echo "  !! not enough clean for ${target}ms, stopping"; break; }
     setw 0 0
 
     CL=$(w cycles_left)
@@ -94,12 +100,12 @@ for target in 24 20 9 4 1; do
         [ -z "$half" ] && [ "$done_" -ge $(( TARGET / 2 )) ] && half=$el
         [ "$done_" -ge "$TARGET" ] && break
         kill -0 $BG 2>/dev/null || break
-        awk -v e="$el" 'BEGIN{exit !(e > 3600)}' && { echo "    !! 1h timeout"; break; }
+        awk -v e="$el" -v m="${TIMEOUT:-7200}" 'BEGIN{exit !(e > m)}' && { echo "    !! ${TIMEOUT:-7200}s timeout at $done_/$TARGET"; break; }
     done
     EL=$(awk -v a="$t0" -v b="$(date +%s.%N)" 'BEGIN{printf "%.2f", b-a}')
     R=$(awk -v n="$done_" -v e="$EL" 'BEGIN{printf "%.2f", n/e}')
-    H1=$(awk -v n="$TARGET" -v h="${half:-0}" 'BEGIN{printf "%.2f", h>0? (n/2)/h : 0}')
-    H2=$(awk -v n="$TARGET" -v h="${half:-0}" -v e="$EL" 'BEGIN{printf "%.2f", (e-h)>0? (n/2)/(e-h) : 0}')
+    H1=$(awk -v n="$TARGET" -v h="${half:-0}" 'BEGIN{printf "%.2f", (h>0 ? (n/2)/h : 0)}')
+    H2=$(awk -v n="$TARGET" -v h="${half:-0}" -v e="$EL" 'BEGIN{printf "%.2f", ((e-h)>0 ? (n/2)/(e-h) : 0)}')
     echo "$IV,$wd,$done_,$EL,$R,$H1,$H2" >> "$OUT"
     printf "    %s pages in %ss = %s/s   (first half %s/s, second %s/s)\n" \
            "$done_" "$EL" "$R" "$H1" "$H2"
