@@ -15,6 +15,12 @@ R="$(cd "$(dirname "$0")/.." && pwd)"
 # On z08 the workloads are under /scratch, not in the repo: root is 4.4 GB with
 # ~300 MB free and the graph alone is 522 MB.
 W="${LTRAM_W:-$R/workloads}"
+# redis is at workloads/redis-src on ba8 and workloads/redis on z08, because
+# the two build scripts clone it under different names. Resolve it.
+REDIS=""
+for d in "$W/redis-src" "$W/redis"; do
+    [ -x "$d/src/redis-server" ] && { REDIS="$d/src/redis-server"; break; }
+done
 OUT="${DECAY_OUT:-$R/baselines/$(date +%y%m%d)_census/decay}"; mkdir -p "$OUT"
 LADDER="${LADDER:-5,10,20,30,45,60,90,120,180,240,300,360,480,600}"
 PASSES="${PASSES:-3}"
@@ -77,11 +83,14 @@ kv(){                         # kv <label> <file> <proto> <port> <server cmd...>
 }
 if have redis; then say "redis"
   kv "redis (95/5 zipfian, $RATE ops/s)" redis redis 6379 \
-     "$W/redis-src/src/redis-server" --save '' --appendonly no --protected-mode no
+     "${REDIS:-$W/redis-src/src/redis-server}" --save '' --appendonly no --protected-mode no
 fi
 if have memcached; then say "memcached"
   kv "memcached (95/5 zipfian, $RATE ops/s)" memcached memcached 11211 \
      "$W/memcached/memcached" -m 4096 -t 8 -u nobody
 fi
 say "plotting"
-"$R/scripts/plot_census.py" "$OUT"/*.csv -o "$OUT"
+if ! "$R/scripts/plot_census.py" "$OUT"/*.csv -o "$OUT" 2>/dev/null; then
+    echo "  no matplotlib here -- CSVs are in $OUT, plot them on the build host:"
+    echo "    ./scripts/plot_census.py <copied csvs> -o docs/figures"
+fi
