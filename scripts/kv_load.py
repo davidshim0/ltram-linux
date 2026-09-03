@@ -24,7 +24,10 @@ ap.add_argument("--keys", type=int, default=700_000)
 ap.add_argument("--value", type=int, default=1400)
 ap.add_argument("--read-ratio", type=float, default=0.95)
 ap.add_argument("--threads", type=int, default=8)
-ap.add_argument("--zipf", type=float, default=0.99)
+ap.add_argument("--zipf", type=float, default=0.99,
+                help="zipfian theta; YCSB's default is 0.99")
+ap.add_argument("--dist", choices=("zipfian", "uniform"), default="zipfian",
+                help="key distribution. YCSB's requestdistribution.")
 ap.add_argument("--ops-per-sec", type=float, default=0,
                 help="total offered rate across threads; 0 = unthrottled. "
                      "Unthrottled rewrites the whole keyspace in minutes, "
@@ -97,7 +100,7 @@ class Zipf:
         return min(self.n - 1,
                    int(self.n * ((self.eta * u - self.eta + 1.0) ** self.alpha)))
 
-ZIPF = Zipf(a.keys, a.zipf)
+ZIPF = Zipf(a.keys, a.zipf) if a.dist == "zipfian" else None
 
 def mix(seed):
     rnd = random.Random(seed)
@@ -113,7 +116,7 @@ def mix(seed):
             d = nxt - time.time()
             if d > 0: time.sleep(d)
             elif d < -1.0: nxt = time.time()      # fell behind; do not burst
-        k = ZIPF.next(rnd)
+        k = ZIPF.next(rnd) if ZIPF else rnd.randrange(n)
         try:
             if rnd.random() < a.read_ratio: getk(s, f, k)
             else: setk(s, f, k)
