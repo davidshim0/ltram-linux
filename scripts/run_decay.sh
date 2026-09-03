@@ -62,9 +62,17 @@ if have bfs; then say "bfs"
   sleep 45; go "bfs (kron22)" bfs $P; kill $P 2>/dev/null; sleep 3
 fi
 if have llama; then say "llama.cpp"
-  "$W/llama.cpp/build/bin/llama-cli" -m "$W/models/tinyllama-1.1b-q4.gguf" \
+  # --simple-io and </dev/null, both needed. Newer llama-cli defaults to an
+  # interactive REPL that writes to /dev/tty DIRECTLY, so >/dev/null 2>&1 does
+  # not silence it -- the generated text lands in the operator's terminal and
+  # interleaves with the census output. --simple-io drops the terminal UI,
+  # closing stdin stops it waiting for input, and setsid removes the
+  # controlling terminal so a /dev/tty write has nowhere to go.
+  setsid "$W/llama.cpp/build/bin/llama-cli" -m "$W/models/tinyllama-1.1b-q4.gguf" \
      -t $THREADS -c 4096 -n -1 -st --context-shift --ignore-eos --no-warmup \
-     -p Write_a_long_technical_report_about_memory_systems. >/dev/null 2>&1 & P=$!
+     --simple-io --no-display-prompt \
+     -p Write_a_long_technical_report_about_memory_systems. \
+     </dev/null >/dev/null 2>&1 & P=$!
   sleep 60; go "llama.cpp (tinyllama 1.1B)" llama $P; kill $P 2>/dev/null; sleep 3
 fi
 kv(){                         # kv <label> <file> <proto> <port> <server cmd...>
