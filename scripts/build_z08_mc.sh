@@ -15,6 +15,15 @@
 # so autotools never runs and the problem disappears. It also pins the exact
 # release rather than whatever the branch tip is.
 set -u
+# NO SUDO. This writes only to /scratch, which is NFS with root_squash: as
+# root, tar cannot restore the archive's ownership and the extraction fails
+# outright. Being privileged makes this script fail where an ordinary user
+# succeeds.
+if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    echo "!! do not run this under sudo -- /scratch is NFS root_squash."
+    echo "   re-running as $SUDO_USER"
+    exec sudo -u "$SUDO_USER" "$0" "$@"
+fi
 W=/scratch/hushim/workloads
 J=$(( $(nproc) > 24 ? 24 : $(nproc) ))
 L="$W/.logs"; mkdir -p "$L" "$W"
@@ -26,9 +35,9 @@ MC=memcached-1.6.21
 
 echo "== libevent (tarball)"
 if [ -f "$W/libevent/install/lib/libevent.a" ]; then ok "libevent (cached)"; else
-  rm -rf "$W/libevent" "$W/$LE"
+  rm -rf "$W/libevent" "$W/$LE" "$W/$LE.tar.gz"
   ( cd "$W" && curl -fsSL -O https://github.com/libevent/libevent/releases/download/release-2.1.12-stable/$LE.tar.gz \
-    && tar xzf $LE.tar.gz && mv $LE libevent && rm -f $LE.tar.gz
+    && tar --no-same-owner -xzf $LE.tar.gz && mv $LE libevent && rm -f $LE.tar.gz
     cd "$W/libevent" && ./configure --prefix="$W/libevent/install" \
         --disable-openssl --disable-shared --enable-static \
     && make -j$J && make install ) >"$L/libevent.log" 2>&1 \
@@ -37,9 +46,9 @@ fi
 
 echo "== memcached (tarball)"
 if [ -x "$W/memcached/memcached" ]; then ok "memcached (cached)"; else
-  rm -rf "$W/memcached" "$W/$MC"
+  rm -rf "$W/memcached" "$W/$MC" "$W/$MC.tar.gz"
   ( cd "$W" && curl -fsSL -O https://www.memcached.org/files/$MC.tar.gz \
-    && tar xzf $MC.tar.gz && mv $MC memcached && rm -f $MC.tar.gz
+    && tar --no-same-owner -xzf $MC.tar.gz && mv $MC memcached && rm -f $MC.tar.gz
     cd "$W/memcached" && ./configure --with-libevent="$W/libevent/install" \
     && make -j$J ) >"$L/memcached.log" 2>&1 \
     && ok memcached || bad memcached "$L/memcached.log"
