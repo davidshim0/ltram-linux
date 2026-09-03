@@ -13,7 +13,10 @@
 # the memory controller, and the census attributes pages by pid, so a shared
 # file page would be counted for whichever process was looked at first.
 set -u
-R="$(cd "$(dirname "$0")/.." && pwd)"; W="$R/workloads"
+R="$(cd "$(dirname "$0")/.." && pwd)"
+# On z08 the workloads are under /scratch, not in the repo: root is 4.4 GB with
+# ~300 MB free and the graph alone is 522 MB.
+W="${LTRAM_W:-$R/workloads}"
 MODE=pilot
 case "${1:-}" in --pilot) shift;; --full) MODE=full; shift;; esac
 case "$MODE" in

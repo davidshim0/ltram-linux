@@ -11,7 +11,10 @@
 # would pay the load and settle each time and measure a different cache state
 # each time.
 set -u
-R="$(cd "$(dirname "$0")/.." && pwd)"; W="$R/workloads"
+R="$(cd "$(dirname "$0")/.." && pwd)"
+# On z08 the workloads are under /scratch, not in the repo: root is 4.4 GB with
+# ~300 MB free and the graph alone is 522 MB.
+W="${LTRAM_W:-$R/workloads}"
 OUT="${DECAY_OUT:-$R/baselines/$(date +%y%m%d)_census/decay}"; mkdir -p "$OUT"
 LADDER="${LADDER:-5,10,20,30,45,60,90,120,180,240,300,360,480,600}"
 PASSES="${PASSES:-3}"
