@@ -48,7 +48,9 @@ P0=$(cat $PAR/scan_ptes_per_pass); B0=$(cat $PAR/promote_batch)
 cleanup(){ [ -n "${BG:-}" ] && kill $BG 2>/dev/null
            echo 0 > /sys/kernel/ltram/target_pid 2>/dev/null
            setp wear_governor $G0; setp scan_interval_ms $S0
-           setp scan_ptes_per_pass $P0; setp promote_batch $B0; }
+           setp scan_ptes_per_pass $P0; setp promote_batch $B0
+           [ -n "${E0:-}" ] && { echo "$E0" > $PAR/erase_high_water
+                                 echo "$E1" > $PAR/erase_low_water; } }
 trap cleanup EXIT INT TERM
 
 case "$WL" in
@@ -70,10 +72,39 @@ echo "  $WL pid $BG, ~$RSS resident pages"
 # a sweep that needs three passes to come back around observes a 3T window.
 setp scan_ptes_per_pass $(( RSS + RSS / 2 ))
 setp wear_governor 0            # governor off -> scan_interval_ms IS the interval
-setp promote_batch 1            # cannot be 0: the scan loop bound is
-                                # ctx->nr < promote_batch, so 0 disables the walk.
-                                # 1 page per pass is <0.01% perturbation.
+# promote_batch bounds the WALK, not just the promotions:
+#
+#   for (; addr < end && ctx->nr < promote_batch
+#          && ctx->examined < scan_ptes_per_pass; ...)
+#
+# ctx->nr increments on every page CHOSEN, so promote_batch=1 stops the walk at
+# the first clean page it finds. On a 94%-clean workload that is after one or
+# two PTEs, and the first run of this script duly reported write-cold over
+# 2-page samples: 83.04% +/- 32.83.
+#
+# So it has to be larger than the number of clean pages in a sweep. The way to
+# have that without promoting them is to leave NO clean sectors: candidates are
+# still chosen and walked past, and every migration fails.
+setp promote_batch $(( RSS * 2 ))
 echo $BG > /sys/kernel/ltram/target_pid
+
+# Prime: consume whatever clean sectors exist, so the measured passes promote
+# nothing. Engine off, so none come back. Costs one short burst of real
+# promotions -- reported, not hidden -- and everything after it is inert.
+setw(){ echo "$1" > $PAR/erase_high_water; echo "$2" > $PAR/erase_low_water; }
+E0=$(cat $PAR/erase_high_water); E1=$(cat $PAR/erase_low_water)
+setw 0 0
+CL=$(sudo -n awk '/^clean/{print $2}' $DBG/pagestate 2>/dev/null || echo 0)
+echo "  priming: $CL clean sectors to consume before measuring"
+setp scan_interval_ms 1000
+for i in $(seq 1 120); do
+    c=$(awk '/^clean/{print $2}' $DBG/pagestate)
+    [ "${c:-0}" -le 4 ] && break
+    [ $(( i % 20 )) -eq 0 ] && echo "    clean $c"
+    sleep 1
+done
+echo "  primed: clean $(awk '/^clean/{print $2}' $DBG/pagestate), "\
+     "$(gs moved_to_ltram) pages promoted in total"
 
 for T in ${LADDER//,/ }; do
     kill -0 $BG 2>/dev/null || { echo "  !! workload exited"; break; }
@@ -85,7 +116,9 @@ for T in ${LADDER//,/ }; do
         pe=$(gs ptes_examined); pw=$(gs was_written)
         sleep $T
         de=$(( $(gs ptes_examined) - pe )); dw=$(( $(gs was_written) - pw ))
-        [ "$de" -gt 0 ] && vals+=( "$(awk -v a="$dw" -v b="$de" 'BEGIN{printf "%.2f", 100*(1-a/b)}')" )
+        # A pass that examined a handful of PTEs is not a sample of anything.
+        # 1000 keeps the per-pass ratio meaningful without demanding a full sweep.
+        [ "$de" -ge 1000 ] && vals+=( "$(awk -v a="$dw" -v b="$de" 'BEGIN{printf "%.2f", 100*(1-a/b)}')" )
     done
     e1=$(gs ptes_examined); w1=$(gs was_written); m1=$(gs moved_to_ltram)
     read M SD < <(printf '%s\n' "${vals[@]}" | awk '{v[n++]=$1; s+=$1}
