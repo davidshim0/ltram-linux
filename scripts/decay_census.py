@@ -57,6 +57,39 @@ else:
     sys.exit("need --pid or --cmd")
 
 label = a.label or (a.cmd.split()[0].split("/")[-1] if a.cmd else f"pid{pid}")
+
+# Soft-dirty is a SOFTWARE bit set by the write-fault handler, and only x86,
+# s390 and powerpc select HAVE_ARCH_SOFT_DIRTY. On arm64 clear_refs=4 is a
+# no-op: every page reads as never-written, write_cold comes out 100.00% with
+# sd 0.00, and the only thing that moves the column is pages disappearing.
+# That looked plausible enough on z08 to be reported as a result before anyone
+# checked. Refuse instead.
+def _soft_dirty_works():
+    import ctypes
+    buf = (ctypes.c_char * (16 * PAGE))()
+    for i in range(16):
+        buf[i * PAGE] = b"x"
+    base = ctypes.addressof(buf)
+    try:
+        open(f"/proc/{os.getpid()}/clear_refs", "w").write("4")
+    except Exception:
+        return False
+    for i in range(0, 16, 2):
+        buf[i * PAGE] = b"y"
+    hits = 0
+    with open(f"/proc/{os.getpid()}/pagemap", "rb") as fh:
+        fh.seek((base // PAGE) * 8)
+        raw = fh.read(16 * 8)
+    for i in range(len(raw) // 8):
+        e = int.from_bytes(raw[i * 8:(i + 1) * 8], "little")
+        if (e >> 63) & 1 and (e >> 55) & 1:
+            hits += 1
+    return hits > 0
+
+if not os.environ.get("SKIP_SOFT_DIRTY_CHECK") and not _soft_dirty_works():
+    sys.exit("soft-dirty is a no-op on this kernel (arm64 has no "
+             "HAVE_ARCH_SOFT_DIRTY): write_cold would read 100% for every "
+             "workload. Set SKIP_SOFT_DIRTY_CHECK=1 to measure cold only.")
 LAD = [int(x) for x in a.ladder.split(",")]
 HAVE_ROOT = os.geteuid() == 0
 acc_wc = {T: [] for T in LAD}
