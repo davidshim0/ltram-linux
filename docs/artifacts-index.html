@@ -1,0 +1,277 @@
+
+<title>LtRAM Dossier</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#FBFAF8; --panel:#FFFFFF; --sunk:#F3F1ED; --ink:#1C2024; --ink-2:#4A5358;
+  --ink-3:#7A838A; --rule:#DFDCD6; --rule-2:#EDEAE4;
+  --nor:#9E2F33; --dram:#1F5F7A; --warn:#8A6A1F; --ok:#2F6B4F;
+  --nor-wash:#9E2F3312; --dram-wash:#1F5F7A12; --warn-wash:#8A6A1F14;
+  --sans:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+  --serif:"IBM Plex Serif",Georgia,serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:68ch;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#14171A; --panel:#1B1F23; --sunk:#22272C; --ink:#E8E6E1; --ink-2:#B4BABE;
+  --ink-3:#858D93; --rule:#2E353B; --rule-2:#252B30;
+  --nor:#E0797D; --dram:#6FB4D2; --warn:#D6B15E; --ok:#78C4A0;
+  --nor-wash:#E0797D14; --dram-wash:#6FB4D214; --warn-wash:#D6B15E14;
+}}
+:root[data-theme="dark"]{
+  --ground:#14171A; --panel:#1B1F23; --sunk:#22272C; --ink:#E8E6E1; --ink-2:#B4BABE;
+  --ink-3:#858D93; --rule:#2E353B; --rule-2:#252B30;
+  --nor:#E0797D; --dram:#6FB4D2; --warn:#D6B15E; --ok:#78C4A0;
+  --nor-wash:#E0797D14; --dram-wash:#6FB4D214; --warn-wash:#D6B15E14;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:var(--sans);
+  font-size:16.5px;line-height:1.62;margin:0;padding:0 24px 96px;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:min(920px,100%);margin:0 auto}
+.measure{max-width:var(--measure)}
+header.doc{padding:56px 0 28px;border-bottom:1px solid var(--rule);margin-bottom:36px}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--ink-3);margin:0 0 14px}
+h1{font-family:var(--serif);font-weight:600;font-size:clamp(29px,4.4vw,42px);
+  line-height:1.16;letter-spacing:-.012em;text-wrap:balance;margin:0 0 14px}
+.standfirst{font-size:19px;line-height:1.55;color:var(--ink-2);max-width:var(--measure);margin:0}
+h2{font-family:var(--serif);font-weight:600;font-size:25px;line-height:1.25;
+  text-wrap:balance;margin:52px 0 6px;padding-top:22px;border-top:1px solid var(--rule-2)}
+h3{font-size:17.5px;font-weight:600;letter-spacing:-.005em;margin:30px 0 6px}
+h4{font-family:var(--mono);font-size:12.5px;font-weight:500;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--ink-3);margin:26px 0 8px}
+p,li{max-width:var(--measure)}
+p{margin:0 0 15px}
+ul,ol{margin:0 0 16px;padding-left:22px}li{margin:0 0 7px}
+a{color:var(--dram);text-decoration-thickness:1px;text-underline-offset:2px}
+a:focus-visible,button:focus-visible{outline:2px solid var(--dram);outline-offset:3px;border-radius:3px}
+code{font-family:var(--mono);font-size:.88em;background:var(--sunk);
+  padding:1px 5px;border-radius:3px}
+pre{font-family:var(--mono);font-size:13px;line-height:1.55;background:var(--sunk);
+  border:1px solid var(--rule-2);border-radius:8px;padding:14px 16px;overflow-x:auto;margin:0 0 18px}
+pre code{background:none;padding:0}
+.tw{overflow-x:auto;margin:0 0 20px;border:1px solid var(--rule);border-radius:9px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{text-align:left;padding:9px 13px;border-bottom:1px solid var(--rule-2);vertical-align:top}
+th{font-family:var(--mono);font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--ink-3);background:var(--sunk);white-space:nowrap}
+td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+tbody tr:last-child td{border-bottom:none}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:11px;
+  padding:19px 21px;margin:0 0 18px}
+.card>:last-child{margin-bottom:0}
+.note{border-left:3px solid var(--ink-3);background:var(--sunk);border-radius:0 8px 8px 0;
+  padding:15px 18px;margin:0 0 20px}
+.note>:last-child{margin-bottom:0}
+.note.ours{border-left-color:var(--dram);background:var(--dram-wash)}
+.note.risk{border-left-color:var(--warn);background:var(--warn-wash)}
+.note.kill{border-left-color:var(--nor);background:var(--nor-wash)}
+.note .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--ink-3);display:block;margin-bottom:7px}
+.grid{display:grid;gap:15px;margin:0 0 20px}
+@media(min-width:660px){.grid.two{grid-template-columns:1fr 1fr}}
+.tag{display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
+  text-transform:uppercase;padding:3px 8px;border-radius:20px;border:1px solid var(--rule);
+  color:var(--ink-3);margin:0 5px 5px 0;white-space:nowrap}
+.tag.hi{border-color:var(--nor);color:var(--nor);background:var(--nor-wash)}
+.tag.med{border-color:var(--warn);color:var(--warn);background:var(--warn-wash)}
+.tag.lo{border-color:var(--ok);color:var(--ok)}
+.refs{font-size:14px;color:var(--ink-2)}
+.refs li{margin-bottom:11px;max-width:var(--measure)}
+.refs .venue{font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
+.crumb{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin:0 0 30px}
+.crumb a{color:var(--ink-3)}
+footer.doc{margin-top:64px;padding-top:22px;border-top:1px solid var(--rule);
+  font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<style>
+.idx{display:grid;gap:13px;margin:0 0 26px}
+@media(min-width:700px){.idx{grid-template-columns:1fr 1fr}}
+.idx a.item{display:block;text-decoration:none;color:inherit;background:var(--panel);
+  border:1px solid var(--rule);border-radius:11px;padding:16px 18px;transition:border-color .15s}
+.idx a.item:hover{border-color:var(--dram)}
+.idx .t{font-family:var(--serif);font-weight:600;font-size:18px;margin:0 0 5px;color:var(--ink)}
+.idx .d{font-size:14px;color:var(--ink-2);margin:0;max-width:none}
+.sec{font-family:var(--mono);font-size:11.5px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--ink-3);margin:34px 0 12px;padding-bottom:7px;border-bottom:1px solid var(--rule-2)}
+.hdr-num{font-family:var(--mono);font-size:13px;color:var(--nor);font-weight:500}
+</style>
+<div class="wrap">
+<header class="doc">
+<p class="eyebrow">Overnight research dossier &middot; 2026-08-31 &middot; devices rechecked 2026-09-01</p>
+<h1>LtRAM: What the Paper Still Has to Answer</h1>
+<p class="standfirst">Ten deep chapters &mdash; on the open questions, on last night’s measurement, and on who published nearby, each grounded in searched literature rather than recall, and each measured against what this hardware actually does. Three findings below change the shape of the paper. Start with those.</p>
+</header>
+
+<div class="note ours">
+<span class="lbl">Adversarial review &mdash; complete for four chapters</span>
+<p>Reviewed: <a href="https://claude.ai/code/artifact/57241ab6-4212-41c6-b8b6-988d9daca8ed">What LtRAM Costs</a>, <a href="https://claude.ai/code/artifact/35309823-89e7-4830-a267-6d8751bb6d96">Lazy PTE Remapping</a>, <a href="https://claude.ai/code/artifact/19a1140a-29cf-4e9a-ad26-fd75aceab9c2">Workload Suite</a>, <a href="https://claude.ai/code/artifact/9cdf9ab7-91d1-4cd7-8d77-c4cf3956956f">The Constrained Comparison</a>. Each review is <em>inside</em> its chapter under an &ldquo;Adversarial review&rdquo; heading, so one page gives you the argument and its rebuttal together. <strong>All four found real errors</strong>, and three changed their chapter&rsquo;s recommendation. The unreviewed chapters carry only their author&rsquo;s own verified / could-not-verify flags &mdash; treat those as single-sourced.</p>
+</div>
+
+<div class="note kill">
+<span class="lbl">Found while you were asleep &mdash; check this before writing an introduction</span>
+<p><strong>ITME</strong> (SK Hynix, arXiv 2606.12556, June 2026) is TB-scale <em>byte-addressable</em> non-volatile capacity expansion for model weights, evaluated on real silicon plus an <strong>FPGA prototype</strong>. It is the closest published work to this project and the most likely scoop. Separately, <strong>&ldquo;SSD Offloading&hellip;Considered Harmful in Energy Efficiency&rdquo;</strong> (IEEE CAL 2025) independently confirms the energy inversion in the cost chapter, in citable peer-reviewed form aimed at exactly this class of design &mdash; and <strong>VMware vSphere 9.0</strong> ships memory tiering over NVMe today, so the novelty sentence cannot be &ldquo;flash as a memory tier&rdquo;. <a href="https://claude.ai/code/artifact/e59aa650-b6ad-4f99-8f4a-6ccd2f74cf9a">All three, with the landscape and what survives</a>.</p>
+</div>
+
+<div class="note kill">
+<span class="lbl">Correction that touches every promotion number in the project</span>
+<p><strong>&ldquo;142 pages/s&rdquo; is an accelerated-wear figure, and nothing said so &mdash; including me, repeatedly, all session.</strong> Every sweep script sets <code>wear_days=379</code> so a run finishes in an hour instead of four. That gives the scanner a 5&nbsp;ms tick. The <em>shipped</em> default is <code>wear_days=1826</code> &mdash; five years &mdash; which gives a 24&nbsp;ms tick and <strong>37.0 pages/s</strong>. That number has been sitting in the first row of our own <code>promote-rate.csv</code> the entire time: <code>1822,24,37.0,37.0</code>.</p>
+<p>It is a legitimate experimental acceleration, not an error &mdash; but it has to be declared, and one derived claim does change. The erase-gated rate of 10.6/s is limited by <em>erase supply</em>, not by the governor, so it barely moves with <code>wear_days</code>. The <strong>13.4&times;</strong> gap between clean-pool and gated promotion is therefore partly an artifact of the acceleration: at the real five-year budget it is 37/10.6, about <strong>3.5&times;</strong>. fig8&rsquo;s note now states both.</p>
+<p>The reviewer&rsquo;s sharper point is what this does to the planned selectivity experiment: at 37/s with <code>promote_batch=1</code>, a page is re-sighted at roughly quarter-hour intervals while PageRank rewrites its rank vectors every few milliseconds. The rank vectors would be excluded <em>by the sweep period, not by the classifier</em> &mdash; so any policy at all scores near-perfectly and the test measures nothing.</p>
+</div>
+
+<div class="note ours">
+<span class="lbl">The premise, answered &mdash; and it hands you a thesis</span>
+<p><strong>At the cell level, &ldquo;cheaper per bit than DRAM&rdquo; and &ldquo;byte-addressable&rdquo; are close to a contradiction</strong>, and for a worse reason than expected. 3D XPoint had a 4F&sup2; cell &mdash; roughly <em>half</em> a DRAM cell&rsquo;s area &mdash; and still cost more per bit to manufacture for its entire commercial life, because cross-point arrays need a separate lithography step <em>per deck</em>. Stacking stops paying at about four layers, against 3D NAND&rsquo;s 232&ndash;400 layers etched in one hole. That is array topology, not the storage element, so cross-point MRAM and ReRAM inherit the same ceiling.</p>
+<p><strong>At the system level the contradiction dissolves, and it is already shipping.</strong> Samsung&rsquo;s CMM-H puts 1&nbsp;TB of TLC NAND behind a 16&nbsp;GB DRAM cache on CXL. Linux sees byte-addressable memory at <strong>~20&times; lower $/GB than DDR5</strong> at <strong>5.9&times; DRAM read latency</strong> &mdash; strikingly close to this prototype&rsquo;s 4.6&times;. But it falls off a <strong>5.6&times; application cliff</strong> when the working set outgrows the cache, and the measured cause is <strong>8-way conflict misses, not the media</strong>.</p>
+<p><strong>That failure mode is the paper.</strong> It is a <em>placement</em> failure. An 8-way LRU inside a controller cannot fix it. A kernel that knows read-mostly from write-hot can. The premise moves off the cell and onto the composition &mdash; which needs no new physics, and is sampling now (Kioxia XL1, August 2026). <a href="https://claude.ai/code/artifact/26abc58f-71b9-4aa3-ae86-7d23238983d1">The full argument</a>, with the DRAM scaling series behind it: price decline fell from &minus;34%/yr (1990&ndash;2010) to <strong>&minus;7.1%/yr (2012&ndash;2024)</strong>, and the DRAM&divide;NAND price ratio went from 4.9&times; to <strong>43&times;</strong>.</p>
+</div>
+
+<div class="note risk">
+<span class="lbl">Three things to delete on the strength of that chapter</span>
+<p>Any implication that <strong>the NOR part is cheap</strong> &mdash; it is ~$670&ndash;716/GB, about 470&times; DRAM. Any argument from <strong>2026 DRAM prices</strong> &mdash; that spike is HBM wafer allocation, not a scaling trend, and a reviewer who knows the market will say so. And, most importantly for how last night&rsquo;s results get written up: <strong>stop saying the erase-gating and millisecond-tail measurements characterise &ldquo;LtRAM&rdquo;. They characterise NOR.</strong> A DRAM-cached NAND composition has no 16.4&nbsp;ms erase in the read path at all, so fig8 and fig9 are properties of the research vehicle, not of the architecture being proposed.</p>
+</div>
+
+<div class="note kill">
+<span class="lbl">The head-to-head has been run before, and it lost</span>
+<p><strong>Kida et&nbsp;al., HPC Asia 2025</strong> ran the byte-addressable-media-versus-swap comparison and found <strong>swap better on 9 of 14 benchmarks</strong>. And <strong>FlatFlash (ASPLOS&rsquo;19) &sect;5.1 is literally titled &ldquo;Byte-Addressable SSD vs. Paging Mechanism&rdquo;</strong> &mdash; its promotion policy already counts cache-lines-touched-per-page, which is the crossover model the chapter proposed as new. The novelty sentence &ldquo;nobody has run this head-to-head&rdquo; does not survive. What does survive is one clause of it: <em>real non-DRAM media</em>, on a coherent interconnect, rather than emulation.</p>
+<p><strong>And our own measurement rules out the outcome the chapter was hoping for.</strong> It nominates &ldquo;we win on tail latency&rdquo; as the most likely good result. Last night&rsquo;s data says p99.999 of a NOR read with the engine active is <strong>16.8&ndash;33.6&nbsp;ms</strong>, against tens of microseconds for an NVMe major fault. On tail, we lose. Any win has to come from throughput or from capacity, and the experiment should be designed to detect those rather than the tail.</p>
+<p>The review also supplies two things the design was missing: <strong>memory hot-remove</strong> as a sixth budget mechanism &mdash; config-verified, and <code>offline_pages()</code> calls <code>init_per_zone_wmark_min()</code>, so it gets watermarks right by construction, the exact property used to disqualify ballast &mdash; and an <strong>equal-total-capacity control arm</strong>, without which even a win is confounded with &ldquo;that arm had 234&nbsp;MiB more memory&rdquo;.</p>
+</div>
+
+<div class="note risk">
+<span class="lbl">A kernel fact that changes how the cgroup arm behaves</span>
+<p>The chapter rejected cgroup limiting for the wrong reason. <code>build_zonerefs_node()</code> carries an explicit <code>if (zone_type == ZONE_LTRAM) continue;</code> &mdash; the residency invariant, enforced by construction at <code>mm/page_alloc.c:5004</code>. Promoted folios <em>are</em> memcg-charged (the charge transfers through <code>folio_migrate_flags()</code> &rarr; <code>mem_cgroup_migrate()</code>), but memcg reclaim can never reach them because reclaim walks zonelists and this zone is in none. They are charged <strong>and unreclaimable</strong>, so a cgroup-limited arm <strong>OOM-kills rather than mis-reclaims</strong>. Right conclusion, wrong mechanism &mdash; and the failure mode matters when you run it.</p>
+</div>
+
+<p class="sec">Read these three first</p>
+
+<div class="note ours">
+<span class="lbl">1 &mdash; The prototype is not the product, and the paper has to say so</span>
+<p>I first wrote this as &ldquo;the cost argument cannot be defended&rdquo;, and the reviewer agreed with me. <strong>We were both attacking a claim the paper does not make.</strong> The Micron part is $671&ndash;717/GB against $35.58/GB for DDR5 RDIMM, and at identical density SLC NAND is 40&times; cheaper than our octal NOR &mdash; all true, all already known, and all beside the point. The chip is the only byte-addressable non-volatile memory that could be attached to a coherent interconnect and driven from Linux today. It is a research vehicle.</p>
+<p>The claim is conditional: DRAM cost-per-bit scaling has stalled, some NVM class has more headroom, and if such a device can be attached as byte-addressable memory then an OS mechanism placing read-mostly pages on it displaces DRAM capacity. That reframing also retires two objections the review raised &mdash; the 27.8&nbsp;mW FPGA/ECI power budget and the 256&nbsp;MB density ceiling are facts about <em>this prototype</em>, not about the class.</p>
+<p><strong>What survives and matters:</strong> a reviewer will ask &ldquo;isn&rsquo;t NOR more expensive than DRAM?&rdquo;, and the paper needs a deliberate paragraph answering it rather than silence. And the review found real arithmetic errors of mine that stand regardless of framing &mdash; a misattributed Pond reference in the paragraph about citation hygiene, a typ-versus-max mix-up in the 133&times; retention ratio (7&ndash;33&times; worst case), and an energy inversion that is 6&ndash;8&times; rather than 2.6&times;. <a href="https://claude.ai/code/artifact/57241ab6-4212-41c6-b8b6-988d9daca8ed">The chapter</a>, rescoped, with its review.</p>
+<p><strong>The question that now actually decides the premise</strong> is whether &ldquo;cheaper per bit than DRAM&rdquo; and &ldquo;byte-addressable at usable latency&rdquo; are compatible properties at all &mdash; the cheap memories are cheap <em>because</em> they are dense and block-erased. That chapter is being researched now.</p>
+</div>
+
+<div class="note risk">
+<span class="lbl">2 &mdash; llama.cpp will measure zero promotions as currently planned</span>
+<p>llama.cpp mmaps GGUF weights, so they are <strong>file-backed</strong>, and the policy rejects every non-anon folio &mdash; the kernel comment records an uncorrectable SError from a promoted file-backed folio as the reason. Passing <code>--no-mmap</code> routes weights through <code>ggml_aligned_malloc</code> into anonymous memory, which is the only kind this policy touches. The in-tree workload profile says the opposite. Separately, the checked-in <code>pagerank</code> binary and <code>setup-llama.sh</code> are both <strong>x86-64</strong> &mdash; the workload layer has never run on this board. <a href="https://claude.ai/code/artifact/19a1140a-29cf-4e9a-ad26-fd75aceab9c2">Workload chapter</a>, which argues GAPBS PageRank should be first instead, at 2&ndash;3 days.</p>
+</div>
+
+<div class="note ours">
+<span class="lbl">3 &mdash; Overnight measurement: there is no read-while-erase</span>
+<p>Per-read timing with sub-octave buckets, four conditions, 291 million timed reads. <strong>95&ndash;97% of stalls land inside 15.7&ndash;18.9 ms &mdash; exactly one erase (16.4 ms).</strong> A read that collides with an erase waits out the whole erase; it is not partially overlapped. The DRAM control puts the measurement&rsquo;s own noise floor at 115&nbsp;&micro;s with one read in 158 million above 1&nbsp;ms, so this is the device, not the scheduler. Full chapter: <a href="https://claude.ai/code/artifact/7f12bd84-d104-41b1-80ea-282b6b5596fa">Read Latency Under Erasing</a>, with the figure, the noise floor, and two methodology traps that nearly produced wrong conclusions.</p>
+</div>
+
+<div class="note risk">
+<span class="lbl">One-line fix found by review, worth doing before the next campaign</span>
+<p><code>inline_erase</code> defaults to <strong>1</strong> in <code>nor_eci_fulltest.c:456</code>, but
+<strong>all twelve</strong> load paths in the tree pass <code>inline_erase=0</code>, and the module on the
+board right now reads <code>0</code>. So every measurement we have is sound. But a bare
+<code>insmod</code> &mdash; a fresh machine, a hand-run debug session &mdash; gets erase-before-every-program
+on top of the background worker&rsquo;s erase: <strong>two physical erases per counted increment, halving
+the five-year endurance budget, with nothing in the log to say so.</strong> Either make the default match
+how it is always actually loaded, or have the module announce its mode at load time.</p>
+</div>
+
+<p class="sec">The central claim &mdash; does LtRAM earn its place</p>
+<div class="idx">
+<a class="item" href="https://claude.ai/code/artifact/26abc58f-71b9-4aa3-ae86-7d23238983d1"><p class="t">The Byte-Addressable Bet</p><p class="d">Is cheap-per-bit compatible with byte-addressable? At the cell, nearly not. At the system, already shipping &mdash; and its failure mode is the thesis.</p></a>
+<a class="item" href="https://claude.ai/code/artifact/873f0391-c160-4e1a-8410-ca2f2698ed63"><p class="t">Attachable Memory 2026</p><p class="d">Which emerging parts are real enough to put behind the VU9P this year. The 4F&sup2; cross-point cell is STT-MRAM and it is an ISSCC demonstration; 3D NOR would drop in; Versal Premium Gen 2 ships 2H 2026. Checked against primary sources.</p></a>
+<a class="item" href="https://claude.ai/code/artifact/57241ab6-4212-41c6-b8b6-988d9daca8ed"><p class="t">What LtRAM Costs</p><p class="d">Verified prices and datasheet power. What dies, what survives, and the number to stop quoting.</p></a>
+<a class="item" href="https://claude.ai/code/artifact/9cdf9ab7-91d1-4cd7-8d77-c4cf3956956f"><p class="t">The Constrained Comparison</p><p class="d">LtRAM against swap at the same DRAM budget &mdash; the one experiment that decides whether there is a contribution. Includes why naive cgroup limiting does not model it.</p></a>
+<a class="item" href="https://claude.ai/code/artifact/ab5003ef-423a-4f91-a50c-99b0fd630aec"><p class="t">Read-Only Page-Seconds</p><p class="d">Formalising the opportunity, measuring it without perturbing it, and the honest counter-argument about why swap has not already captured it.</p></a>
+<a class="item" href="https://claude.ai/code/artifact/19a1140a-29cf-4e9a-ad26-fd75aceab9c2"><p class="t">Workload Suite</p><p class="d">What llama.cpp, Redis/YCSB, GAPBS and memcached each test, the ground-truth oracles for scoring placement, and what to run first.</p></a>
+</div>
+
+<p class="sec">Placement policy</p>
+<div class="idx">
+<a class="item" href="https://claude.ai/code/artifact/cdd78a7e-68b4-4e0c-b337-4e0a9cd44f7d"><p class="t">Placement Policy Space</p><p class="d">A taxonomy by signal, locus and timing &mdash; and where an online model actually earns its keep versus being reviewer bait.</p></a>
+<a class="item" href="https://claude.ai/code/artifact/35309823-89e7-4830-a267-6d8751bb6d96"><p class="t">Lazy PTE Remapping</p><p class="d">Copy now, repoint later. What deferred commitment buys, what it costs in endurance, and the one unmeasured function that decides whether there is a knee.</p></a>
+</div>
+
+<p class="sec">Positioning</p>
+<div class="idx">
+<a class="item" href="https://claude.ai/code/artifact/e59aa650-b6ad-4f99-8f4a-6ccd2f74cf9a"><p class="t">Who Got There First</p><p class="d">Three published works threaten this paper &mdash; one badly. The landscape, the novelty statement that survives, and two citation traps.</p></a>
+</div>
+
+<p class="sec">Measurements</p>
+<div class="idx">
+<a class="item" href="https://claude.ai/code/artifact/7f12bd84-d104-41b1-80ea-282b6b5596fa"><p class="t">Read Latency Under Erasing</p><p class="d">291 M individually timed reads. The stall is exactly one erase, the typical read never notices, and access pattern turns out to be worth 7.7&times;.</p></a>
+</div>
+
+<p class="sec">Wear management</p>
+<div class="idx">
+<a class="item" href="https://claude.ai/code/artifact/69f88ffa-30e8-4b51-b36b-f148cbc46895"><p class="t">Wear Levelling Mechanisms</p><p class="d">Levelling a memory tier rather than an FTL, the stuck-page problem, and whether start-gap belongs in the FPGA.</p></a>
+</div>
+
+<h2>Overnight measurement, in full</h2>
+
+<p>Four conditions, same resident data, 90&nbsp;s each. The only difference between the last three is background erasing. Percentiles are bucket upper edges.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Condition</th><th class="num">reads</th><th class="num">p50</th><th class="num">p99</th><th class="num">p99.9</th><th class="num">max</th></tr></thead>
+<tbody>
+<tr><td>DRAM control &mdash; no flash at all</td><td class="num">158.6 M</td><td class="num">159 ns</td><td class="num">479 ns</td><td class="num">575 ns</td><td class="num">1.44 ms</td></tr>
+<tr><td>flash, engine off</td><td class="num">66.8 M</td><td class="num">959 ns</td><td class="num">1023 ns</td><td class="num">1151 ns</td><td class="num">23.1 ms</td></tr>
+<tr><td>flash, engine at module defaults</td><td class="num">32.5 M</td><td class="num">959 ns</td><td class="num">1023 ns</td><td class="num"><strong>18.4 &micro;s</strong></td><td class="num">75.5 ms</td></tr>
+<tr><td>flash, engine pinned flat out</td><td class="num">32.8 M</td><td class="num">959 ns</td><td class="num">1023 ns</td><td class="num"><strong>18.4 &micro;s</strong></td><td class="num">54.5 ms</td></tr>
+</tbody></table></div>
+
+<p>Four things follow.</p>
+
+<p><strong>The typical read never notices.</strong> p50 and p99 are byte-identical across all three flash conditions. Erasing is purely a tail phenomenon.</p>
+
+<p><strong>The tail is one erase, not two and not the scheduler.</strong> Sub-octave buckets put 2,523 of 2,646 stalls (95%) and 2,542 of 2,627 (97%) inside 15.7&ndash;18.9&nbsp;ms. One erase is 16.4&nbsp;ms. An earlier octave-bucketed run suggested 71% of stalls exceeded one erase &mdash; that was an artifact of a bucket boundary at 16.777&nbsp;ms falling almost exactly on the erase time.</p>
+
+<p><strong>The operating point does not matter.</strong> Module defaults and pinned-flat-out give 1 in 12,245 and 1 in 12,418 &mdash; indistinguishable. Once the engine is on and sectors are dirty, it erases at the same rate either way.</p>
+
+<p><strong>Memory-level parallelism is worth 7.7&times;.</strong> The chase issues one dependent load at a time, so every stall is fully exposed: 29.4 stalls/s, 52% of wall time, throughput halved. The 192&nbsp;MiB sequential scan behind fig8 shows only 6.3% duty &mdash; equivalent to 3.8 fully-exposed stalls/s. Same device, same erase rate; the sequential pattern hides 7.7&times; of it. <strong>That is a result in itself: it says access pattern, not just read latency, determines what belongs on this tier</strong> &mdash; which is exactly the sequential-versus-random criterion in the open-questions list.</p>
+
+<div class="note risk">
+<span class="lbl">Still unexplained</span>
+<p>The engine-off condition shows 71 reads at 21&ndash;23&nbsp;ms out of 66.8 million, with nothing erasing and nothing promoting. That is 8&times; above the DRAM noise floor, so it is real, and it is <em>not</em> at 16.4&nbsp;ms so it is not a stray erase. Something in the flash or ECI path stalls for ~22&nbsp;ms about once every 9.5 million reads. Worth chasing before someone else asks.</p>
+</div>
+
+<h2>What is not here yet</h2>
+
+<p>The session ran into its usage limit partway through the second wave. These were scoped and are not written:</p>
+
+<div class="tw"><table>
+<thead><tr><th>Chapter</th><th>Why it matters</th></tr></thead>
+<tbody>
+<tr><td>Placement accuracy metrics</td><td>How to score a policy: demotion rate, residence time, per-data-structure oracle</td></tr>
+<tr><td>Demotion and re-promotion</td><td>Should a demoted page be marked skip? Is a VA stable enough to key on?</td></tr>
+<tr><td>Access-pattern classification</td><td>Now urgent &mdash; the 7.7&times; MLP result above makes this a first-class criterion</td></tr>
+<tr><td>Full-pool policy</td><td>What to evict when LtRAM fills</td></tr>
+<tr><td>Wear-levelling measurement</td><td>How to prove levelling works with <code>ec_grain</code> shrunk to emulate a real budget</td></tr>
+<tr><td>Transparency / automatic detection</td><td>Removing <code>target_pid</code>. Partial research exists &mdash; see below</td></tr>
+<tr><td>Write-heavy and phase-changing workloads</td><td>What happens when everything faults back</td></tr>
+<tr><td>Non-anonymous pages</td><td>Blocking for llama.cpp. The SError incident is the reason it is hard</td></tr>
+<tr><td>Device speed requirements</td><td>How fast would LtRAM have to be, ideally and minimally</td></tr>
+<tr><td>Energy: idle-server evidence</td><td>The retention-power argument needs utilisation traces to land</td></tr>
+<tr><td>Paper narrative</td><td>Which claims to scope, and the order to write in. (Related work is now written &mdash; see Positioning above.)</td></tr>
+</tbody></table></div>
+
+<h3>Research gathered but not yet written up</h3>
+
+<p>Three sub-investigations returned verified material that belongs in the missing chapters:</p>
+
+<ul>
+<li><strong>MGLRU without hardware access bits.</strong> Directly our situation. On architectures lacking a hardware A-bit, MGLRU <em>compiles out</em> its page-table walker (<code>CONFIG_LRU_GEN_WALKS_MMU</code>) and falls back to rmap-only aging driven by <code>lru_gen_look_around()</code>, which scans at most <code>MIN_LRU_BATCH</code> = 64 PTEs around a referenced page. arm64 selects <code>ARCH_HAS_HW_PTE_YOUNG</code> but gates it at runtime on <code>cpu_has_hw_af()</code> &mdash; so on this ThunderX the walker is compiled in and disabled. That is a directly usable precedent for our detection design, and a citable one.</li>
+<li><strong>Arm SPE is not available to us.</strong> ThunderX CN88XX is ARMv8.0-A; FEAT_SPE is OPTIONAL only from Armv8.1, so it cannot be present. Confirmed against GCC&rsquo;s core definitions and Arm&rsquo;s feature documentation. Any instrumentation plan that assumes hardware sampling is dead on this board.</li>
+<li><strong>Dirty-rate and coldness literature.</strong> Clark (NSDI&rsquo;05) Figure 2 digitised: the median 8-second window of SPEC CINT2000 dirties <strong>1.8%</strong> of a 512&nbsp;MB VM&rsquo;s pages. Meta TMO: <strong>35%</strong> cold, range 19&ndash;62%. Google far memory: <strong>32%</strong> cold at T=120&nbsp;s. Both coldness numbers forbid reads too, so they are <em>lower bounds</em> on the read-only fraction &mdash; a defensible way to use them. WARM (MSST&rsquo;15): under 1% of pages absorb nearly 100% of writes, though that is block storage, not DRAM.</li>
+</ul>
+
+<footer class="doc">
+LtRAM overnight dossier &middot; ten chapters &middot; measurements from zuestoll08, 2026-08-31 &middot;
+each chapter separates what the literature establishes from what is proposed from what is speculative, and flags citations that could not be verified
+</footer>
+</div>
+
