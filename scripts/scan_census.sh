@@ -37,6 +37,7 @@ PASSES=${PASSES:-8}
 GRAPH="$W/gapbs/benchmark/graphs/kron22.sg"
 
 gs(){ awk -v k="$1" '$1==k{print $2; exit}' /sys/kernel/ltram/stats; }
+ps_(){ awk -v k="$1" '$1==k{print $2; exit}' $DBG/pagestate; }
 setp(){ echo "$2" > $PAR/$1; }
 
 [ -r $DBG/wear ] || { echo "!! no $DBG -- wrong kernel?"; exit 1; }
@@ -94,17 +95,16 @@ echo $BG > /sys/kernel/ltram/target_pid
 setw(){ echo "$1" > $PAR/erase_high_water; echo "$2" > $PAR/erase_low_water; }
 E0=$(cat $PAR/erase_high_water); E1=$(cat $PAR/erase_low_water)
 setw 0 0
-CL=$(sudo -n awk '/^clean/{print $2}' $DBG/pagestate 2>/dev/null || echo 0)
+CL=$(ps_ clean)
 echo "  priming: $CL clean sectors to consume before measuring"
 setp scan_interval_ms 1000
 for i in $(seq 1 120); do
-    c=$(awk '/^clean/{print $2}' $DBG/pagestate)
+    c=$(ps_ clean)
     [ "${c:-0}" -le 4 ] && break
     [ $(( i % 20 )) -eq 0 ] && echo "    clean $c"
     sleep 1
 done
-echo "  primed: clean $(awk '/^clean/{print $2}' $DBG/pagestate), "\
-     "$(gs moved_to_ltram) pages promoted in total"
+echo "  primed: clean $(ps_ clean), $(gs moved_to_ltram) promoted in total"
 
 for T in ${LADDER//,/ }; do
     kill -0 $BG 2>/dev/null || { echo "  !! workload exited"; break; }
