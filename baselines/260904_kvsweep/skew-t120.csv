@@ -1,0 +1,5 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd,freed_pct
+memcached skew-t120,60,427711,85.34,0.01,2,smaps_referenced,0.89,0.00,0.00
+memcached skew-t120,120,427711,39.96,0.01,2,smaps_referenced,37.73,0.00,0.00
+memcached skew-t120,300,427711,1.24,0.01,2,smaps_referenced,0.00,0.00,0.00
+memcached skew-t120,600,427711,0.60,0.01,2,smaps_referenced,0.01,0.00,0.00

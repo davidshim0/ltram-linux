@@ -1,0 +1,5 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd,freed_pct
+memcached ratio-A-50r,60,427688,43.08,0.01,2,smaps_referenced,8.01,0.00,0.00
+memcached ratio-A-50r,120,427688,16.23,0.01,2,smaps_referenced,16.03,0.00,0.00
+memcached ratio-A-50r,300,427688,0.20,0.01,2,smaps_referenced,0.00,0.00,0.00
+memcached ratio-A-50r,600,427688,0.20,0.01,2,smaps_referenced,0.00,0.00,0.00

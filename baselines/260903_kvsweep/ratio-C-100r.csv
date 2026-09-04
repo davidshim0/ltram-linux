@@ -1,0 +1,5 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd,freed_pct
+redis ratio-C-100r,60,455454,64.37,0.13,2,smaps_referenced,0.02,0.00,0.00
+redis ratio-C-100r,120,455454,45.63,0.13,2,smaps_referenced,0.01,0.00,0.00
+redis ratio-C-100r,300,455454,19.56,0.13,2,smaps_referenced,0.00,0.00,0.00
+redis ratio-C-100r,600,455454,7.60,0.13,2,smaps_referenced,0.01,0.00,0.00

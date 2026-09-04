@@ -1,0 +1,5 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd,freed_pct
+redis skew-t099,60,455451,63.13,0.13,2,smaps_referenced,1.10,0.01,0.00
+redis skew-t099,120,455451,44.50,0.13,2,smaps_referenced,0.99,0.01,0.00
+redis skew-t099,300,455451,18.99,0.12,2,smaps_referenced,0.43,0.00,0.00
+redis skew-t099,600,455451,7.42,0.12,2,smaps_referenced,0.09,0.00,0.00

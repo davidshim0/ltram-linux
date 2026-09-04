@@ -1,0 +1,5 @@
+workload,T_sec,pages,write_cold_pct,cold_pct,windows_averaged,cold_method,write_cold_sd,cold_sd,freed_pct
+redis ratio-A-50r,60,455431,57.10,0.14,2,smaps_referenced,5.26,0.00,0.00
+redis ratio-A-50r,120,455431,38.46,0.13,2,smaps_referenced,5.29,0.00,0.00
+redis ratio-A-50r,300,455431,15.60,0.13,2,smaps_referenced,2.73,0.00,0.00
+redis ratio-A-50r,600,455431,6.44,0.13,2,smaps_referenced,0.72,0.00,0.00

@@ -1,0 +1,8 @@
+condition,flags,idle_pct,hot_pct,full_pct,pages_per_item,resident_pages
+baseline,,0.30,8.21,90.20,0.52,13231
+no_crawler,no_lru_crawler,0.30,8.40,90.78,0.53,13140
+no_maintainer,no_lru_maintainer,0.05,7.78,90.44,0.51,13154
+no_slab_move,no_slab_reassign,0.30,8.06,90.20,0.51,13232
+no_hashexpand,no_hashexpand,0.31,7.88,92.97,0.49,12838
+no_modern,no_modern,0.05,8.45,91.09,0.55,13059
+all_off,no_lru_crawler no_lru_maintainer no_slab_reassign no_hashexpand,0.06,8.55,93.54,0.54,12719
