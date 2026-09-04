@@ -173,6 +173,15 @@ static unsigned int erase_batch = 1;
  */
 static unsigned int idle_samples   = 3;
 static unsigned int idle_sample_us = 1000;
+/*
+ * Census mode. Walk and write-protect exactly as always, count what WOULD have
+ * been promoted, and promote nothing. The point is to measure how much of a
+ * process is read-mostly using the real scanner, without the placement system
+ * altering the thing being measured -- pages moving to flash change access
+ * latency, and a pool that fills changes the walk. Off by default: with
+ * scan_only = 0 every path below is the shipped one.
+ */
+static bool scan_only;
 module_param(scan_interval_ms, uint, 0644);
 module_param(promote_batch, uint, 0644);
 module_param(scan_ptes_per_pass, uint, 0644);
@@ -189,6 +198,7 @@ module_param(erase_idle_ms, uint, 0644);
 module_param(erase_batch, uint, 0644);
 module_param(idle_samples, uint, 0644);
 module_param(idle_sample_us, uint, 0644);
+module_param(scan_only, bool, 0644);
 
 /* ---- the flash page allocator --------------------------------------------- */
 static unsigned long *ltram_clean_bitmap;	/* 1 = free */
@@ -902,7 +912,8 @@ static atomic64_t stat_ptes_examined, stat_moved_to_ltram, stat_not_moved;
  */
 static atomic64_t stat_skipped_file_backed;
 static atomic64_t stat_was_written,
-		  stat_chosen, stat_lru_refused, stat_write_protected, stat_dirty_but_readonly;
+		  stat_chosen, stat_lru_refused, stat_write_protected, stat_dirty_but_readonly,
+		  stat_would_promote;
 
 /* ---- targeting ------------------------------------------------------------ */
 static DEFINE_MUTEX(target_lock);
@@ -1026,6 +1037,19 @@ static int scan_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 			atomic64_inc(&stat_dirty_but_readonly);
 
 		if (policy->should_promote(folio, written)) {
+			/*
+			 * Census mode stops here. Jumping to rearm rather than
+			 * continuing is deliberate: nothing was isolated, so the
+			 * reference this iteration took must be dropped by the
+			 * folio_put at the bottom of the loop -- the not-chosen
+			 * path's bookkeeping, not the candidate list's. A page
+			 * that reaches here has written == false, so the re-arm
+			 * itself is a no-op and the PTE stays as it was.
+			 */
+			if (scan_only) {
+				atomic64_inc(&stat_would_promote);
+				goto rearm;
+			}
 			if (!folio_isolate_lru(folio)) {
 				atomic64_inc(&stat_lru_refused);
 				goto rearm;
@@ -1258,7 +1282,7 @@ static int ltram_scan_thread(void *unused)
 		 * that cannot be allocated for, and a sector is unlikely to come
 		 * free in the next millisecond.
 		 */
-		if (!READ_ONCE(lt_clean_count)) {
+		if (!scan_only && !READ_ONCE(lt_clean_count)) {
 			msleep_interruptible(scan_stall_ms);
 			continue;
 		}
@@ -1314,6 +1338,7 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		"was_written          %lld\n"
 		"dirty_but_readonly   %lld\n"
 		"chosen               %lld\n"
+		"would_promote        %lld\n"
 		"lru_refused          %lld\n"
 		"write_protected      %lld\n"
 		"freed_via_backstop   %lld\n"
@@ -1332,6 +1357,7 @@ static ssize_t stats_show(struct kobject *k, struct kobj_attribute *a, char *buf
 		atomic64_read(&ltram_pages_in_use), ltram_nr_pages,
 		atomic64_read(&stat_was_written),
 		atomic64_read(&stat_dirty_but_readonly), atomic64_read(&stat_chosen),
+		atomic64_read(&stat_would_promote),
 		atomic64_read(&stat_lru_refused), atomic64_read(&stat_write_protected),
 		atomic64_read(&stat_freed_via_backstop), atomic64_read(&stat_freed_via_hook),
 		atomic64_read(&stat_dst_allocated), atomic64_read(&stat_dst_released),
